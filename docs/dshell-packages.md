@@ -438,7 +438,7 @@ root, and why each manifest now carries:
   tree;
 - `@deepseek-ai/cordis` as a peer (`^4.0.2`), matching how dsh publishes its own
   packages;
-- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.0` on
+- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.1` on
   pack;
 - third-party libraries that are genuinely the plugin's own (`ws`, `node-pty`,
   `@xterm/xterm`, `@xyflow/react`, `schemastery`) as dependencies.
@@ -465,7 +465,7 @@ copies of a core package.
   (`@nexus-aethra/dshell-*`). `@deepseek-ai/…` is dsh's own npm org and is not
   publishable by an outside account.
 - Publish order is dependency order — `dshell-std` first, `dshell-bundle` last —
-  because each package's `workspace:^` edges become `^0.1.0` ranges that must
+  because each package's `workspace:^` edges become `^0.1.1` ranges that must
   already resolve.
 
 ### Verifying a published artifact

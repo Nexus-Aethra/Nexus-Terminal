@@ -411,7 +411,7 @@ node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{tool-terminal,client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
 
 # 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
-#    package at 0.1.0 and those five at 0.1.5-rc.2 to "dependencies", and append
+#    package at 0.1.1 and those five at 0.1.5-rc.2 to "dependencies", and append
 #    "@nexus-aethra/dshell-bundle" to dsh.profile.bundles. Then install with the
 #    app's OWN runtime, from that directory:
 "/opt/DeepSeek Harness/resources/runtime/node/node" \
@@ -427,7 +427,7 @@ packages stay needed at runtime because the bundle patch inserts a
 
 Two consequences worth knowing. Any transaction the app's own plugin window
 performs installs from `registry.npmjs.org` (pinned in its `project-manager`),
-where these packages exist at 0.1.0 — the published release, not this checkout —
+where these packages exist at 0.1.1 — the published release, not this checkout —
 so a plugin installed or removed from the UI may replace the local build with it.
 And the app checks upstream's update feed on every start
 (`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it logs a
