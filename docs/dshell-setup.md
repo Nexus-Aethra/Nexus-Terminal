@@ -314,7 +314,7 @@ published to the other plugins as a service rather than an environment variable.
 
 Upstream ships no icon — no `icon` field in its electron-builder config, no asset
 under `apps/desktop` — so every build before this one wore the default Electron
-atom in the launcher, the dock and the taskbar. `scripts/linux-icons.mjs` points
+atom in the launcher, the dock and the taskbar. `scripts/linux-desktop.mjs` points
 the Linux target at `assets/icons/linux/`, and `scripts/electron-builder.linux.config.mjs`
 applies it. The mark is dshell's own: a prompt (chevron and block cursor) with a
 spark beside it.
@@ -338,6 +338,100 @@ stretches the cursor into a bar so the two glyphs still read as `>_` in a 16 px
 launcher row. electron-builder takes the file NAMES as the sizes — it never
 re-measures a directory's icons — so a PNG saved at the wrong size ships a
 blurred icon and says nothing; `pnpm test` checks every name against its pixels.
+
+## Installing the desktop app
+
+`pnpm package:linux` produces two artifacts in
+`dsh/apps/desktop/.desktop-build/targets/linux-x64/artifacts/`: the AppImage,
+which runs without installing anything, and a `.deb`, which installs. The `.deb`
+is the one to use if the app should appear in the launcher and on `PATH`:
+
+```bash
+pnpm package:linux                                   # build both
+sudo apt install ./.desktop-build/…/artifacts/deepseek-harness-0.1.5-rc.2-linux-amd64.deb
+deepseek-harness                                     # or launch it from the app grid
+```
+
+Install with `apt`, not `dpkg -i`: the package depends on the GTK/NSS/X11
+libraries Electron needs, and only apt resolves them (on Ubuntu 24.04 and later
+the `t64` names satisfy those dependencies through `Provides`). What lands:
+
+| path | what |
+|---|---|
+| `/opt/DeepSeek Harness/` | the app, its bundled Node runtime and the seeded packages (~670 MB) |
+| `/usr/bin/deepseek-harness` | an `update-alternatives` link to the binary above |
+| `/usr/share/applications/deepseek-harness.desktop` | the launcher entry, `Icon=deepseek-harness` |
+| `/usr/share/icons/hicolor/{16…512}x{…}/apps/deepseek-harness.png` | the mark, from `assets/icons/linux/` |
+| `/etc/apparmor.d/deepseek-harness` | upstream's profile, needed on Ubuntu 24+ where unprivileged user namespaces are restricted |
+
+The package's `postinst` is upstream's, and it is what makes the app start at all
+on a modern Ubuntu: it loads that AppArmor profile and picks the sandbox mode
+(`chrome-sandbox` stays 0755 when user namespaces work). That is also why the
+`.deb` needs no `--no-sandbox` in its `Exec` line, while the AppImage's upstream
+entry carries one.
+
+`fpm` refuses to build a `.deb` without a maintainer and a project URL, and
+neither upstream's `package.json` nor ours carries either — see
+`scripts/linux-desktop.mjs` for where both come from. Two names are upstream's
+and not dshell's: the package installs as `deepseek-harness` under
+`/opt/DeepSeek Harness`, and the launcher entry reads `DeepSeek Harness`. To
+uninstall: `sudo apt remove deepseek-harness`.
+
+The app that installs is upstream's desktop shell carrying upstream's seeded
+package set — dshell is not among them, so a fresh install boots dsh's own UI.
+dshell goes in afterwards, and the desktop app is stricter about how than the web
+harness is.
+
+### Putting dshell inside the installed app
+
+The app generates its own pnpm profile at `~/.dsh/profiles/desktop` from the seed
+in its `resources/`, and loads whatever `dsh.profile.bundles` names *after*
+upstream's two built-ins (`@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app`) —
+that tail is the app's plugin list. Two rules the app enforces before it will
+boot:
+
+- every bundle must be the **first** entries in that list, and anything after
+  them must be a valid package name;
+- every bundle must resolve **inside the profile**. `link:` dependencies pointing
+  at this checkout — how `~/.dsh/profiles/web` installs dshell — are rejected
+  with `plugin bundle "@nexus-aethra/dshell-bundle" resolved outside the desktop
+  profile`. The packages have to be installed into the profile from a registry.
+
+`scripts/local-registry.mjs` exists for exactly this (it was built to prove the
+packed manifests are installable), so:
+
+```bash
+# 1. pack dshell and serve it locally
+for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
+node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
+
+# 2. add the five upstream packages the DESKTOP seed omits but dshell's bundle
+#    patch names. They are already packed by the build; copy them in and restart
+#    the registry so it indexes them.
+cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{tool-terminal,client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
+
+# 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
+#    package at 0.1.0 and those five at 0.1.5-rc.2 to "dependencies", and append
+#    "@nexus-aethra/dshell-bundle" to dsh.profile.bundles. Then install with the
+#    app's OWN runtime, from that directory:
+"/opt/DeepSeek Harness/resources/runtime/node/node" \
+  "/opt/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.mjs" \
+  --config.registry=http://127.0.0.1:4873/ --config.enable-global-virtual-store=false \
+  install --no-frozen-lockfile
+```
+
+Restart the app afterwards. The registry is needed only while installing — the
+packages are copied into the profile, not linked to it — and the five upstream
+packages stay needed at runtime because the bundle patch inserts a
+`dshell-tool-terminal` row naming `@deepseek-ai/dsh-tool-terminal`.
+
+Two consequences worth knowing. Any transaction the app's own plugin window
+performs installs from `registry.npmjs.org` (pinned in its `project-manager`),
+where these packages exist at 0.1.0 — the published release, not this checkout —
+so a plugin installed or removed from the UI may replace the local build with it.
+And the app checks upstream's update feed on every start
+(`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it logs a
+404 and stays quiet unless you ask for an update check from the menu.
 
 ## Where to go next
 
