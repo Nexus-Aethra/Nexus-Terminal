@@ -22,9 +22,6 @@ import { useDshellTheme, type Theme } from './theme.js'
 /** The bound translator of this package's namespace. */
 type ModeTranslate = TranslateNS<'dshellMode'>
 
-/** Error red, matching the sidebar's notice colour. */
-const DANGER = '#f87171'
-
 /** What the view should draw for one session's connection state. */
 export type ConnectionView =
   | { kind: 'none' }
@@ -137,7 +134,7 @@ function detailStyle(theme: Theme): CSSProperties {
     lineHeight: 1.5,
     color: theme.muted,
     wordBreak: 'break-all',
-    borderLeft: '2px solid rgba(248, 113, 113, 0.5)',
+    borderLeft: `2px solid ${theme.danger}`,
     paddingLeft: 8,
   }
 }
@@ -243,14 +240,14 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
         gap: 10,
         padding: '18px 20px',
         borderRadius: 10,
-        border: `1px solid ${failed ? 'rgba(248, 113, 113, 0.45)' : theme.borderStrong}`,
+        border: `1px solid ${failed ? theme.danger : theme.borderStrong}`,
         background: theme.menuBg,
         color: theme.text,
         fontSize: 13,
       },
     },
       createElement('div', {
-        style: { fontSize: 14, fontWeight: 600, color: failed ? DANGER : theme.text },
+        style: { fontSize: 14, fontWeight: 600, color: failed ? theme.danger : theme.text },
       }, failed ? t('connection.panel.failed', { address }) : t('connection.panel.connecting', { address })),
       createElement('div', { style: { color: theme.muted, lineHeight: 1.5 } },
         failed
@@ -331,9 +328,9 @@ export function ConnectionNotice(props: ConnectionNoticeProps): ReactElement {
       margin: '10px 0 4px',
       padding: '8px 10px',
       borderRadius: 6,
-      border: `1px solid ${lost ? 'rgba(248, 113, 113, 0.35)' : theme.borderStrong}`,
-      borderLeft: `2px solid ${lost ? DANGER : theme.accentBorder}`,
-      background: lost ? 'rgba(248, 113, 113, 0.06)' : theme.accentFaint,
+      border: `1px solid ${lost ? theme.danger : theme.borderStrong}`,
+      borderLeft: `2px solid ${lost ? theme.danger : theme.accentBorder}`,
+      background: lost ? theme.dangerFaint : theme.accentFaint,
       display: 'flex',
       flexDirection: 'column',
       gap: 6,
@@ -342,13 +339,13 @@ export function ConnectionNotice(props: ConnectionNoticeProps): ReactElement {
     },
   },
     createElement('div', {
-      style: { color: lost ? DANGER : theme.text, fontWeight: lost ? 500 : 400 },
+      style: { color: lost ? theme.danger : theme.text, fontWeight: lost ? 500 : 400 },
     }, title),
     props.detail === undefined || props.detail === ''
       ? null
       : createElement('div', { style: detailStyle(theme) }, props.detail),
     stopped
-      ? createElement('div', { style: { color: DANGER } },
+      ? createElement('div', { style: { color: theme.danger } },
         t('connection.reconnectStopped', { max: props.maxAttempts }))
       : progress === undefined
         ? null

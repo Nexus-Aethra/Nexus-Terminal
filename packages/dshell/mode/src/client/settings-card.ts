@@ -28,12 +28,12 @@
  * the file icons come from.
  */
 
-import { createElement, useSyncExternalStore, useState, type CSSProperties, type ReactElement } from 'react'
+import { createElement, useState, type CSSProperties, type ReactElement } from 'react'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellShellHelper } from '../settings.js'
 import type { DshellModeKey } from './locales.js'
-import { THEMES, setTheme, themeStore } from './theme.js'
+import { THEMES, getTheme, setTheme, useDshellTheme } from './theme.js'
 import { setShellHelper, useShellHelpers } from './shell-settings.js'
 
 const cardStyle: CSSProperties = {
@@ -202,12 +202,15 @@ function Chevron({ open }: { open: boolean }): ReactElement {
  */
 export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactElement {
   const [open, setOpen] = useState(false)
-  const current = useSyncExternalStore(themeStore.subscribe, themeStore.getSnapshot)
+  // The resolved palette, not the bare id: the mode comes with it, and the
+  // swatches below must be drawn for the surface dsh is painting right now.
+  const theme = useDshellTheme()
+  const current = theme.id
   const helpers = useShellHelpers()
   // The header says what the card is set TO, so the two groups are readable
   // without opening it: the palette by name, and the assists by how many are off.
   const off = HELPER_ROWS.filter(row => !helpers[row.field])
-  const currentTheme = THEMES.find(theme => theme.id === current)
+  const currentTheme = THEMES.find(candidate => candidate.id === current)
   const themeLabel = currentTheme === undefined ? current : t(currentTheme.labelKey)
   const helperSummary = off.length === 0
     ? t('settings.helpers.allOn')
@@ -236,41 +239,46 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
     open
       ? createElement('div', { style: bodyStyle },
         createElement('div', { style: groupStyle }, t('settings.group.theme')),
-        THEMES.map(theme => createElement('button', {
-          key: theme.id,
-          type: 'button',
-          'aria-pressed': current === theme.id,
-          onClick: () => { setTheme(theme.id) },
-          style: {
-            flex: '1 1 140px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            padding: '14px 16px',
-            borderRadius: 16,
-            cursor: 'pointer',
-            font: 'inherit',
-            fontSize: 13,
-            color: 'var(--dsw-alias-label-primary)',
-            border: current === theme.id
-              ? '1px solid var(--dsw-alias-brand-primary)'
-              : '0.5px solid var(--dsw-alias-border-l4)',
-            background: current === theme.id ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
-          },
-        },
-          createElement('span', {
+        THEMES.map(palette => {
+          // The palette's own skin for the surface dsh is painting, so the
+          // swatch matches what picking it will actually look like.
+          const skin = getTheme(palette.id, theme.mode)
+          return createElement('button', {
+            key: palette.id,
+            type: 'button',
+            'aria-pressed': current === palette.id,
+            onClick: () => { setTheme(palette.id) },
             style: {
-              display: 'inline-block',
-              width: 10,
-              height: 10,
-              borderRadius: 999,
-              background: theme.accent,
-              border: `1px solid ${theme.borderStrong}`,
+              flex: '1 1 140px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '14px 16px',
+              borderRadius: 16,
+              cursor: 'pointer',
+              font: 'inherit',
+              fontSize: 13,
+              color: 'var(--dsw-alias-label-primary)',
+              border: current === palette.id
+                ? '1px solid var(--dsw-alias-brand-primary)'
+                : '0.5px solid var(--dsw-alias-border-l4)',
+              background: current === palette.id ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
             },
-          }),
-          t(theme.labelKey),
-        )),
+          },
+            createElement('span', {
+              style: {
+                display: 'inline-block',
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: skin.accent,
+                border: `1px solid ${skin.borderStrong}`,
+              },
+            }),
+            t(palette.labelKey),
+          )
+        }),
         createElement('div', { style: noteStyle },
           t('settings.note.theme')),
         createElement('div', { style: groupStyle }, t('settings.group.helpers')),

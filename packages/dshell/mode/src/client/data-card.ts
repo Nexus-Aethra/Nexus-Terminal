@@ -116,7 +116,7 @@ const actionsStyle: CSSProperties = {
 
 /** A small bordered button, for an action that is not the card's only one. */
 const smallButtonStyle: CSSProperties = {
-  border: '1px solid #3a3a42',
+  border: '1px solid var(--dsw-alias-border-l4)',
   background: 'transparent',
   color: 'inherit',
   cursor: 'pointer',
@@ -134,7 +134,7 @@ const resetButtonStyle: CSSProperties = {
   padding: 0,
   font: 'inherit',
   fontSize: 12,
-  color: '#7aa2f7',
+  color: 'var(--dsw-alias-brand-primary)',
   cursor: 'pointer',
   flex: '0 0 auto',
 }

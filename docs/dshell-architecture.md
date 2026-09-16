@@ -345,9 +345,35 @@ dshell uses the dsh token system. CSS Modules follow dsh's
   tag id.
 - `x.css?inline` → exported as text for plugin-owned lifecycle.
 
-All colors come from `--dsw-*` tokens; no literal colors. The xterm
-canvas theme uses CSS vars `var(--dsw-canvas-bg)` and `var(--dsw-canvas-fg)`
-mapped in xterm's ITheme on mount.
+There are two kinds of colour in dshell's browser faces, and they answer
+dsh's theme differently:
+
+- **Chrome** — cards, rows, buttons, the settings card — reads dsh's
+  `--dsw-*` tokens, which dsh already resolves per mode.
+- **The terminal's own palette** is dshell's: a colour SCHEME the reader
+  picks in the settings card (`palettes.ts`), painted on dsh's surface
+  rather than on a background of its own — every palette's `bg` is
+  `transparent`. Because that surface is white in light mode and
+  near-black (`rgb(21,21,23)`) in dark mode, each palette carries a light
+  skin and a dark skin, and `theme.ts` resolves the pair against the mode
+  dsh announces on `<body data-ds-dark-theme>` (watched, never stored —
+  the mode belongs to dsh's theme setting). The xterm canvas takes its
+  foreground, cursor, selection *and its sixteen ANSI slots* from the
+  resolved palette, and its stylesheet forces the terminal tree
+  transparent so the app surface shows through instead of a black card.
+
+A palette that forgets its light skin is not a cosmetic bug: the default
+one's ink is `#e8e8ec`, which on a white page is invisible. That is what
+`tests/palettes.spec.ts` measures — every skin's contrast against the exact
+surface it will be drawn on.
+
+The ANSI slots are the surface's rather than a palette's, and they are the
+half of that bug which is easy to miss: xterm's defaults are the Tango set
+(`#eeeeec`, `#8ae234`, `#729fcf`), built for a dark ground, so a light skin
+that corrected only its foreground still drew `ls` in near-white and bright
+green. The light skin therefore replaces all sixteen; the dark skin keeps
+Tango verbatim, so that no dshell release repaints the output a dshell-less
+dsh would show.
 
 ## 10. Localization
 

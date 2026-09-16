@@ -88,7 +88,7 @@ export function bookmarksOf(blocks: readonly TurnBlock[], t: TranslateNS<'dshell
 function tickColor(theme: Theme, status: TurnBlock['status'], isLast: boolean): string {
   if (isLast && status === 'running') return theme.accent
   if (isLast) return theme.accentText
-  if (status === 'failed') return '#f87171'
+  if (status === 'failed') return theme.danger
   if (status === 'aborted') return theme.muted
   return theme.borderStrong
 }
@@ -323,7 +323,7 @@ export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
           background: isActive
             ? theme.accentFaint
             : isLast
-              ? 'rgba(255, 255, 255, 0.02)'
+              ? theme.faintFill
               : 'transparent',
           borderLeft: isActive
             ? `2px solid ${theme.accent}`
@@ -364,7 +364,7 @@ export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
         alignItems: 'center',
         gap: 4,
         paddingTop: 6,
-        background: open ? 'transparent' : 'rgba(255, 255, 255, 0.02)',
+        background: open ? 'transparent' : theme.faintFill,
         borderRadius: 4,
         flexShrink: 0,
       },
