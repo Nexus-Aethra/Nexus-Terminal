@@ -310,6 +310,35 @@ takes precedence over the setting. It deliberately never migrates anything: a
 `docs/dshell-architecture.md` § 15 has the full rules, including why the choice is
 published to the other plugins as a service rather than an environment variable.
 
+## The application icon
+
+Upstream ships no icon — no `icon` field in its electron-builder config, no asset
+under `apps/desktop` — so every build before this one wore the default Electron
+atom in the launcher, the dock and the taskbar. `scripts/linux-icons.mjs` points
+the Linux target at `assets/icons/linux/`, and `scripts/electron-builder.linux.config.mjs`
+applies it. The mark is dshell's own: a prompt (chevron and block cursor) with a
+spark beside it.
+
+The assets are committed, so a build needs nothing installed to use them. To
+change the mark, edit the SVG sources in `assets/icons/` and re-rasterize — this
+is the exact command, run from the repo root, with Inkscape 1.x:
+
+```bash
+inkscape --export-type=png --export-filename=assets/icons/linux/16x16.png  -w 16  assets/icons/icon-16.svg
+inkscape --export-type=png --export-filename=assets/icons/linux/32x32.png  -w 32  assets/icons/icon-small.svg
+for n in 48 64 128 256 512; do
+  inkscape --export-type=png --export-filename=assets/icons/linux/${n}x${n}.png -w $n assets/icons/icon.svg
+done
+```
+
+Three sources, not one, because the mark is redrawn rather than scaled for the
+smallest sizes: `icon.svg` carries the spark and serves 48 px and up,
+`icon-small.svg` drops it for 32 px, and `icon-16.svg` pulls the chevron in and
+stretches the cursor into a bar so the two glyphs still read as `>_` in a 16 px
+launcher row. electron-builder takes the file NAMES as the sizes — it never
+re-measures a directory's icons — so a PNG saved at the wrong size ships a
+blurred icon and says nothing; `pnpm test` checks every name against its pixels.
+
 ## Where to go next
 
 - Read [`dshell-design.md`](./dshell-design.md) and

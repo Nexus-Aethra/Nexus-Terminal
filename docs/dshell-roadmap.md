@@ -1453,12 +1453,13 @@ Delivered as planned, with the wrapping-config addition the AppImage forced:
   `prepare:packages` → `prepare:seed` → electron-builder. `--dir` stops at an
   unpacked directory, `--prepare-only` at the seed, `--from=<step>` resumes.
   Exposed as `pnpm package:linux`, `package:linux:dir`, `package:linux:prepare`.
-- `scripts/electron-builder.linux.config.mjs` — upstream's config factory plus one
-  field. Upstream's package name `@deepseek-ai/dsh-desktop` makes electron-builder
+- `scripts/electron-builder.linux.config.mjs` — upstream's config factory plus two
+  fields. Upstream's package name `@deepseek-ai/dsh-desktop` makes electron-builder
   derive `executableName` `@deepseek-aidsh-desktop`, which the **AppImage target
   rejects** (`executableName contains characters that cannot be safely used in
   file paths`) even though `--dir` tolerates it; the wrapper names the executable
-  `deepseek-harness`, matching the `artifactName` upstream already sets.
+  `deepseek-harness`, matching the `artifactName` upstream already sets. The second
+  field is the application icon, which upstream never sets at all — Phase 10.28.
 
 Traps worth knowing for any future cross-target work here:
 
@@ -2983,3 +2984,66 @@ round trips, ~1 s); that is the honest price of the world not having answered ye
 and the alternative — a fast wrong answer — is worse. The report's `cwd` is read
 as the rest of the line up to the report's terminator, relying on dsh's
 integration writing it last (its own bytes, so ours to rely on).
+
+## Phase 10.28 — dshell's own icon on the desktop build
+
+Asked for directly: "有没有为桌面端程序设置程序图标？" — a question first, answered with
+the artifact rather than the config, and then "主要体现智能交互的 shell 特点就好" for
+what the mark should say.
+
+**There was no icon anywhere.** Three places can carry one, and all three were
+empty: upstream's electron-builder config has no `icon` field (`directories` sets
+only `output`, `linux` only `category` and the AppImage target), upstream's
+`main.ts` builds its `BrowserWindow` without `icon:`, and neither repository holds
+an icon asset (`apps/desktop` has no `build/`, no png/ico/icns; this repo had no
+`assets/`). Confirmed against the shipped rc.2 AppImage rather than inferred: its
+`hicolor` icons at 16, 32, 48, 64, 128 and 256 are byte-for-byte identical
+(sha256) to `app-builder-lib`'s `templates/icons/electron-linux/*.png` — the
+**default Electron atom**, reached through the desktop entry's
+`Icon=deepseek-harness`. So the packaged app has been wearing Electron's logo in
+the launcher, the dock and the taskbar since the first build.
+
+The mark is dshell's own, drawn for this: the prompt the shell itself uses (a
+chevron and a block cursor) with a spark beside it for the half that answers.
+Three sources, because the smallest sizes are redrawn rather than scaled —
+`icon.svg` with the spark for 48 px and up, `icon-small.svg` without it for 32,
+`icon-16.svg` with a pulled-in chevron and a bar for the cursor so 16 px still
+reads as `>_` instead of one white blob.
+
+Where it went, keeping `dsh/` untouched:
+
+- `assets/icons/linux/{16,32,48,64,128,256,512}x{same}.png`, rasterized with
+  Inkscape from the SVGs next to them (the exact command is in `dshell-setup.md`).
+- `scripts/linux-icons.mjs` — the directory, the size list, and a pure
+  `withLinuxIcon(config)` that adds it. The application lives in its own module
+  because importing upstream's config means resolving a desktop target, which
+  throws for linux-x64 outside the packaging hook; a module of our own lets the
+  delta be tested rather than described.
+- `scripts/electron-builder.linux.config.mjs` — `linux: { …upstream.linux, icon }`.
+
+**The trap this needed a test for.** electron-builder reads a directory's
+`NxN.png` file names as the sizes themselves and never re-measures them
+(`collectIconsFromDir` in `app-builder-lib`); each name becomes a
+`hicolor/NxN/apps/` entry (`${icon.size}x${icon.size}`) and the largest becomes
+the `.desktop` entry's icon. A PNG saved at the wrong size therefore ships a
+blurred icon and reports nothing at all. `scripts/tests/linux-icons.spec.ts`
+(4 specs, `pnpm test` now 95) checks every name against the file's own IHDR
+header, checks the directory holds exactly the expected sizes, and checks the
+override adds the icon without disturbing the rest of upstream's config. Proven
+to bite: copying the 128 px pixels over `256x256.png` fails with
+`expected { width: 128, height: 128 } to deeply equal { width: 256, height: 256 }`.
+
+Verified by rebuilding the AppImage (`pnpm package:linux --from=builder`, exit 0,
+no "default Electron icon is used" warning in the log): all seven `hicolor` sizes
+inside are byte-identical to the assets, `.DirIcon` and the AppImage's root
+`deepseek-harness.png` now point at `hicolor/512x512/…` instead of 256, and
+`hicolor/256x256/apps/deepseek-harness.png` hashes `ed8d814d…` where the Electron
+default it replaced hashed `21e8e6c2…`.
+
+**Not covered:** mac and win icons (this repo packages linux-x64 only, and the
+mac section of upstream's config is untouched); the window icon of a dev run,
+which is upstream's `BrowserWindow` and not ours to set; and `StartupWMClass`,
+which stays `DeepSeek Harness` — electron-builder warns that setting
+`desktopName` with `linux.syncDesktopName` would associate running windows with
+the entry more firmly, but that is an upstream package-name decision. `dsh web`'s
+browser-tab favicon is upstream's own and unchanged.
