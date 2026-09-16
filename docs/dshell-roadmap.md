@@ -2940,3 +2940,46 @@ an NFS mount or has a symlinked `dshell/` inside it is untested; the settings
 document's `dataDir` and the record file can disagree if the document is edited by
 hand while the harness runs, in which case the next start settles the document's
 value and rewrites the record.
+
+## Phase 10.27 — entering a device session warms its own directory
+
+Asked for directly: "当前 ssh 预热能不能在进入的时候就预热一次" — warm once when the
+session is entered, rather than only on a keystroke or a settled command.
+
+Part of it already existed (the composer warms at mount) and it was measured
+working — but only when the composer's mirror already knew the directory. That
+mirror was filled by exactly one thing: a `cd` typed through the composer. So the
+pre-warm read the session's RECORDED tree while the reader's Tab asked about the
+tree the SHELL was standing in, which is a different directory in three ordinary
+situations: a device session whose shell starts in its login directory rather
+than the session's tree, any session entered after the shell had already moved,
+and any page loaded after a `cd`.
+
+Two pieces, both small:
+
+- **The client now reads the shell's own report of where it stands.** dsh's shell
+  integration prints OSC 3008 (`…;cwd=<path>`) before every prompt, and the bytes
+  already reach this side: the same chunk listener that watches for the settled
+  command marker now parses it (`mode/src/client/shell-report.ts`, 5 specs over
+  real log fragments) and adopts the directory before deciding that warm. The
+  path is in the SHELL's namespace — a device's own path — which is what the
+  world's translation wants: a path inside a mount directory is mapped, anything
+  else passes through unchanged.
+- **Entering arms a second warm, fired by that first report.** The mount-time warm
+  can only guess (the session's recorded tree, possibly before the device
+  connection exists); the one the report triggers runs when both facts hold. So
+  the entry warm lands on a live world, at the directory the reader will Tab in.
+
+Verified on the device: after a harness restart and a page load, entered the
+session, waited for the prompt, typed `cd ` and pressed Tab INSIDE the keystroke
+warm's 250 ms window — isolating the entry warm as the only thing that could have
+answered. The `complete` request carried `cwd: "/root"` (the device's own report,
+where before it carried no cwd at all) and answered in **4 ms** with the device's
+real entries in the list.
+
+**Not covered:** a Tab that arrives while the entry warm's read is still in flight
+joins that read rather than answering from nothing (a device's first read is three
+round trips, ~1 s); that is the honest price of the world not having answered yet,
+and the alternative — a fast wrong answer — is worse. The report's `cwd` is read
+as the rest of the line up to the report's terminator, relying on dsh's
+integration writing it last (its own bytes, so ours to rely on).
