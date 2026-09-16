@@ -3341,3 +3341,46 @@ program that asks for the ground's own tone gets exactly that; and
 `GUTTER_COLOR`) left over from the canvas renderer the block view replaced. They
 are unreferenced today, but they are a second and now stale copy of the same
 vocabulary, which is the kind of thing a reader follows by mistake.
+
+## Phase 10.32 — the 0.1.1 release
+
+`0.1.0` was published 2026-09-15T18:32Z. Six PRs landed after it (#22–#27) and
+none of them reached npm: the data-directory feature, the settings refactor, the
+directory-warm-up fix, the icon, the `.deb` target — and the light-mode palette,
+which is the one that made the gap visible. Between them they touched `std`,
+`mode`, `ssh`, `buffer`, `terminal-bridge` and `workspace`, so a consumer
+installing from the registry got a dshell that predates all of it. That mattered
+in one concrete place: the desktop app's plugin window installs from
+`registry.npmjs.org` (pinned in its `project-manager`), so its view of dshell was
+six PRs stale.
+
+All eleven packages moved to **`0.1.1`** and were published in dependency order
+(`std` → `conversation` → `storage` → `ssh` → `buffer` → `terminal-bridge` →
+`files` → `commands` → `mode` → `workspace` → `bundle`) with the bypass-2FA
+granular token, after `pnpm install` → `build` → `typecheck` → `test` (147 specs)
+came back green. The bundle's `workspace:^` edges rewrote to `^0.1.1`, and the
+docs that quote a version (`dshell-packages.md`'s pack recipe, `dshell-setup.md`'s
+desktop-profile steps) now quote this one.
+
+**The publish is verified by the bytes, not by the CLI's word.** The
+`dshell-mode` tarball fetched back from the registry carries the light skin
+(`#1b1c22`), the light ANSI inks (`#5c6470`, `#2a5d9e`), the semantic red
+(`#b42318`), the mode watcher (`data-ds-dark-theme`) and the data-directory route
+(`DSHELL_DIRS_PATH`) — i.e. today's source, not yesterday's.
+
+**The read side lagged again, and this time per package.** For several minutes
+after the publishes returned `+ @nexus-aethra/dshell-<name>@0.1.1`, the packuments
+for seven of the eleven still listed only `0.1.0`, and their `0.1.1` tarballs
+answered `{"error":"Not found"}` — while `terminal-bridge`, `mode`, `workspace`
+and `bundle` were already downloadable, and cache-busting made no difference. The
+tell that this is replication and not a failed publish is the `dist` block the
+registry writes on acceptance: each of the seven already carried its `shasum`,
+`integrity`, `fileCount`, `unpackedSize` and two signatures, exactly as the
+working four did. Same shape as the first publish's trap, slower: judge a publish
+by `dist` metadata and the tarball, not by a single read a minute later.
+
+**Still open:** the desktop profile pins the eleven packages at exact `0.1.0`, so
+a fresh install from npm still resolves yesterday's code until that pin moves to
+`0.1.1`; the installed app currently carries this week's code through an in-place
+refresh of `dshell-mode`'s tarball into the profile. The token used here was
+pasted into a chat transcript when it was created and should be rotated.
