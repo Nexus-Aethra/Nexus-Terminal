@@ -27,6 +27,7 @@ import {
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement,
 } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { useDshellTheme, type Theme } from './theme.js'
 // Type-only: pulls this namespace's key set (TranslateNS<'dshellMode'>).
 import type {} from './locales.js'
 import { DSHELL_DIRS_PATH, type DshellDirsEntry, type DshellDirsResponse } from '@nexus-aethra/dshell-std'
@@ -37,7 +38,8 @@ const backdropStyle: CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
 }
 const panelStyle: CSSProperties = {
-  background: '#1b1b1f', border: '1px solid #33333a', borderRadius: 10, padding: 18,
+  background: 'var(--dsw-alias-bg-layer-2)',
+  border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: 10, padding: 18,
   width: 460, maxWidth: '90vw', display: 'flex', flexDirection: 'column', gap: 12,
 }
 const titleStyle: CSSProperties = { fontSize: 15, fontWeight: 600 }
@@ -51,7 +53,7 @@ const crumbRowStyle: CSSProperties = {
 }
 const crumbStyle: CSSProperties = {
   border: 'none', background: 'none', padding: '2px 4px', fontSize: 12, cursor: 'pointer',
-  color: '#7aa2f7', borderRadius: 4,
+  color: 'var(--dsw-alias-brand-primary)', borderRadius: 4,
 }
 const listStyle: CSSProperties = {
   maxHeight: 260, overflowY: 'auto', display: 'flex', flexDirection: 'column',
@@ -66,16 +68,18 @@ const footRowStyle: CSSProperties = { display: 'flex', gap: 8, justifyContent: '
 /** The create row: a name field and the one button that writes it. */
 const createRowStyle: CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }
 const quietButtonStyle: CSSProperties = {
-  border: '1px solid #3a3a42', background: 'transparent', color: 'inherit', cursor: 'pointer',
-  borderRadius: 6, padding: '6px 14px', fontSize: 13,
+  border: '1px solid var(--dsw-alias-border-l4)', background: 'transparent',
+  color: 'inherit', cursor: 'pointer', borderRadius: 6, padding: '6px 14px', fontSize: 13,
 }
 const primaryButtonStyle: CSSProperties = {
-  border: 'none', background: '#4f6bed', color: '#fff', cursor: 'pointer',
+  border: 'none', background: 'var(--dsw-alias-button-primary-fill)',
+  color: 'var(--dsw-alias-label-primary-foreground)', cursor: 'pointer',
   borderRadius: 6, padding: '6px 14px', fontSize: 13,
 }
 const noteStyle: CSSProperties = { fontSize: 12, lineHeight: '18px', opacity: 0.75 }
-const warnStyle: CSSProperties = { ...noteStyle, color: '#f0b46b' }
-const errorStyle: CSSProperties = { fontSize: 12, color: '#f87171' }
+/** A caution is an ink, and which ink depends on the surface: see `palettes.ts`. */
+const warnStyle = (theme: Theme): CSSProperties => ({ ...noteStyle, color: theme.warn })
+const errorStyle = (theme: Theme): CSSProperties => ({ fontSize: 12, color: theme.danger })
 
 /** A small folder glyph, drawn rather than imported: a client plugin has no icon set. */
 function Folder(): ReactElement {
@@ -122,6 +126,7 @@ export interface DataDirDialogProps {
  */
 export function DataDirDialog(props: DataDirDialogProps): ReactElement {
   const { t } = props
+  const theme = useDshellTheme()
   const [view, setView] = useState<DshellDirsResponse | null>(null)
   const [typed, setTyped] = useState(props.initial)
   const [busy, setBusy] = useState(false)
@@ -278,7 +283,7 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
       ),
       failure === null
         ? null
-        : createElement('div', { style: errorStyle }, t('dataDialog.error', { message: failure })),
+        : createElement('div', { style: errorStyle(theme) }, t('dataDialog.error', { message: failure })),
       // Inside what they just made: the field is empty again and the note says
       // where they landed, so a reader who came to create does not have to read
       // the list to know it worked.
@@ -317,12 +322,12 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
       ),
       createMessage === null
         ? null
-        : createElement('div', { style: warnStyle }, createMessage),
+        : createElement('div', { style: warnStyle(theme) }, createMessage),
       view?.truncated === true
-        ? createElement('div', { style: warnStyle }, t('dataDialog.truncated'))
+        ? createElement('div', { style: warnStyle(theme) }, t('dataDialog.truncated'))
         : null,
       view?.writable === false
-        ? createElement('div', { style: warnStyle }, t('dataDialog.notWritable'))
+        ? createElement('div', { style: warnStyle(theme) }, t('dataDialog.notWritable'))
         : null,
       createElement('div', { style: footRowStyle },
         createElement('button', {

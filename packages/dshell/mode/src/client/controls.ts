@@ -683,7 +683,10 @@ export class DshellViewBoundary extends Component<{ children: ReactElement }, { 
     if (this.state.error !== null) {
       return createElement('pre', {
         'data-dshell-view-error': '',
-        style: { color: '#f87171', fontSize: 12, whiteSpace: 'pre-wrap', padding: 12 },
+        style: {
+          color: 'var(--dsw-alias-state-error-primary)',
+          fontSize: 12, whiteSpace: 'pre-wrap', padding: 12,
+        },
       }, this.state.error)
     }
     return this.props.children

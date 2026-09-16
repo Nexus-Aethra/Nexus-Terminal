@@ -317,7 +317,8 @@ export class StatusCardBoundary extends Component<{ children: ReactNode }, { err
         style: {
           position: 'absolute', top: 8, right: 12, zIndex: 5, maxWidth: 'min(560px, 70%)',
           maxHeight: '40vh', overflow: 'auto', margin: 0, padding: '6px 9px',
-          borderRadius: '8px', background: '#2a0f12', color: '#f87171', fontSize: 11, whiteSpace: 'pre-wrap',
+          borderRadius: '8px', background: 'var(--dsw-alias-bg-layer-2)',
+          color: 'var(--dsw-alias-state-error-primary)', fontSize: 11, whiteSpace: 'pre-wrap',
         },
       }, this.state.error)
     }
@@ -558,7 +559,7 @@ export function StatusCard(props: {
             style: { display: 'grid', gridTemplateColumns: '10px 1fr auto', gap: '6px', alignItems: 'baseline' },
           },
             createElement('span', {
-              style: { color: live ? theme.accent : job.status === 'failed' ? '#f87171' : theme.borderStrong },
+              style: { color: live ? theme.accent : job.status === 'failed' ? theme.danger : theme.borderStrong },
             }, '●'),
             createElement('span', {
               title: job.label,
@@ -592,7 +593,7 @@ export function StatusCard(props: {
               title: entry.label,
               style: {
                 display: 'flex', justifyContent: 'space-between', gap: 8,
-                color: entry.error !== undefined ? '#f87171' : live ? theme.text : theme.muted,
+                color: entry.error !== undefined ? theme.danger : live ? theme.text : theme.muted,
                 fontSize: 11.5, lineHeight: '16px',
               },
             },
@@ -611,7 +612,7 @@ export function StatusCard(props: {
               createElement('div', {
                 style: {
                   height: '100%', width: `${String(pct)}%`,
-                  background: entry.error !== undefined ? '#f87171' : theme.accent,
+                  background: entry.error !== undefined ? theme.danger : theme.accent,
                   transition: 'width .4s ease',
                 },
               })),

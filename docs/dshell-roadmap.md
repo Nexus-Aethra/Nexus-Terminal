@@ -3238,3 +3238,106 @@ dshell. The client half is confirmed by resolution and by the app's clean boot, 
 by a screenshot; and the app's plugin window pins `registry.npmjs.org`, so a plugin
 transaction started from its UI would fetch the published 0.1.0 rather than this
 checkout.
+
+## Phase 10.31 — a palette that knows which surface it is on
+
+Reported from the desktop app: "当前在浅色模式下并不正常". dshell's four palettes
+were dark-only — `text: #e8e8ec` on a palette whose `bg` is deliberately
+`transparent`, so on dsh's light surface (white) the block view's shell output was
+there and unreadable. The sidebar and the agent's prose were fine, because those
+read dsh's own `--dsw-*` tokens; it was the terminal's own palette that had only
+ever been drawn on black.
+
+The fix splits dshell's colours by what they answer:
+
+- **`palettes.ts`** (new, DOM-free) holds each palette as two skins — `light` and
+  `dark` — instead of one flat set. `getTheme(id, mode)` resolves the pair, so
+  every existing consumer keeps reading `theme.text` and friends and simply gets
+  the right answer for the surface.
+- **`theme.ts`** gains a second store for the mode, read from
+  `<body data-ds-dark-theme>` — the attribute dsh's inline boot script writes and
+  its ThemePresenter toggles — and watched with a MutationObserver, since nothing
+  emits an event for it. `useDshellTheme()` subscribes to both stores, so
+  switching dsh's theme repaints dshell with no reload. The mode is never
+  persisted: it is dsh's setting, not dshell's.
+- The settings card's swatch resolves through `getTheme(theme.id)` so the dot
+  previews the skin the pick will actually produce, and its note says the
+  palette follows dsh's light/dark setting (zh + en).
+- `ps1User`/`ps1Path` were declared on every palette and read by nothing in the
+  repository; they are gone rather than duplicated per skin.
+- **The ANSI vocabulary belongs to the surface, not to the palette.** xterm's
+  defaults are the Tango set — `#eeeeec` for `white`, `#8ae234` for bright green,
+  `#729fcf` for bright blue — and every one of them is an ink for a dark ground.
+  Correcting the foreground alone therefore left `ls` painting filenames
+  near-white on white: the same bug, one layer down. Each skin now carries its own
+  sixteen slots and `xtermTheme()` hands them to the renderer. The dark set is
+  Tango verbatim — written out rather than inherited, so no dshell release
+  repaints the output a dshell-less dsh would show — while the light set keeps
+  Tango's hues and holds them dark enough that every slot clears 4.5:1 on the
+  page.
+- The semantic inks are shared by mode rather than rebuilt per palette:
+  `danger`, `dangerFaint`, `warn`, and the faint fill a hover or a current row
+  is drawn with (`faintFill`). A red is a red whichever scheme is picked, so a
+  palette's identity stays in its greys, borders and accent.
+- `getTheme` resolves through a cache, so one (palette, mode) pair is one object
+  for the life of the page. The block view rebuilds a shell region's terminal
+  when its theme changes, so a fresh object per call tore down and reopened every
+  visible terminal on every render.
+- The literals dshell-owned surfaces still carried went to one of those two
+  systems: the 数据目录 picker's panel, borders and buttons read dsh's tokens now
+  (`--dsw-alias-bg-layer-2`, `--dsw-alias-border-l4`,
+  `--dsw-alias-button-primary-fill`) with its caution and failure lines from the
+  palette; the data card's buttons likewise; and the `#f87171` reds in the status
+  card, the connection notices and the bookmark rail became `theme.danger`.
+
+Light skins are authored per palette rather than derived: solarized light uses
+Solarized's own base3 ground with base00/01 inks, dracula's pink is darkened for a
+white page, and midnight and forest keep their accents over neutral inks.
+
+**The guard is contrast, measured, not eyeballed.** `tests/palettes.spec.ts`
+(45 specs) computes WCAG relative luminance and asserts, for every palette and
+both modes, body text ≥ 4.5 against the exact surface dsh paints (`#ffffff` light,
+`#151517` dark — `--dsw-alias-bg-base`'s own values), accent-coloured text ≥ 4.5,
+the accent indicator ≥ 3, `muted` ≥ 3.5 (it carries hints, and two of the four
+DARK skins measure 3.9–4.1 today, which this fix must not restyle), and text ≥ 4.5
+on the palette's own `menuBg`, which paints itself. It also asserts the palette ids
+equal the settings schema's, so a selectable id cannot resolve to nothing. Proven
+to bite: putting the old `#e8e8ec` back as midnight's light ink fails three
+assertions.
+
+The ANSI half is measured the same way, because it is the half that survives a
+careless fix: every slot of a light skin must clear 4.5:1 on the white page, each
+dark skin's set must equal xterm's own table verbatim, and no light skin may leave
+a slot at its dark value — a slot left alone passes a per-palette comparison while
+still being unreadable.
+
+Verified in a browser on the dev harness (which shares the harness home, so it was
+in light mode too): before, the session's shell block was near-invisible; after,
+`root@VM-0-6-ubuntu:~# Shared connection …` and the command line read as normal
+dark text on white. The mode switch was verified live too — toggling
+`data-ds-dark-theme` moved all 182 palette-styled elements from the light values
+to the dark ones and back with no reload. The desktop app got the same fix through
+its own profile (re-packed, reinstalled, restarted; dsh caches plugin bundles
+until restart, so a rebuild alone changes nothing).
+
+The ANSI half was measured the same way, in the same session, by reading the ink
+of every span the terminals had drawn: 29 spans, three distinct inks, and the
+worst of them 6.48:1 against the white page — `#1b1c22` for ordinary text
+(16.99:1), `#2a5d9e` for the `ls` directories (6.65:1) and `#c00000` for the
+`docker ps` digest (6.48:1). The same session's `ls` is the screenshot above: it
+is the case the report was about. The switch was driven through dsh's own 外观
+control rather than by hand-writing the attribute, and the live xterm options
+followed it — `#1b1c22`/`#5c6470`/`#2a5d9e`/`#457d05` in light,
+`#e8e8ec`/`#d3d7cf`/`#729fcf`/`#8ae234` in dark, the last four being Tango's, so
+dark output is pixel-identical to before. The palette swatches were checked in both
+modes as well (light accents in light mode, dark ones in dark), and the 数据目录
+picker was opened in light mode: white panel, near-black primary button.
+
+**Not covered:** the four palettes' dark skins are unchanged, including the two
+`muted` values below 4.5; the dark ANSI set stays Tango's, including the slots
+that are invisible against a near-black ground (`black`, `brightBlack`) — a
+program that asks for the ground's own tone gets exactly that; and
+`session-rows.ts` still exports the ANSI-to-CSS maps (`SESSION_ROW_COLOR`,
+`GUTTER_COLOR`) left over from the canvas renderer the block view replaced. They
+are unreferenced today, but they are a second and now stale copy of the same
+vocabulary, which is the kind of thing a reader follows by mistake.
