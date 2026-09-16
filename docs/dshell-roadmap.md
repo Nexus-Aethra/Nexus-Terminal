@@ -3014,11 +3014,12 @@ Where it went, keeping `dsh/` untouched:
 
 - `assets/icons/linux/{16,32,48,64,128,256,512}x{same}.png`, rasterized with
   Inkscape from the SVGs next to them (the exact command is in `dshell-setup.md`).
-- `scripts/linux-icons.mjs` — the directory, the size list, and a pure
-  `withLinuxIcon(config)` that adds it. The application lives in its own module
-  because importing upstream's config means resolving a desktop target, which
-  throws for linux-x64 outside the packaging hook; a module of our own lets the
-  delta be tested rather than described.
+- `scripts/linux-desktop.mjs` — the directory, the size list, and a pure
+  `withLinuxDesktop(config)` that adds it (Phase 10.29 widened this from
+  `withLinuxIcon` when the `.deb` target arrived). The application lives in its
+  own module because importing upstream's config means resolving a desktop
+  target, which throws for linux-x64 outside the packaging hook; a module of our
+  own lets the delta be tested rather than described.
 - `scripts/electron-builder.linux.config.mjs` — `linux: { …upstream.linux, icon }`.
 
 **The trap this needed a test for.** electron-builder reads a directory's
@@ -3026,8 +3027,8 @@ Where it went, keeping `dsh/` untouched:
 (`collectIconsFromDir` in `app-builder-lib`); each name becomes a
 `hicolor/NxN/apps/` entry (`${icon.size}x${icon.size}`) and the largest becomes
 the `.desktop` entry's icon. A PNG saved at the wrong size therefore ships a
-blurred icon and reports nothing at all. `scripts/tests/linux-icons.spec.ts`
-(4 specs, `pnpm test` now 95) checks every name against the file's own IHDR
+blurred icon and reports nothing at all. `scripts/tests/linux-desktop.spec.ts`
+checks every name against the file's own IHDR
 header, checks the directory holds exactly the expected sizes, and checks the
 override adds the icon without disturbing the rest of upstream's config. Proven
 to bite: copying the 128 px pixels over `256x256.png` fails with
@@ -3047,3 +3048,193 @@ which stays `DeepSeek Harness` — electron-builder warns that setting
 `desktopName` with `linux.syncDesktopName` would associate running windows with
 the entry more firmly, but that is an upstream package-name decision. `dsh web`'s
 browser-tab favicon is upstream's own and unchanged.
+
+## Phase 10.29 — a package you can install, not just run
+
+Asked for directly: "打包linux安装包并帮我装好" — build an installer and put it on
+the machine.
+
+Two additions to `scripts/linux-desktop.mjs`, and one rename: what began as
+`linux-icons.mjs` now describes the whole Linux desktop delta, so it is
+`linux-desktop.mjs` and its `withLinuxIcon` is `withLinuxDesktop`.
+
+- **`deb` joins `AppImage` in `linux.target`.** Upstream builds mac and win only,
+  and its own Linux target is the portable image; the `.deb` is what makes the app
+  installable (`/opt`, `/usr/bin`, a launcher entry, icons).
+- **The two things fpm refuses to build without.** `maintainer`, supplied through
+  `deb.maintainer` (the checkout's own git identity — this build never leaves the
+  disk), and a project URL, which cost a build cycle to get right: electron-builder
+  has **no `homepage` field in its config schema**, so `homepage:` at the top level
+  fails validation with `configuration has an unknown property 'homepage'`. fpm
+  reads the URL out of the *package metadata* (`appInfo.computePackageUrl()`), so
+  it has to go in through `extraMetadata.homepage`, which `packager` merges into
+  the metadata before `AppInfo` reads it.
+
+Verified end to end, on Ubuntu 26.04 (`pnpm package:linux --from=builder`, exit 0):
+
+- `deepseek-harness-0.1.5-rc.2-linux-amd64.deb`, 194 MB, 672 MB installed, nine
+  dependencies that all resolve — `libgtk-3-0` and `libatspi2.0-0` are the pre-t64
+  names and apt satisfies them through the t64 packages' `Provides`.
+- `sudo apt install ./…deb` installs clean; `dpkg -l` shows `deepseek-harness
+  0.1.5~rc.2 amd64`; `/usr/bin/deepseek-harness` is an `update-alternatives` link;
+  `desktop-file-validate` accepts the launcher entry; all seven hicolor icons are
+  hash-identical to `assets/icons/linux/`.
+- Upstream's own `postinst` is what makes it start on a modern Ubuntu: it installs
+  `/etc/apparmor.d/deepseek-harness` (listed by `aa-status`, needed because
+  `kernel.apparmor_restrict_unprivileged_userns=1` here) and leaves
+  `chrome-sandbox` at 0755 — which is why the `.deb` needs no `--no-sandbox` in its
+  `Exec`, unlike the AppImage's upstream entry.
+- The app then launched: main process holding Wayland window handles, renderer
+  alive, and an empty log apart from the updater's 404.
+
+**Not covered:** mac and win installers (this repo packages linux-x64 only); the
+package's `Description:` synopsis line comes out blank, cosmetic and inherited
+from upstream's metadata; and both the package name (`deepseek-harness`) and the
+launcher entry (`DeepSeek Harness`) are upstream's product identity, not dshell's.
+
+## Phase 10.30 — dshell inside the installed desktop app
+
+The install above boots **dsh's own UI**: the app carries upstream's seeded
+package set, and dshell is not in it. That is the difference between installing
+dsh's desktop shell and installing dshell, so it needed its own answer — and the
+desktop app is much stricter about plugins than the web harness.
+
+What the app enforces (`apps/desktop/src/project-manager.ts`, in the asar):
+
+- It generates its own pnpm profile at `~/.dsh/profiles/desktop`, from the seed in
+  its `resources/`, and reads the plugin list from `dsh.profile.bundles` — which
+  must **begin** with the two built-ins (`@deepseek-ai/dsh-base`,
+  `@deepseek-ai/dsh-web-app`); everything after them is a plugin.
+- Every bundle must resolve **inside the profile**. The web profile's way of
+  installing dshell — `link:` dependencies pointing at this checkout — is refused
+  at boot: `dsh desktop: profile bundle "@nexus-aethra/dshell-bundle" resolved
+  outside the desktop profile`. So the packages have to arrive from a registry.
+
+Route that works, using tools this repo already has (documented step by step in
+`dshell-setup.md`): `pnpm pack` every dshell package, serve them with
+`scripts/local-registry.mjs`, add them to the profile's `dependencies` at `0.1.0`,
+append the bundle to `dsh.profile.bundles`, and install with the app's **own**
+bundled node and pnpm (the app pins registry, store dir and virtual-store settings
+for its profile, and a different pnpm would resolve differently).
+
+One more discovery on the way: the desktop seed is a curated subset of upstream,
+and five packages dshell names are not in it — `@deepseek-ai/dsh-tool-terminal`
+(named by the bundle patch's `dshell-tool-terminal` row), `dsh-client-store`,
+`dsh-client-ui-slots`, `dsh-client-ui-primitives`, `dsh-client-ui-dockkit`
+(diffed dshell's 42 upstream references against the profile's 242 installed
+packages). They ship packed by our own build under
+`.desktop-build/…/packed/dsh/`, so they go into the same local registry; without
+`dsh-tool-terminal` the desktop app refuses to boot with `failed to import loader
+entry dshell-tool-terminal`.
+
+Verified: after that install the app starts with no plugin-tree error, and
+`~/.dsh/settings.yaml` gains a `dshell:` section (`theme: midnight`,
+`commandHint`, `historyList`, `tabCompletion`, `completionShellOracle`) written at
+startup — dsh persists settings only for registered namespaces, so dshell's host
+half is applied inside the desktop app, not merely present in `node_modules`. The
+only remaining line in its log is the updater's 404 for a Linux channel upstream
+does not publish.
+
+**Not covered:** none of this is in the installer yet — a fresh machine needs the
+pack/serve/install steps by hand, and the honest next step is to seed the five
+upstream packages plus the dshell tarballs into the app's `resources/seed` and
+pre-write the profile's plugin list at build time, so `apt install` alone brings up
+dshell. The client half is confirmed by resolution and by the app's clean boot, not
+by a screenshot; and the app's plugin window pins `registry.npmjs.org`, so a plugin
+transaction started from its UI would fetch the published 0.1.0 rather than this
+checkout.
+
+## Phase 10.29 — a package you can install, not just run
+
+Asked for directly: "打包linux安装包并帮我装好" — build an installer and put it on
+the machine.
+
+Two additions to `scripts/linux-desktop.mjs`, and one rename: what began as
+`linux-icons.mjs` now describes the whole Linux desktop delta, so it is
+`linux-desktop.mjs` and its `withLinuxIcon` is `withLinuxDesktop`.
+
+- **`deb` joins `AppImage` in `linux.target`.** Upstream builds mac and win only,
+  and its own Linux target is the portable image; the `.deb` is what makes the app
+  installable (`/opt`, `/usr/bin`, a launcher entry, icons).
+- **The two things fpm refuses to build without.** `maintainer`, supplied through
+  `deb.maintainer` (the checkout's own git identity — this build never leaves the
+  disk), and a project URL, which cost a build cycle to get right: electron-builder
+  has **no `homepage` field in its config schema**, so `homepage:` at the top level
+  fails validation with `configuration has an unknown property 'homepage'`. fpm
+  reads the URL out of the *package metadata* (`appInfo.computePackageUrl()`), so
+  it has to go in through `extraMetadata.homepage`, which `packager` merges into
+  the metadata before `AppInfo` reads it.
+
+Verified end to end, on Ubuntu 26.04 (`pnpm package:linux --from=builder`, exit 0):
+
+- `deepseek-harness-0.1.5-rc.2-linux-amd64.deb`, 194 MB, 672 MB installed, nine
+  dependencies that all resolve — `libgtk-3-0` and `libatspi2.0-0` are the pre-t64
+  names and apt satisfies them through the t64 packages' `Provides`.
+- `sudo apt install ./…deb` installs clean; `dpkg -l` shows `deepseek-harness
+  0.1.5~rc.2 amd64`; `/usr/bin/deepseek-harness` is an `update-alternatives` link;
+  `desktop-file-validate` accepts the launcher entry; all seven hicolor icons are
+  hash-identical to `assets/icons/linux/`.
+- Upstream's own `postinst` is what makes it start on a modern Ubuntu: it installs
+  `/etc/apparmor.d/deepseek-harness` (listed by `aa-status`, needed because
+  `kernel.apparmor_restrict_unprivileged_userns=1` here) and leaves
+  `chrome-sandbox` at 0755 — which is why the `.deb` needs no `--no-sandbox` in its
+  `Exec`, unlike the AppImage's upstream entry.
+- The app then launched: main process holding Wayland window handles, renderer
+  alive, and an empty log apart from the updater's 404.
+
+**Not covered:** mac and win installers (this repo packages linux-x64 only); the
+package's `Description:` synopsis line comes out blank, cosmetic and inherited
+from upstream's metadata; and both the package name (`deepseek-harness`) and the
+launcher entry (`DeepSeek Harness`) are upstream's product identity, not dshell's.
+
+## Phase 10.30 — dshell inside the installed desktop app
+
+The install above boots **dsh's own UI**: the app carries upstream's seeded
+package set, and dshell is not in it. That is the difference between installing
+dsh's desktop shell and installing dshell, so it needed its own answer — and the
+desktop app is much stricter about plugins than the web harness.
+
+What the app enforces (`apps/desktop/src/project-manager.ts`, in the asar):
+
+- It generates its own pnpm profile at `~/.dsh/profiles/desktop`, from the seed in
+  its `resources/`, and reads the plugin list from `dsh.profile.bundles` — which
+  must **begin** with the two built-ins (`@deepseek-ai/dsh-base`,
+  `@deepseek-ai/dsh-web-app`); everything after them is a plugin.
+- Every bundle must resolve **inside the profile**. The web profile's way of
+  installing dshell — `link:` dependencies pointing at this checkout — is refused
+  at boot: `dsh desktop: profile bundle "@nexus-aethra/dshell-bundle" resolved
+  outside the desktop profile`. So the packages have to arrive from a registry.
+
+Route that works, using tools this repo already has (documented step by step in
+`dshell-setup.md`): `pnpm pack` every dshell package, serve them with
+`scripts/local-registry.mjs`, add them to the profile's `dependencies` at `0.1.0`,
+append the bundle to `dsh.profile.bundles`, and install with the app's **own**
+bundled node and pnpm (the app pins registry, store dir and virtual-store settings
+for its profile, and a different pnpm would resolve differently).
+
+One more discovery on the way: the desktop seed is a curated subset of upstream,
+and five packages dshell names are not in it — `@deepseek-ai/dsh-tool-terminal`
+(named by the bundle patch's `dshell-tool-terminal` row), `dsh-client-store`,
+`dsh-client-ui-slots`, `dsh-client-ui-primitives`, `dsh-client-ui-dockkit`
+(diffed dshell's 42 upstream references against the profile's 242 installed
+packages). They ship packed by our own build under
+`.desktop-build/…/packed/dsh/`, so they go into the same local registry; without
+`dsh-tool-terminal` the desktop app refuses to boot with `failed to import loader
+entry dshell-tool-terminal`.
+
+Verified: after that install the app starts with no plugin-tree error, and
+`~/.dsh/settings.yaml` gains a `dshell:` section (`theme: midnight`,
+`commandHint`, `historyList`, `tabCompletion`, `completionShellOracle`) written at
+startup — dsh persists settings only for registered namespaces, so dshell's host
+half is applied inside the desktop app, not merely present in `node_modules`. The
+only remaining line in its log is the updater's 404 for a Linux channel upstream
+does not publish.
+
+**Not covered:** none of this is in the installer yet — a fresh machine needs the
+pack/serve/install steps by hand, and the honest next step is to seed the five
+upstream packages plus the dshell tarballs into the app's `resources/seed` and
+pre-write the profile's plugin list at build time, so `apt install` alone brings up
+dshell. The client half is confirmed by resolution and by the app's clean boot, not
+by a screenshot; and the app's plugin window pins `registry.npmjs.org`, so a plugin
+transaction started from its UI would fetch the published 0.1.0 rather than this
+checkout.
