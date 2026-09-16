@@ -685,6 +685,35 @@ So, four rules:
   keystroke: the composer holds `logs/` and the next Tab asks what is inside it.
   So the directory just entered is read at once, which is what keeps a Tab-Tab
   walk down a tree from being the slow one.
+- **Entering a session warms it, twice.** Once when the composer mounts, because
+  a reader who lands in a session and reaches for Tab has typed nothing for any
+  earlier trigger to fire on; and once more when the shell itself reports where
+  it stands. The pair is not redundancy. The mount-time warm can only use the
+  session's recorded directory, and on a device it may run before the connection
+  exists at all; the second runs when the world is up AND the directory is one
+  the shell named. The report is the OSC 3008 line dsh's shell integration prints
+  before every prompt — the same bytes the command-settle trigger already
+  watches, so nothing new rides the wire.
+
+The second half of that is a correction worth stating, because it was the reason
+a first Tab could still miss. The composer's mirror of the shell's directory was
+filled only by a `cd` typed THROUGH the composer (its `resolve`), so a session
+entered after the shell had moved — or a device session whose shell starts
+somewhere other than the session's recorded tree — had no directory at all, and
+the pre-warm then read the session's own tree while the reader's Tab asked about
+the shell's. The mirror is now fed by the shell's own report, which is the only
+place the client can learn it, and which names the directory in the SHELL's
+namespace: a device's path, which is exactly what the world's path translation
+expects (a path inside a mount is mapped; anything else passes through). So a
+`cd` typed into the device's own terminal, a session resumed after a `cd`, and a
+device shell that starts in its login directory all now warm the directory a Tab
+will actually read.
+
+Measured on the device after this change: entering the session, waiting for the
+prompt, then typing `cd ` and pressing Tab INSIDE the keystroke warm's 250 ms
+window (so only the entry warm could have answered it) → the request carried
+`cwd: "/root"` (the device's own report) and the Tab took **4 ms** with the
+device's real entries in the list.
 
 Measured after all of it, same device: a Tab for a directory nobody has read
 still costs 1.1 s — and with these triggers that is now a directory the reader has

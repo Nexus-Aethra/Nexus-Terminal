@@ -141,6 +141,24 @@ export interface ShellCompletion {
    */
   warm(sessionId: string, line: string, cursor: number, oracle: boolean): void
   /**
+   * Adopt the directory the session's own shell reported it is in.
+   *
+   * The composer's `cwd` mirror used to be filled only by a `cd` typed through
+   * it, which left two ordinary cases with no directory at all: a device session
+   * whose shell starts somewhere other than the session's recorded tree, and any
+   * session entered after the shell had already moved. The host falls back to
+   * the session's own directory in that state, so the pre-warm read the wrong
+   * place — and a Tab on the right one paid a device round trip for it.
+   *
+   * The report is the same OSC 3008 the shell prints before every prompt (see
+   * `shell-report.ts`), so this costs a regex over bytes the client already
+   * sees, and it is what makes the warm after a settled command aim at the
+   * directory the command LANDED in rather than the one it left.
+   *
+   * @param cwd - the reported absolute path; ignored when empty.
+   */
+  trackShellCwd(sessionId: string, cwd: string): void
+  /**
    * The session's command history, as the up-arrow list.
    *
    * `draft` is the query: only commands *starting with* it — compared
@@ -239,6 +257,12 @@ export function createShellCompletion(): ShellCompletion {
   return {
     store,
     cwdFor: sessionId => cwds.get(sessionId),
+
+    trackShellCwd(sessionId, cwd) {
+      if (cwd.length === 0) return
+      if (cwds.get(sessionId) === cwd) return
+      cwds.set(sessionId, cwd)
+    },
 
     trackCd(sessionId, line) {
       const target = cdTargetOf(line)

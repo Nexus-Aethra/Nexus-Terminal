@@ -10,6 +10,7 @@ import {
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { readShellCaret, type ShellCaret } from '@nexus-aethra/dshell-std'
+import { shellReportCwd } from './shell-report.js'
 import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompletionState, ShellCompletion } from './completion.js'
@@ -136,6 +137,14 @@ export function DshellLeftControls(props: {
   // because the keydown interceptor is a DOM listener that must not be
   // re-registered per keystroke.
   const warmTimerRef = useRef<number | undefined>(undefined)
+  /**
+   * The session whose entry warm is waiting for the shell to say where it is.
+   *
+   * Held in a ref rather than state: the chunk listener is registered once per
+   * session and reads it at call time, so a state update would only re-register
+   * a listener to tell it the same thing.
+   */
+  const entryWarmRef = useRef<string | undefined>(undefined)
   const warmKeyRef = useRef('')
   const completeOpen = useSyncExternalStore(
     completion.store.subscribe,
@@ -163,6 +172,11 @@ export function DshellLeftControls(props: {
   // The signal is the shell-integration report the bridge already relies on, and
   // it also rides the replay a fresh attach sends — which is what warms the first
   // Tab of a session nobody has typed in yet.
+  //
+  // The same chunk usually carries the shell's report of where it now stands
+  // (OSC 3008, written before every prompt). That is adopted FIRST, so a warm
+  // triggered by a settled command aims at the directory the command landed in
+  // rather than the one it left — which is what `cd <Tab>` reads.
   useEffect(() => {
     const sessionId = props.sessionId
     if (mode !== 'shell' || sessionId === undefined || pty === undefined) return
@@ -170,10 +184,25 @@ export function DshellLeftControls(props: {
     let last = 0
     return pty.onChunk((chunkSession, chunk) => {
       if (chunkSession !== sessionId) return
-      // The marker can straddle two chunks, so the check carries a little of the
+      // Both reports can straddle two chunks, so the scan carries a little of the
       // previous text rather than trusting the frame boundary.
       const text = tail + chunk.text
-      tail = text.slice(-24)
+      tail = text.slice(-96)
+      const reported = shellReportCwd(text)
+      if (reported !== undefined && reported !== completion.cwdFor(sessionId)) {
+        completion.trackShellCwd(sessionId, reported)
+        // …and this is the entry warm's real moment: the shell has spoken, so the
+        // session's world is up (for a device, its connection exists) and the
+        // directory is one the shell itself named. Entering a session walks a
+        // replay that ends with this report, so a reader who lands in a device
+        // session and reaches for Tab without typing anything first still finds
+        // the directory already read.
+        if (entryWarmRef.current === sessionId && helpersRef.current.tabCompletion) {
+          entryWarmRef.current = undefined
+          const draft = draftRef.current
+          completion.warm(sessionId, draft, draft.length, helpersRef.current.completionShellOracle)
+        }
+      }
       if (!text.includes(COMMAND_DONE_MARKER)) return
       const now = Date.now()
       if (now - last < WARM_AFTER_COMMAND_MS) return
@@ -188,10 +217,18 @@ export function DshellLeftControls(props: {
   // settle marker, but nothing guarantees this side was subscribed in time to see
   // it, and one look at the directory the shell starts in is the cheapest way to
   // make that first key feel like every other one.
+  //
+  // Entering arms a second warm as well, which the chunk effect fires when the
+  // shell reports where it stands (see `shell-report.ts`). The pair is deliberate:
+  // the warm here can only use the session's recorded directory, and on a device
+  // it may run before the connection exists at all; the one the report triggers
+  // runs when both are facts. Two requests, one of which is answered from the
+  // host's cache.
   useEffect(() => {
     const sessionId = props.sessionId
     if (mode !== 'shell' || sessionId === undefined) return
     if (!helpersRef.current.tabCompletion) return
+    entryWarmRef.current = sessionId
     const draft = draftRef.current
     completion.warm(String(sessionId), draft, draft.length, helpersRef.current.completionShellOracle)
   }, [mode, props.sessionId, completion])
