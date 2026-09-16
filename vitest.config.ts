@@ -12,6 +12,10 @@ import { defineConfig } from 'vitest/config'
  * alias below a spec would silently test a stale artifact instead of the code
  * it is next to. Anything needing a session, a PTY, or a browser is verified
  * against a live harness instead (see docs/dshell-roadmap.md).
+ *
+ * `scripts/tests` is in scope for the same reason: the packaging helpers there
+ * are ordinary functions, and the icon set is a fact about files rather than
+ * about the harness.
  */
 export default defineConfig({
   resolve: {
@@ -21,6 +25,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['packages/*/*/tests/**/*.spec.ts'],
+    include: ['packages/*/*/tests/**/*.spec.ts', 'scripts/tests/**/*.spec.ts'],
   },
 })
