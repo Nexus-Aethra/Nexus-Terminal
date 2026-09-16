@@ -63,6 +63,8 @@ const entryStyle: CSSProperties = {
   textAlign: 'left', width: '100%',
 }
 const footRowStyle: CSSProperties = { display: 'flex', gap: 8, justifyContent: 'flex-end' }
+/** The create row: a name field and the one button that writes it. */
+const createRowStyle: CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }
 const quietButtonStyle: CSSProperties = {
   border: '1px solid #3a3a42', background: 'transparent', color: 'inherit', cursor: 'pointer',
   borderRadius: 6, padding: '6px 14px', fontSize: 13,
@@ -124,11 +126,15 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
   const [typed, setTyped] = useState(props.initial)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const [newName, setNewName] = useState('')
+  /** What the last create attempt answered: a refusal the row below it explains. */
+  const [createNote, setCreateNote] = useState<'exists' | 'badName' | 'noAccess' | null>(null)
 
   /** Ask the host for one directory; the answer replaces what is shown. */
   const load = (path: string): void => {
     setBusy(true)
     setFailure(null)
+    setCreateNote(null)
     void fetch(DSHELL_DIRS_PATH, {
       method: 'POST',
       credentials: 'include',
@@ -138,6 +144,41 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
       const body = await response.json() as DshellDirsResponse
       setView(body)
       setTyped(body.path ?? path)
+    }).catch((error: unknown) => {
+      setFailure(error instanceof Error ? error.message : String(error))
+    }).finally(() => { setBusy(false) })
+  }
+
+  /**
+   * Create the directory named in the field, then land inside it.
+   *
+   * The host answers with the NEW directory's listing, so success is one state
+   * update: the reader is standing in what they just made, with the field
+   * cleared for the next name.
+   */
+  const create = (): void => {
+    if (view?.path === undefined || newName.trim().length === 0) return
+    setBusy(true)
+    setFailure(null)
+    setCreateNote(null)
+    void fetch(DSHELL_DIRS_PATH, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'mkdir', path: view.path, name: newName }),
+    }).then(async (response) => {
+      const body = await response.json() as DshellDirsResponse
+      if (body.created !== undefined) {
+        setNewName('')
+        setView(body)
+        setTyped(body.path ?? body.created)
+        return
+      }
+      // Refused: the listing that came with it is still the truth, so it
+      // replaces what is shown, and the reason is said under the field.
+      setView(body)
+      setTyped(body.path ?? view.path ?? '')
+      if (body.note === 'exists' || body.note === 'badName' || body.note === 'noAccess') setCreateNote(body.note)
     }).catch((error: unknown) => {
       setFailure(error instanceof Error ? error.message : String(error))
     }).finally(() => { setBusy(false) })
@@ -153,6 +194,8 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
     : t(view.note === 'noDirectory'
       ? 'dataDialog.note.noDirectory'
       : view.note === 'notDirectory' ? 'dataDialog.note.notDirectory' : 'dataDialog.note.noAccess')
+  const createMessage = createNote === null ? null : t(`dataDialog.create.${createNote}` as 'dataDialog.create.exists')
+  const writable = view?.writable !== false
 
   return createElement('div', {
     style: backdropStyle,
@@ -236,6 +279,45 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
       failure === null
         ? null
         : createElement('div', { style: errorStyle }, t('dataDialog.error', { message: failure })),
+      // Inside what they just made: the field is empty again and the note says
+      // where they landed, so a reader who came to create does not have to read
+      // the list to know it worked.
+      view?.created === undefined
+        ? null
+        : createElement('div', { style: noteStyle }, t('dataDialog.created', { path: view.created })),
+      // The one action here that WRITES. It is offered beside the list rather
+      // than on the footer's line because it acts on the directory being SHOWN
+      // (the footer's action takes that directory), and it is disabled where the
+      // host said the directory cannot be written.
+      createElement('div', { style: createRowStyle, 'data-dshell-dataCreate': 'row' },
+        createElement('input', {
+          style: { ...fieldStyle, flex: 1 },
+          value: newName,
+          spellCheck: false,
+          disabled: busy || !writable,
+          'aria-label': t('dataDialog.create.label'),
+          placeholder: t('dataDialog.create.placeholder'),
+          onChange: (event: { target: { value: string } }) => {
+            setNewName(event.target.value)
+            setCreateNote(null)
+          },
+          onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+            if (event.key !== 'Enter') return
+            event.preventDefault()
+            event.stopPropagation()
+            create()
+          },
+        }),
+        createElement('button', {
+          type: 'button',
+          style: quietButtonStyle,
+          disabled: busy || !writable || newName.trim().length === 0,
+          onClick: () => { create() },
+        }, t('dataDialog.create.action')),
+      ),
+      createMessage === null
+        ? null
+        : createElement('div', { style: warnStyle }, createMessage),
       view?.truncated === true
         ? createElement('div', { style: warnStyle }, t('dataDialog.truncated'))
         : null,
@@ -252,7 +334,7 @@ export function DataDirDialog(props: DataDirDialogProps): ReactElement {
           // A directory the host could not read is not a choice: a note means
           // the path is missing, is a file, or is unreadable, and taking it
           // would store a typo the harness would then fail to write into.
-          disabled: busy || view?.path === undefined || view.writable === false || view.note !== undefined,
+          disabled: busy || view?.path === undefined || !writable || view.note !== undefined,
           onClick: () => { if (view?.path !== undefined) props.onPick(view.path) },
         }, t('dataDialog.use')),
       ),

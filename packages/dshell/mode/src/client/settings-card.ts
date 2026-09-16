@@ -2,9 +2,10 @@
  * The dshell card in the Plugins settings section: the terminal palette, and
  * the switches for the shell helpers that read the composer's line.
  *
- * One card per settings namespace — the section dispatches the card for the
- * namespace the Host registered — so both groups live here rather than in a
- * second card that could never be reached.
+ * One card per settings namespace: the section dispatches a card for every
+ * namespace the Host serves that a card claims, so dshell's OTHER document
+ * (where it keeps its files, `dshell-data`) is a card of its own rather than a
+ * group here — see `data-card.ts`.
  *
  * It follows the section's card shape — a header button naming what the card
  * governs over a line that says what its settings are set to, collapsed until
@@ -34,8 +35,6 @@ import type { DshellShellHelper } from '../settings.js'
 import type { DshellModeKey } from './locales.js'
 import { THEMES, setTheme, themeStore } from './theme.js'
 import { setShellHelper, useShellHelpers } from './shell-settings.js'
-import { setDataDir, useDataDir } from './data-dir.js'
-import { DataDirDialog } from './data-dir-dialog.js'
 
 const cardStyle: CSSProperties = {
   listStyle: 'none',
@@ -137,48 +136,6 @@ const helperDetailStyle: CSSProperties = {
   opacity: 0.62,
 }
 
-/** The path a data-directory row shows: monospaced, because it is one. */
-const dataPathStyle: CSSProperties = {
-  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-  fontSize: 12,
-  lineHeight: '18px',
-  color: 'var(--dsw-alias-label-primary)',
-  overflowWrap: 'anywhere',
-}
-
-/** The buttons a data-directory row ends with, kept off the text's baseline. */
-const dataActionsStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  flex: '0 0 auto',
-}
-
-/** A small bordered button, for an action that is not a switch or the primary one. */
-const smallButtonStyle: CSSProperties = {
-  border: '1px solid #3a3a42',
-  background: 'transparent',
-  color: 'inherit',
-  cursor: 'pointer',
-  borderRadius: 6,
-  padding: '5px 12px',
-  font: 'inherit',
-  fontSize: 12,
-  flex: '0 0 auto',
-}
-
-/** An inline text button, for "undo this choice" beside the one that makes it. */
-const resetButtonStyle: CSSProperties = {
-  border: 'none',
-  background: 'none',
-  padding: 0,
-  font: 'inherit',
-  fontSize: 12,
-  color: '#7aa2f7',
-  cursor: 'pointer',
-  flex: '0 0 auto',
-}
-
 /**
  * The switches, in the order the card shows them.
  *
@@ -245,13 +202,10 @@ function Chevron({ open }: { open: boolean }): ReactElement {
  */
 export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactElement {
   const [open, setOpen] = useState(false)
-  const [picking, setPicking] = useState(false)
   const current = useSyncExternalStore(themeStore.subscribe, themeStore.getSnapshot)
   const helpers = useShellHelpers()
-  const dataDir = useDataDir()
-  // The header says what the card is set TO, so the three groups are readable
-  // without opening it: the palette by name, the assists by how many are off,
-  // and the data directory by the path it is set to.
+  // The header says what the card is set TO, so the two groups are readable
+  // without opening it: the palette by name, and the assists by how many are off.
   const off = HELPER_ROWS.filter(row => !helpers[row.field])
   const currentTheme = THEMES.find(theme => theme.id === current)
   const themeLabel = currentTheme === undefined ? current : t(currentTheme.labelKey)
@@ -260,7 +214,6 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
     : t('settings.helpers.off', {
       list: off.map(row => t(row.labelKey)).join(t('settings.helpers.joiner')),
     })
-  const dataLabel = dataDir.length === 0 ? t('settings.data.following') : dataDir
   return createElement('li', {
     style: open ? { ...cardStyle, ...openCardStyle } : cardStyle,
     'data-dshell-card': 'settings',
@@ -276,7 +229,7 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
           style: { fontSize: 14, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' },
         }, t('settings.title')),
         createElement('span', { style: descStyle },
-          t('settings.summary', { theme: themeLabel, helpers: helperSummary, data: dataLabel })),
+          t('settings.summary', { theme: themeLabel, helpers: helperSummary })),
       ),
       createElement(Chevron, { open }),
     ),
@@ -338,39 +291,7 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
         )),
         createElement('div', { style: noteStyle },
           t('settings.note.helpers')),
-        createElement('div', { style: groupStyle }, t('settings.group.data')),
-        createElement('div', { style: helperRowStyle, 'data-dshell-dataDir': 'row' },
-          createElement('div', { style: helperTextStyle },
-            createElement('div', { style: helperLabelStyle }, t('settings.data.label')),
-            createElement('div', { style: helperDetailStyle }, t('settings.data.detail')),
-            createElement('div', { style: dataPathStyle }, dataLabel),
-          ),
-          createElement('div', { style: dataActionsStyle },
-            createElement('button', {
-              type: 'button',
-              style: smallButtonStyle,
-              onClick: () => { setPicking(true) },
-            }, t('settings.data.choose')),
-            dataDir.length === 0
-              ? null
-              : createElement('button', {
-                type: 'button',
-                style: resetButtonStyle,
-                onClick: () => { setDataDir('') },
-              }, t('settings.data.reset')),
-          ),
-        ),
-        createElement('div', { style: noteStyle },
-          t('settings.data.note')),
       )
-      : null,
-    picking
-      ? createElement(DataDirDialog, {
-        t,
-        initial: dataDir,
-        onPick: (path) => { setDataDir(path); setPicking(false) },
-        onClose: () => { setPicking(false) },
-      })
       : null,
   )
 }

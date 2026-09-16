@@ -1,9 +1,9 @@
 /**
  * The data-directory field, as the settings card reads and writes it.
  *
- * The durable value lives in the Host settings document, and this store is the
- * card's view of it — the same shape `shell-settings.ts` has, with one
- * deliberate difference: no localStorage pre-paint cache. The other cached
+ * The durable value lives in its own Host settings document (`dshell-data`), and
+ * this store is the card's view of it — the same shape `shell-settings.ts` has,
+ * with one deliberate difference: no localStorage pre-paint cache. The other cached
  * values gate a GESTURE (a key that must not fire once before its switch
  * arrives), so they have to be right at first paint; this one is only ever
  * displayed and only takes effect at the next harness start, which means a
@@ -16,7 +16,7 @@
 
 import { useSyncExternalStore } from 'react'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { DATA_DIR_DEFAULT, readDataDir } from '../settings.js'
+import { DATA_DIR_DEFAULT, readDataSettings } from '../settings.js'
 
 /** The stored directory; empty means "follow dsh's location". */
 export const dataDirStore = createSnapshotStore<string>(DATA_DIR_DEFAULT)
@@ -58,7 +58,7 @@ export function setDataDir(next: string): void {
  * @param value - the bound settings value, possibly partial or absent.
  */
 export function adoptDataDir(value: unknown): void {
-  const next = readDataDir(value)
+  const next = readDataSettings(value).dir
   if (dataDirStore.getSnapshot() !== next) dataDirStore.set(next)
 }
 

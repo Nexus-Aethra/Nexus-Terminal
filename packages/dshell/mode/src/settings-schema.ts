@@ -31,10 +31,17 @@ export const DshellSettingsSchema: z<Record<string, unknown>> = z.object({
   // stored but dropped from the RESOLVED value, so the mirror this card reads
   // back (and any second browser) would see the default instead of the choice.
   [SHELL_ORACLE_FIELD]: z.boolean().default(SHELL_HELPER_DEFAULT),
-  // The one field the Host acts on: it becomes this process's data root. Still
-  // registered as `live`, because the namespace's other fields really are — the
-  // palette and the switches take effect on the click that sets them, and a
-  // namespace-level "restart" mark would have to lie about them. That this one
-  // field waits for the next start is said where a reader looks, in the card.
+})
+
+/**
+ * Schema for the `dshell-data` namespace: where dshell keeps its own files.
+ *
+ * Registered as its own namespace so it is its own card — see
+ * `DSHELL_DATA_NAMESPACE` — and marked `applies: 'restart'`, which is the
+ * honest answer for a directory a running process cannot move out from under
+ * itself. (The terminal namespace stays `live`: its palette and switches take
+ * effect on the click that sets them.)
+ */
+export const DshellDataSettingsSchema: z<Record<string, unknown>> = z.object({
   [DATA_DIR_FIELD]: z.string().default(DATA_DIR_DEFAULT),
 })

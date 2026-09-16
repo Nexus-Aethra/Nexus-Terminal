@@ -12,11 +12,12 @@
  * a file and a symlink to a file do not.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { listDirectories, resolveBrowsePath } from '../src/dirs-route.js'
+import type { DshellDirsResponse } from '@nexus-aethra/dshell-std'
+import { createDirsRoute, listDirectories, resolveBrowsePath, resolveNewDirectoryPath } from '../src/dirs-route.js'
 
 /** Every tree a spec made, removed afterwards. */
 const made: string[] = []
@@ -78,5 +79,77 @@ describe('listing the directories below a path', () => {
   it('reports an empty directory as empty rather than as a failure', async () => {
     const root = scratch('empty')
     expect(await listDirectories(root)).toEqual({ entries: [], truncated: false })
+  })
+})
+
+describe('naming a directory to create', () => {
+  const parent = '/home/u/data'
+
+  it('accepts one ordinary segment below the parent', () => {
+    expect(resolveNewDirectoryPath(parent, 'dshell')).toBe('/home/u/data/dshell')
+    expect(resolveNewDirectoryPath(parent, '  spaced  ')).toBe('/home/u/data/spaced')
+    expect(resolveNewDirectoryPath(parent, 'a.b-c_d')).toBe('/home/u/data/a.b-c_d')
+  })
+
+  it('refuses anything that is not a single segment below the parent', () => {
+    // A field that accepts these creates directories the reader cannot see
+    // while typing, or writes over the parent's own name.
+    for (const name of ['', '   ', '.', '..', 'a/b', 'a\\b', '/etc', '../escape', 'a/../b']) {
+      expect(resolveNewDirectoryPath(parent, name), name).toBeUndefined()
+    }
+  })
+})
+
+describe('creating a directory through the route', () => {
+  /** The route's fetch, driven by a request body the way the browser sends it. */
+  function post(body: Record<string, unknown>): Promise<DshellDirsResponse> {
+    const route = createDirsRoute()
+    return route.fetch(new Request('http://host/api/dshell/dirs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })).then(async response => await response.json() as DshellDirsResponse)
+  }
+
+  it('creates the directory and answers with ITS listing', async () => {
+    const root = scratch('create')
+    const answer = await post({ action: 'mkdir', path: root, name: 'transcripts' })
+    expect(answer.created).toBe(join(root, 'transcripts'))
+    // Landed inside it: the picker shows the new directory, not its parent.
+    expect(answer.path).toBe(join(root, 'transcripts'))
+    expect(answer.entries).toEqual([])
+    expect(existsSync(join(root, 'transcripts'))).toBe(true)
+  })
+
+  it('says a name already exists instead of failing, and lists the parent', async () => {
+    const root = scratch('exists')
+    mkdirSync(join(root, 'taken'))
+    const answer = await post({ action: 'mkdir', path: root, name: 'taken' })
+    expect(answer.note).toBe('exists')
+    expect(answer.created).toBeUndefined()
+    expect(answer.path).toBe(root)
+    expect(answer.entries?.map(entry => entry.name)).toEqual(['taken'])
+  })
+
+  it('refuses a name that is not one segment, without creating anything', async () => {
+    const root = scratch('badname')
+    const answer = await post({ action: 'mkdir', path: root, name: '../escape' })
+    expect(answer.note).toBe('badName')
+    expect(answer.created).toBeUndefined()
+    expect(existsSync(join(root, '..', 'escape'))).toBe(false)
+    // The listing that came with the refusal is still the truth.
+    expect(answer.path).toBe(root)
+  })
+
+  it('reports the parent it cannot write to', async () => {
+    const root = scratch('readonly')
+    chmodSync(root, 0o500)
+    try {
+      const answer = await post({ action: 'mkdir', path: root, name: 'nope' })
+      expect(answer.note).toBe('noAccess')
+      expect(answer.created).toBeUndefined()
+    } finally {
+      chmodSync(root, 0o700)
+    }
   })
 })
