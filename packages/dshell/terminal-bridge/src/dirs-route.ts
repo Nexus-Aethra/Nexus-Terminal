@@ -23,10 +23,10 @@
  * directory on a device is not a thing dshell can have.
  */
 
-import { access, readdir, stat } from 'node:fs/promises'
+import { access, mkdir, readdir, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, normalize } from 'node:path'
+import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import {
   DSHELL_DIRS_PATH, type DshellDirsEntry, type DshellDirsRequest, type DshellDirsResponse,
@@ -107,6 +107,36 @@ export async function listDirectories(path: string): Promise<{ entries: DshellDi
 }
 
 /**
+ * Resolve one new directory's name into the absolute path to create.
+ *
+ * This is the whole guard on a request that WRITES to the host's file system,
+ * so it refuses rather than repairs, and it refuses anything that is not a
+ * single ordinary path segment:
+ *
+ *   - empty, `.` and `..` — the parent itself, or its parent, neither of which is
+ *     a directory being created;
+ *   - anything containing a separator (`/`, `\`) — a field that accepts `a/b/c`
+ *     would create directories the reader cannot see while typing;
+ *   - a name that normalizes to something else, or that is absolute.
+ *
+ * The caller supplies the parent, which it has already listed, so containment
+ * needs no second check: the name cannot leave the directory it was typed in.
+ *
+ * @param name - the submitted name.
+ * @returns the absolute path to create, or undefined when the name is refused.
+ */
+export function resolveNewDirectoryPath(parent: string, name: string): string | undefined {
+  const trimmed = name.trim()
+  if (trimmed.length === 0 || trimmed === '.' || trimmed === '..') return undefined
+  if (trimmed.includes('/') || trimmed.includes('\\')) return undefined
+  if (trimmed.includes(sep) || trimmed.includes('\0')) return undefined
+  const path = resolve(join(parent, trimmed))
+  // A name that is a path in disguise (`~`, `C:`, a drive-relative spelling) is
+  // caught here: the result must sit directly below the parent.
+  return dirname(path) === resolve(parent) ? path : undefined
+}
+
+/**
  * Bind the route to the host's own file system.
  * @returns the route the host's connection layer can register.
  */
@@ -126,29 +156,100 @@ export function createDirsRoute(): ConnectionFetchRoute {
         // optional and the home directory is the answer either way.
       }
       const path = resolveBrowsePath(typeof input.path === 'string' ? input.path : undefined, home)
-      try {
-        const listed = await listDirectories(path)
-        const writable = await access(path, constants.W_OK).then(() => true, () => false)
-        const parent = dirname(path)
-        return respond({
-          path,
-          parent: parent === path ? null : parent,
-          home,
-          entries: listed.entries,
-          writable,
-          ...listed.truncated ? { truncated: true } : {},
-        })
-      } catch (error) {
-        // Three reasons, three answers, because the picker says which one it was
-        // rather than "could not read": a path that is not there is a typo, a
-        // path that is a file is a wrong pick, and a path that cannot be read is
-        // the one a permission change can fix.
-        const code = (error as NodeJS.ErrnoException).code
-        if (code === 'ENOTDIR') return respond({ path, home, parent: null, note: 'notDirectory' })
-        if (code === 'ENOENT') return respond({ path, home, parent: null, note: 'noDirectory' })
-        if (code === 'EACCES' || code === 'EPERM') return respond({ path, home, parent: null, note: 'noAccess' })
-        return respond({ error: error instanceof Error ? error.message : String(error) }, 500)
-      }
+      if (input.action === 'mkdir') return await createDirectory(path, typeof input.name === 'string' ? input.name : '', home)
+      return await readDirectory(path, home)
     },
   }
+}
+
+/**
+ * List one directory, saying why when it cannot.
+ *
+ * @param path - absolute directory to list.
+ * @param home - the host user's home directory, echoed for the picker's shortcuts.
+ * @returns the answer.
+ */
+async function readDirectory(path: string, home: string): Promise<Response> {
+  try {
+    const listed = await listDirectories(path)
+    const writable = await access(path, constants.W_OK).then(() => true, () => false)
+    const parent = dirname(path)
+    return respond({
+      path,
+      parent: parent === path ? null : parent,
+      home,
+      entries: listed.entries,
+      writable,
+      ...listed.truncated ? { truncated: true } : {},
+    })
+  } catch (error) {
+    return respond(refusal(path, home, error))
+  }
+}
+
+/**
+ * Create one directory below `path`, then answer with ITS listing.
+ *
+ * Landing the reader inside what they just made is the point: the picker's next
+ * act is either to fill it or to take it, and both read better from inside. A
+ * name that already exists is a note rather than an error — the reader picks the
+ * existing directory instead, which the listing beside the note already shows.
+ *
+ * `mkdir` without `recursive` is deliberate: it fails with `ENOENT` if the parent
+ * vanished between the listing and the request, and refusing is better than
+ * silently rebuilding a tree the reader is not looking at.
+ *
+ * @param parent - the directory the name is created in.
+ * @param name - the submitted name.
+ * @param home - the host user's home directory, echoed for the picker's shortcuts.
+ * @returns the answer, listing the new directory.
+ */
+async function createDirectory(parent: string, name: string, home: string): Promise<Response> {
+  const target = resolveNewDirectoryPath(parent, name)
+  if (target === undefined) {
+    const listing = await readDirectory(parent, home)
+    const body = await listing.json() as DshellDirsResponse
+    return respond({ ...body, note: 'badName' })
+  }
+  try {
+    await mkdir(target)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'EEXIST') {
+      const listing = await readDirectory(parent, home)
+      const body = await listing.json() as DshellDirsResponse
+      // The parent's own refusal (missing, a file, unreadable) explains the
+      // failure better than a bare code, and the picker already has words for it.
+      if (body.note !== undefined) return respond(body)
+      return respond({ path: parent, home, parent: dirname(parent), note: 'noAccess' })
+    }
+    // Already there: not a failure, but not a creation either.
+    const listing = await readDirectory(parent, home)
+    const body = await listing.json() as DshellDirsResponse
+    return respond({ ...body, note: 'exists' })
+  }
+  const listing = await readDirectory(target, home)
+  const body = await listing.json() as DshellDirsResponse
+  return respond({ ...body, created: target })
+}
+
+/**
+ * The refusal for a directory that could not be read.
+ *
+ * Three reasons, three answers, because the picker says which one it was rather
+ * than "could not read": a path that is not there is a typo, a path that is a
+ * file is a wrong pick, and a path that cannot be read is the one a permission
+ * change can fix.
+ *
+ * @param path - the directory that was asked for.
+ * @param home - the host user's home directory.
+ * @param error - what the file system said.
+ * @returns the answer body.
+ */
+function refusal(path: string, home: string, error: unknown): DshellDirsResponse {
+  const code = (error as NodeJS.ErrnoException).code
+  if (code === 'ENOTDIR') return { path, home, parent: null, note: 'notDirectory' }
+  if (code === 'ENOENT') return { path, home, parent: null, note: 'noDirectory' }
+  if (code === 'EACCES' || code === 'EPERM') return { path, home, parent: null, note: 'noAccess' }
+  return { error: error instanceof Error ? error.message : String(error) }
 }

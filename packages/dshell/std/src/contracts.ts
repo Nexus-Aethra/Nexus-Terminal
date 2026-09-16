@@ -840,15 +840,33 @@ export const DSHELL_HOME_ENV = 'DSHELL_HOME'
  */
 export const DSHELL_DIRS_PATH = '/api/dshell/dirs'
 
-/** One request body: the directory to list, or nothing for the home directory. */
+/** One request body: what to do with the directory being shown. */
 export interface DshellDirsRequest {
+  /**
+   * `list` (the default) reads a directory, `mkdir` creates one inside it.
+   *
+   * Two actions rather than two routes because they are the same subject read
+   * two ways: the picker shows a directory, and the one way out of a tree whose
+   * directory does not exist yet is to make it where the reader is standing.
+   */
+  readonly action?: 'list' | 'mkdir' | undefined
   /**
    * A path on the HOST machine. Absolute, or `~`-prefixed; anything else is
    * resolved against the home directory rather than the process's cwd, which is
    * the one thing a browser could not know and would surprise a reader either
    * way.
+   *
+   * For `mkdir` this is the PARENT directory, and it must already exist.
    */
   readonly path?: string | undefined
+  /**
+   * The directory to create, for `mkdir`: ONE path segment, not a path.
+   *
+   * A name rather than a path on purpose — `mkdir` here is the picker's
+   * "new folder", and a field that accepts `a/b/c` is a field that creates
+   * three directories somewhere the reader cannot see while typing.
+   */
+  readonly name?: string | undefined
 }
 
 /** One directory below the listed one. Files are not offered: this names a data root. */
@@ -863,11 +881,13 @@ export interface DshellDirsEntry {
  * One answer.
  *
  * `parent` is `null` at the file system root, which is how the picker knows to
- * stop drawing an up-one-level control. `writable` describes the listed
- * directory itself — the card refuses a read-only choice in words rather than
- * letting the harness fail to write after a restart — and is absent when the
- * host could not tell. `home` is where the picker opens and what 「跟随默认」
- * points at.
+ * stop drawing an up-one-level control. `created` is the directory a `mkdir`
+ * request made, and the listing alongside it is that directory's (empty) own —
+ * so the picker lands the reader inside what they just made rather than leaving
+ * them to find it. `writable` describes the listed directory itself — the card
+ * refuses a read-only choice in words rather than letting the harness fail to
+ * write after a restart — and is absent when the host could not tell. `home` is
+ * where the picker opens and what 「跟随默认」 points at.
  */
 export interface DshellDirsResponse {
   /** The resolved directory that was listed. */
@@ -878,12 +898,14 @@ export interface DshellDirsResponse {
   readonly home?: string
   /** The directories below `path`, sorted the way the picker draws them. */
   readonly entries?: readonly DshellDirsEntry[]
+  /** The directory a `mkdir` created, when one was. */
+  readonly created?: string
   /** Whether `path` is writable by the harness; absent when unknown. */
   readonly writable?: boolean
   /** Whether the host cut the listing at its cap; the picker says so rather than lying by omission. */
   readonly truncated?: boolean
   /** Why the answer carries no listing, when it does not. */
-  readonly note?: 'noDirectory' | 'notDirectory' | 'noAccess'
+  readonly note?: 'noDirectory' | 'notDirectory' | 'noAccess' | 'exists' | 'badName'
   /** A refusal the card shows verbatim. */
   readonly error?: string
 }

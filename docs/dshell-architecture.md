@@ -770,11 +770,24 @@ the command-history database). The home itself comes from dsh — `$DSH_HOME`, e
 `~/.dsh` — and for a long time that was the whole story: to put dshell's files on
 another disk you had to move the harness with them.
 
-The settings card now names that directory itself (`dshell` → `dataDir`), and the
-distinction is the feature rather than a detail: moving dsh's home moves sessions,
-settings and storage, while a reader with a full disk and a big transcript
-directory wants only the second. The field is applied by `dshell-mode`'s host
-half, and everything about how it is applied follows from two decisions.
+The settings now name that directory themselves, in a namespace and a CARD of
+their own (`dshell-data`, field `dir`), and both the separation and the placement
+are the feature rather than details:
+
+- **Not dsh's home.** Moving `DSH_HOME` moves sessions, settings and storage;
+  a reader with a full disk and a big transcript directory wants only the second.
+- **Not the terminal card.** dsh's plugin settings section dispatches one card per
+  registered settings namespace, so a second namespace is a second card — and
+  where dshell keeps its files is not a setting about the composer. A reader
+  looking for "where does this thing write my transcripts" does not open
+  终端与输入辅助, and a control that moves gigabytes belongs on a card whose title
+  says so. The terminal namespace keeps the palette and the shell switches, and
+  both stay `live`; this one is registered `applies: 'restart'`, which is the
+  honest mark for a directory a running process cannot move out from under
+  itself.
+
+The field is applied by `dshell-mode`'s host half when its namespace resolves,
+and everything about how it is applied follows from the decisions below.
 
 **It takes effect at the next start, and the files MOVE.** A running harness
 cannot relocate the files it is writing — the transcript of the session on screen
@@ -843,6 +856,19 @@ button that takes the directory being shown. The route reads DIRECTORIES only
 reports why it could not read a path (`noDirectory`, `notDirectory`, `noAccess`)
 and whether the directory it listed can be written to, because a read-only choice
 is refused in words rather than becoming a failure to write after a restart.
+
+It also CREATES one, which is the same route's second action (`mkdir`) and the
+only thing dshell writes outside its own trees. A reader who has decided where the
+files go has usually decided on a directory that does not exist yet, and sending
+them to a terminal to make it is the kind of gap that makes a picker feel like a
+form. So the picker carries a name field and a 新建目录 button, and the host
+accepts ONE path segment below the directory being shown — refused rather than
+repaired: empty, `.`, `..`, anything with a separator, anything that resolves
+outside the parent. The name is a name, not a path, because a field that accepts
+`a/b/c` creates directories the reader cannot see while typing. On success the
+answer carries the new directory's own listing, so the picker lands the reader
+inside what they just made; a name already taken is reported (`exists`) with the
+parent's listing, since the directory they want is already in front of them.
 
 ## 16. What dshell does not introduce
 

@@ -2876,15 +2876,28 @@ sessions where they were.
 
 What was built:
 
-- **A row in the dshell settings card** (数据目录) with a 「选择…」 button and
-  恢复默认, both stored in the existing `dshell` settings namespace (`dataDir`).
+- **A card of its own** in the plugin settings section (数据目录), with a
+  「选择…」 button and 恢复默认, stored in a namespace of its own (`dshell-data`,
+  field `dir`). The first cut put it in the terminal card as a `dshell.dataDir`
+  row, and that was wrong in a way the reviewer named precisely: dsh's plugin
+  section dispatches one card per registered settings namespace, so a second
+  namespace is a second card — and "where does this thing write my transcripts"
+  is not a question about the composer. The terminal namespace keeps the palette
+  and the shell switches (both `live`); the storage namespace is registered
+  `applies: 'restart'`, which is true of it and false of the others. The field
+  moved before release, so no document migration was needed.
 - **A host-side directory browser** (`POST /api/dshell/dirs`,
   `terminal-bridge/src/dirs-route.ts`): the browser cannot open a native folder
   dialog for a host path, and in a remote `dsh web` the browser is not even on the
   harness's machine, so the host lists its own directories and the card draws
   breadcrumb + up + home + a path field. Directories only; a symlink to one counts
   as one; a path it cannot read is reported as `noDirectory` / `notDirectory` /
-  `noAccess`, and a directory that cannot be written is refused in words.
+  `noAccess`, and a directory that cannot be written is refused in words. The same
+  route CREATES a directory (`action: 'mkdir'`): one path segment below the
+  directory being shown, refused rather than repaired (empty, `.`, `..`, any
+  separator, anything resolving outside the parent), answering with the new
+  directory's own listing so the picker lands inside it, and reporting a taken
+  name as `exists` beside the parent's listing.
 - **A settlement at start** (`mode/src/data-root.ts`): the choice takes effect at
   the NEXT start, because a running harness cannot move the files it is holding
   open. At that start the trees that travel are moved (`dshell/ssh` minus sockets
@@ -2920,8 +2933,9 @@ order. Declaring the dependency is what made it deterministic. The lesson is
 recorded in `std/data-root.ts` and architecture § 15: a cross-package fact that
 must exist before an apply needs a service edge, not a coincidence.
 
-**Not covered:** the picker lists directories but does not create them (a typed
-path that does not exist is refused rather than created); migrating a root that is
+**Not covered:** the picker creates one segment at a time (no `mkdir -p`), a
+directory it creates is not remembered as "created by dshell" and so is never
+cleaned up; migrating a root that is
 an NFS mount or has a symlinked `dshell/` inside it is untested; the settings
 document's `dataDir` and the record file can disagree if the document is edited by
 hand while the harness runs, in which case the next start settles the document's

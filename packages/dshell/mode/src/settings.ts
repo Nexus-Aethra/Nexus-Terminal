@@ -45,20 +45,33 @@ export const COMMAND_HINT_FIELD = 'commandHint'
 export const SHELL_ORACLE_FIELD = 'completionShellOracle'
 
 /**
+ * Settings namespace for where dshell KEEPS its files.
+ *
+ * A namespace of its own, and therefore a card of its own, because it is not a
+ * setting about the terminal: dsh's plugin settings section dispatches one card
+ * per registered namespace, and the terminal card's subject is the composer and
+ * the shell's helpers. A reader looking for "where does this thing write my
+ * transcripts" is not looking inside 终端与输入辅助, and a control that moves
+ * gigabytes belongs to a card whose title says so.
+ */
+export const DSHELL_DATA_NAMESPACE = 'dshell-data'
+
+/**
  * Field naming dshell's own data root — the directory its `dshell/` and
  * `dshell-pty/` trees are resolved under.
  *
- * The one field here the HOST reads for itself: every other value travels to
- * the browser and stops there, while this one becomes `DSHELL_HOME` before any
- * path helper asks for a path (see `data-root.ts`). It is also the one field
- * whose change is not live — a process cannot move its own data root out from
- * under files it is writing, so the next start applies it and the card says so.
+ * The one field in dshell's settings the HOST reads for itself: everything else
+ * travels to the browser and stops there, while this one is settled into the
+ * process before any path helper asks (see `data-root.ts`). It is also the one
+ * field whose change is not live — a process cannot move its own data root out
+ * from under files it is writing, so the next start applies it and the card says
+ * so.
  *
  * The empty string means "follow the harness home", which is why the default is
  * empty rather than a path: a default spelling out `~/.dsh` would be a decision
  * taken at build time about a machine that has not been seen yet.
  */
-export const DATA_DIR_FIELD = 'dataDir'
+export const DATA_DIR_FIELD = 'dir'
 
 /** Value meaning "no override": resolve under the harness home, as before the field existed. */
 export const DATA_DIR_DEFAULT = ''
@@ -106,8 +119,12 @@ export interface DshellSettings {
   commandHint: boolean
   /** Whether completion may ask the session's own shell for the rest. */
   completionShellOracle: boolean
+}
+
+/** The durable dshell-data section: where dshell keeps its own files. */
+export interface DshellDataSettings {
   /** Directory dshell's own files live under; empty follows the harness home. */
-  dataDir: string
+  dir: string
 }
 
 /**
@@ -154,4 +171,18 @@ export function readDataDir(value: unknown): string {
   if (value === null || typeof value !== 'object') return DATA_DIR_DEFAULT
   const stored = (value as Record<string, unknown>)[DATA_DIR_FIELD]
   return typeof stored === 'string' ? stored.trim() : DATA_DIR_DEFAULT
+}
+
+/**
+ * Narrow a value crossing the settings boundary to the data section.
+ *
+ * Exported for the browser half's mirror: the card reads the same field the host
+ * settles, so both sides go through one reading rule rather than two that can
+ * drift.
+ *
+ * @param value - the bound settings value, possibly partial or absent.
+ * @returns the data section with its default applied.
+ */
+export function readDataSettings(value: unknown): DshellDataSettings {
+  return { dir: readDataDir(value) }
 }

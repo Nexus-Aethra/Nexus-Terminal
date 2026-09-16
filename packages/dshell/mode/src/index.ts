@@ -42,8 +42,8 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@nexus-aethra/dshell-terminal-bridge'
 import type { TerminalCommandRecord, TerminalDelta, DshellTerminalBridge } from '@nexus-aethra/dshell-terminal-bridge'
 import { DSHELL_DATA_ROOT_SERVICE, type DshellDataRootPlan, type DshellDataRootSeat } from '@nexus-aethra/dshell-std'
-import { DSHELL_SETTINGS_NAMESPACE, readDataDir } from './settings.js'
-import { DshellSettingsSchema } from './settings-schema.js'
+import { DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE, readDataDir } from './settings.js'
+import { DshellDataSettingsSchema, DshellSettingsSchema } from './settings-schema.js'
 import { applyDataRoot, dataRootReady, harnessHome, hostHome } from './data-root.js'
 
 export const name = '@nexus-aethra/dshell-mode/host'
@@ -239,15 +239,17 @@ export function apply(ctx: Context): void {
   let settle!: (plan: DshellDataRootPlan) => void
   const settled = new Promise<DshellDataRootPlan>((resolve) => { settle = resolve })
   ctx.provide(DSHELL_DATA_ROOT_SERVICE, { settled } satisfies DshellDataRootSeat)
-  // The settings namespace the Plugins section dispatches a card for: the
-  // browser half registers its card under this same key. Registration is all
-  // it takes — the Host stores the palette id without interpreting it.
-  //
-  // The data root is settled in the same breath, and deliberately first: it is
-  // the one field here the Host acts on for itself, and the registration is the
-  // earliest moment the stored document is readable.
-  const scope = ctx.settings.register(DSHELL_SETTINGS_NAMESPACE, DshellSettingsSchema)
-  settle(settleDataRoot(ctx, scope))
+  // Two namespaces, and therefore two cards: the Plugins section dispatches one
+  // card per registered namespace, and where dshell keeps its files is not a
+  // setting about the terminal. Registration is all it takes here — the Host
+  // stores the palette id without interpreting it.
+  ctx.settings.register(DSHELL_SETTINGS_NAMESPACE, DshellSettingsSchema)
+  // The data root is settled the moment its namespace resolves, which is the
+  // earliest point the choice is readable. `applies: 'restart'` is the honest
+  // mark for it: a running process cannot move files out from under itself, so
+  // the next start does the work (see `data-root.ts`).
+  const dataScope = ctx.settings.register(DSHELL_DATA_NAMESPACE, DshellDataSettingsSchema, { applies: 'restart' })
+  settle(settleDataRoot(ctx, dataScope))
   ctx.inject(['dshellTerminalBridge'], (bridgeCtx) => {
     const bridge = bridgeCtx.dshellTerminalBridge
     wireTerminalWindow(bridgeCtx, bridge)

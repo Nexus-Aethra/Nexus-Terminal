@@ -28,7 +28,10 @@ import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/clie
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { DATA_DIR_FIELD, DSHELL_SETTINGS_NAMESPACE, type DshellSettings } from '../settings.js'
+import {
+  DATA_DIR_FIELD, DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE,
+  type DshellDataSettings, type DshellSettings,
+} from '../settings.js'
 import { BlockView, type SshSeat } from './block-view.js'
 import type { PipeSeat, PipeTicket } from './status-card.js'
 import { injectSidebarCompactCss } from './sidebar-compact.js'
@@ -37,6 +40,7 @@ import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
 import { DshellComposerStats } from './composer-stats.js'
 import { DshellSettingsCard } from './settings-card.js'
+import { DshellDataCard } from './data-card.js'
 import { adoptTheme, connectThemeSettings } from './theme.js'
 import { adoptShellHelperSettings, connectShellHelperSettings } from './shell-settings.js'
 import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
@@ -316,19 +320,30 @@ export function apply(ctx: Context): void {
     if (!dshellSettings.getSnapshot().writable) return
     void dshellSettings.set(field, next).catch(() => { /* the scope republishes on failure */ })
   })
-  connectDataDirSettings((next) => {
-    if (!dshellSettings.getSnapshot().writable) return
-    void dshellSettings.set(DATA_DIR_FIELD, next).catch(() => { /* the scope republishes on failure */ })
-  })
   const syncSettings = (): void => {
     const snapshot = dshellSettings.getSnapshot()
     if (snapshot.status !== 'ready') return
     adoptTheme(snapshot.value?.theme)
     adoptShellHelperSettings(snapshot.value)
-    adoptDataDir(snapshot.value)
   }
   ctx.effect(() => dshellSettings.subscribe(syncSettings), 'dshell-mode: dshell settings mirror')
   syncSettings()
+
+  // Where dshell keeps its files is its own document, and its own card: the
+  // scope is bound separately so a write to one namespace can never queue
+  // behind (or be refused with) a revision of the other.
+  const dataSettings = ctx.settingsScope.bind<DshellDataSettings>({ namespace: DSHELL_DATA_NAMESPACE })
+  connectDataDirSettings((next) => {
+    if (!dataSettings.getSnapshot().writable) return
+    void dataSettings.set(DATA_DIR_FIELD, next).catch(() => { /* the scope republishes on failure */ })
+  })
+  const syncDataSettings = (): void => {
+    const snapshot = dataSettings.getSnapshot()
+    if (snapshot.status !== 'ready') return
+    adoptDataDir(snapshot.value)
+  }
+  ctx.effect(() => dataSettings.subscribe(syncDataSettings), 'dshell-mode: dshell data settings mirror')
+  syncDataSettings()
 
   // Inject once per page load: the rule that suppresses the workspace
   // sidebar's section labels ("会话 (6)", "已归档") in the compact rail
@@ -386,6 +401,13 @@ export function apply(ctx: Context): void {
   ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
     { name: 'settings.plugin.item', key: DSHELL_SETTINGS_NAMESPACE, locale: NS },
     DshellSettingsCard,
+  ))
+  // The second card, keyed by the second namespace. The section renders one
+  // card per registration whose namespace the Host serves, in registration
+  // order — so the storage card follows the terminal one.
+  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
+    { name: 'settings.plugin.item', key: DSHELL_DATA_NAMESPACE, locale: NS },
+    DshellDataCard,
   ))
   // The block view owns the stock `chat` cell (same id, lower priority
   // shadows it). `chat` is dsh's DEFAULT_VIEW_ID, so taking that cell — not a

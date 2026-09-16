@@ -283,10 +283,11 @@ mount points device sessions stand in) and `dshell-pty/` (transcripts, their
 timelines, the history database). Nothing else of dsh's is in them, which is why
 they can be moved on their own.
 
-Settings → 插件 → the dshell card has a 数据目录 row: 「选择…」 opens a picker that
-browses THIS machine's directories (the harness's, not a device's), 恢复默认 puts
-the choice back to the harness home. Two properties worth knowing before using
-it:
+Settings → 插件 has a 数据目录 card of its own (the terminal card next to it stays
+about the composer): 「选择…」 opens a picker that browses THIS machine's
+directories (the harness's, not a device's), with a 新建目录 field for a directory
+that does not exist yet, and 恢复默认 puts the choice back to the harness home.
+Three properties worth knowing before using it:
 
 - **It takes effect at the next start**, because a running harness cannot move
   files it is writing, and the next start MOVES the trees above rather than
@@ -298,6 +299,9 @@ it:
 - **Clearing the field brings the files back.** The default root keeps a record
   of where its data went (`dshell/.dshell-data-root`), so 恢复默认 relocates them
   home at the next start instead of leaving the reader with an empty registry.
+- **The picker can create the directory**, one path segment at a time, inside
+  whatever it is showing. That is the only place dshell writes outside its own
+  trees, and it refuses anything that is not a plain name (no `/`, no `.`/`..`).
 
 For scripted deployments, `DSHELL_HOME` overrides the directory from outside and
 takes precedence over the setting. It deliberately never migrates anything: a
