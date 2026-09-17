@@ -26,6 +26,7 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 - [Input assists: Tab, ↑, →](#input-assists-tab--)
 - [**Cross-session collaboration: pipes and the buffer**](#cross-session-collaboration-pipes-and-the-buffer)
 - [SSH device sessions](#ssh-device-sessions)
+- [Browser and desktop control](#browser-and-desktop-control)
 - [Settings](#settings)
 - [The status card](#the-status-card)
 - [Gesture cheat sheet](#gesture-cheat-sheet)
@@ -45,14 +46,53 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 | The AI's own shell | The AI gets a separate PTY, so it never blocks your foreground program and never steals your terminal |
 | Cross-session work | Sessions form **pipes** to delegate tasks to each other and share files by name (the **buffer**) — including across SSH devices |
 | Device sessions | Open a session directly on a remote machine: commands, files and the visible terminal all run there |
+| Browser and desktop | A local session's AI can drive a headless browser and this machine's desktop; a device session gets neither (see [Browser and desktop control](#browser-and-desktop-control)) |
 | Context without retelling | Switching to `✦ agent` automatically carries your last few commands and their output to the AI |
 
 ---
 
 ## Getting started
 
-Prerequisites: **Node 24.21.0**, **pnpm 9.15.0**, and an upstream `dsh/` checkout next to this
-repository (it is git-ignored here).
+Two ways in: install the published plugins into a dsh you already have, or build from this checkout.
+
+### Install into dsh
+
+Prerequisites: **dsh** on the `0.1.5-rc.2` or `0.1.6-alpha.1` line — either the desktop app, or the
+CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pnpm 9.15.0** on `PATH`
+(`dsh plugin` forwards to pnpm).
+
+```sh
+# 1) dshell itself. One package: the bundle is the patch layer, and it depends
+#    on the other eleven.
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.2
+
+# 2) the upstream rows the patch names that a stock profile does not ship:
+#    the browser-use and computer-use registries, and the desktop driver.
+dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.1
+
+# 3) run
+dsh web
+```
+
+dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
+
+In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
+`@nexus-aethra/dshell-bundle@0.1.2` (it installs from npmjs and pins the version exactly).
+
+> Skipping step 2 is not fatal — dsh boots and reports `2 entries did not activate` for the two
+> computer-use rows, and everything else works. It is listed because the browser and desktop
+> capabilities are half of what this release adds.
+
+The bundle carries every dshell package and its own `cordis.patch.yml`, so dsh composes the dshell
+rows the moment the package is installed: no profile edit, no config file. `dsh plugin --profile web
+list` shows the resulting layer stack.
+
+### Build from this checkout
+
+Prerequisites: the same Node and pnpm, plus an upstream `dsh/` checkout next to this repository (it
+is git-ignored here).
 
 ```sh
 # 1) dsh upstream (once)
@@ -73,10 +113,9 @@ pnpm --filter "@nexus-aethra/dshell-*" run build
 cd dsh && pnpm dsh web
 ```
 
-dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
-
-Check: `curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/` should answer **401** —
-that is dsh's cookie auth gate, not a failure.
+Check either install with
+`curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/` — it should answer **401**,
+which is dsh's cookie auth gate, not a failure.
 
 > The details and the troubleshooting (why the versions are pinned, how the profile gets filled in,
 > the module-loader contract for client bundles) live in [`docs/dshell-setup.md`](docs/dshell-setup.md).
@@ -325,6 +364,34 @@ exists. (32 MB per file, 20 000 entries or 2 GiB per plan.)
 
 ---
 
+## Browser and desktop control
+
+A local session's AI can open pages and read them, and — through dsh's computer-use provider — look at
+and drive this machine's own screen and input. Both are **local-session only**, and that is the point
+of the rule rather than a limitation to work around:
+
+- A device session runs its shell, its files and its working directory on the remote machine. A
+  browser or a desktop living *here* would be operating the wrong machine while claiming to work on
+  the session, so a device session gets no browser at all and has the desktop tools taken away.
+- The same goes for a session that is still being created for a device: it is treated as a device
+  session from the start, never promoted to local.
+
+What that means in practice:
+
+| | |
+|---|---|
+| The browser | A headless Chromium driven over the pinned Playwright MCP server, one per local session. Page snapshots and console logs are written under `$DSH_HOME/dshell/browser` — not into your working directory |
+| Your profile | Untouched: the browser starts `--isolated`, so it never opens your own Chrome profile or its cookies |
+| The desktop | dsh's computer-use provider, driving this machine's real screen, windows and input |
+| If the browser cannot start | That session simply has no browser tools, and dsh logs why. It is deliberately not a session failure — a missing browser must not cost you the session |
+| If the tools are taken away | Applying to a device session at the moment it is created, and again if the desktop's tool catalogue finishes loading later |
+
+Nothing is installed for this beyond step 2 of the install above; the two registries and the desktop
+driver are ordinary upstream packages, and dshell supplies the browser provider and the per-session
+gating.
+
+---
+
 ## Settings
 
 **Settings → Plugins** holds two dshell cards:
@@ -424,6 +491,9 @@ This is exactly what produced the two screenshots above — the run is real, not
 - **One browser connection per session.** A second websocket binding to the same session is refused.
 - **Archived is not deleted.** An archived session stays in the pipe graph (it can still be a valid
   endpoint); only deletion removes it.
+- **Browser and desktop control are local-session only.** A device session gets neither, on purpose:
+  both would act on this machine while the session works on another. The install note above lists
+  the two upstream packages that make the desktop half available at all.
 - The pipe panel refreshes by polling (about every 3 seconds) — there is no push channel. In-flight
   transfers refresh the status card once a second.
 
@@ -433,16 +503,17 @@ This is exactly what produced the two screenshots above — the run is real, not
 
 | Doc | Read it when |
 |---|---|
-| [`docs/dshell-design.md`](docs/dshell-design.md) | You want the goal, the non-goals and the ten design decisions (including why this is not a chat window) |
+| [`docs/dshell-design.md`](docs/dshell-design.md) | You want the goal, the non-goals and the eleven design decisions (including why this is not a chat window) |
 | [`docs/dshell-architecture.md`](docs/dshell-architecture.md) | Before writing code: the ws protocol, the Cordis extension points, package layout, CSS conventions |
 | [`docs/dshell-packages.md`](docs/dshell-packages.md) | You need to know which plugin owns a feature |
 | [`docs/dshell-roadmap.md`](docs/dshell-roadmap.md) | The phase plan and each phase's acceptance check |
 | [`docs/dshell-setup.md`](docs/dshell-setup.md) | Setting up a machine, troubleshooting, build order |
 | [`docs/README.md`](docs/README.md) | The documentation index and its update rules |
 
-Eleven packages (`@nexus-aethra/dshell-*`): `std` (contracts), `storage` (storage engines),
-`bundle` (the single patch layer), `conversation`, `terminal-bridge`, `mode`, `commands`, `workspace`,
-`files`, `ssh`, `buffer`.
+Twelve packages (`@nexus-aethra/dshell-*`), published together: `std` (contracts), `storage` (storage
+engines), `bundle` (the single patch layer), `conversation`, `terminal-bridge`, `mode`, `commands`,
+`workspace`, `files`, `ssh`, `buffer`, `host-tools` (the browser provider and the per-session gating of
+the machine's own capabilities).
 
 ## License
 

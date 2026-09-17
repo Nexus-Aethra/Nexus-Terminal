@@ -4469,3 +4469,62 @@ In the browser, against a live harness and the local sshd rig:
   catalog itself was confirmed out of band by driving
   `@trycua/cua-driver` directly (59 tools, all `cua_driver_native__`);
 - the harness log stays clean: no warn from either containment path.
+
+## Phase 10.45 — the 0.1.2 release
+
+Four PRs and one new package since `0.1.1`, so the whole family moved
+again: **twelve** packages at `0.1.2`, published in dependency order.
+
+The release is mostly what the two phases above it describe — the archive
+set moving to upstream (10.43), the machine's own capabilities becoming a
+per-session decision (10.44) — plus the helper status loop actually
+persisting what it deployed (#46) and the dialogs following the theme they
+open in (#49). `dshell-host-tools` is NEW in this release and the bundle
+depends on it, which is why an install of the bundle now pulls twelve
+names instead of eleven.
+
+### What a consumer does differently
+
+Nothing structural — one command, four packages:
+
+```sh
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.2
+# the rows the patch names that a stock profile does not ship
+dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.1
+```
+
+Verified rather than assumed, against a profile created from the shipped
+web template:
+
+- with only the bundle installed, the host boots and reports
+  `2 entries did not activate` — the two computer-use rows — and nothing
+  else is affected. That is how the second command above was discovered
+  rather than guessed;
+- with all four installed, the boot is silent, and the published client
+  bundles render the full UI in the fresh profile: ten sessions, per-row
+  `归档` / `删除`, no `Failed to load plugins`.
+
+### Publishing notes
+
+- `pnpm publish` does not accept `--userconfig`; the token file goes in
+  `NPM_CONFIG_USERCONFIG`, and both `--registry=https://registry.npmjs.org/`
+  and `--access public` are explicit because the ambient registry is the
+  read-only npmmirror mirror and the scope is not the default one.
+- The read side lags the write side, per package and again for a name's
+  FIRST publish: `dshell-host-tools`' dist-tags answered and its tarball
+  downloaded minutes before its packument stopped 404ing, so `npm install`
+  failed with `E404` while every other package was already installable.
+  A publish is not re-run for this; the acceptance signal is `+ pkg@version`
+  from the publish itself plus the `dist` block the registry writes.
+- The bundle's `workspace:^` edges rewrite to `^0.1.2` on pack, and the
+  published manifest was read back to confirm all eleven deps — including
+  `dshell-host-tools` — came out that way.
+
+### Deferred
+
+- The desktop profile still pins exact `0.1.0`; moving it forward is a
+  `.deb` rebuild, not an npm step (design 10.30's profile rules).
+- The token in `~/.npmrc.publish` has been pasted through a transcript and
+  should be rotated.

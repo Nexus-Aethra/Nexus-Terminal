@@ -24,6 +24,7 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 - [输入辅助：Tab、↑、→](#输入辅助tab--)
 - [**多会话协作：管道与缓冲区**](#多会话协作管道与缓冲区)
 - [SSH 设备会话](#ssh-设备会话)
+- [浏览器与桌面操作](#浏览器与桌面操作)
 - [设置](#设置)
 - [状态卡](#状态卡)
 - [手势速查](#手势速查)
@@ -43,13 +44,49 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 | AI 自己的 shell | AI 有独立的 PTY，不会被你的前台程序挡住，也不会抢你的终端 |
 | 跨会话协作 | 会话之间可以建立**管道**，互相委派任务、按名字共享文件（**缓冲区**），包括隔着 SSH 设备 |
 | 设备会话 | 直接把一个会话开到远程机器上；命令、文件、终端都在设备上执行 |
+| 浏览器与桌面 | 本机会话里的 AI 可以驱动一个无头浏览器，也能操作这台机器的桌面；设备会话两者都拿不到（见[浏览器与桌面操作](#浏览器与桌面操作)） |
 | 本地可读的上下文 | 切到 `✦ agent` 时，AI 自动带上你终端里最近几条命令及输出，不用你复述 |
 
 ---
 
 ## 快速开始
 
-前置：**Node 24.21.0**、**pnpm 9.15.0**，以及一份 `dsh/` 上游检出（放在本仓库旁即可，`.gitignore` 已忽略它）。
+有两条路：把已发布的插件装进你现有的 dsh，或者从本仓库自己构建。
+
+### 装进 dsh
+
+前置：**dsh**（`0.1.5-rc.2` 或 `0.1.6-alpha.1` 这条线都行）——桌面版，或者命令行版
+（`npm install -g @deepseek-ai/dsh@alpha`）；以及 `PATH` 上的 **Node 24.21.0** 与 **pnpm 9.15.0**
+（`dsh plugin` 是转发给 pnpm 执行的）。
+
+```sh
+# 1) dshell 本体。只装一个包：bundle 就是 patch 层，另外十一个由它依赖带入。
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.2
+
+# 2) patch 里点名、但原版 profile 不带的上游包：浏览器与计算机使用的注册表，以及桌面驱动。
+dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.1
+
+# 3) 启动
+dsh web
+```
+
+dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
+
+**桌面版**里同样的事情有一个窗口入口：`设置 → 插件`，填
+`@nexus-aethra/dshell-bundle@0.1.2`（它从 npmjs 安装，并精确锁定版本）。
+
+> 跳过第 2 步不会致命——dsh 照样启动，只是为两条 computer-use 行报
+> `2 entries did not activate`，其余功能都在。之所以列出来，是因为浏览器与桌面能力正是这次发布的
+> 一半内容。
+
+bundle 里带着全部 dshell 包和它自己的 `cordis.patch.yml`，所以包装好的那一刻 dsh 就把它组装进去了：
+不用改 profile、不用写配置文件。`dsh plugin --profile web list` 能看到最终的层叠结果。
+
+### 从这份检出构建
+
+前置：同样的 Node 与 pnpm，外加一份 `dsh/` 上游检出（放在本仓库旁即可，`.gitignore` 已忽略它）。
 
 ```sh
 # 1) dsh 上游（一次性）
@@ -70,10 +107,8 @@ pnpm --filter "@nexus-aethra/dshell-*" run build
 cd dsh && pnpm dsh web
 ```
 
-dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
-
-验收：`curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/` 应当返回 **401**
-（那是 dsh 的 cookie 鉴权门，不是错误）。
+两种装法都可以这样验收：`curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/` 应当
+返回 **401**（那是 dsh 的 cookie 鉴权门，不是错误）。
 
 > 细节和排错（版本为何这样钉、profile 是怎么被填充的、客户端 bundle 的加载约定）都在
 > [`docs/dshell-setup.md`](docs/dshell-setup.md)。
@@ -305,6 +340,30 @@ flowchart LR
 
 ---
 
+## 浏览器与桌面操作
+
+本机会话里的 AI 可以打开网页并读取内容；经由 dsh 的 computer-use provider，它还能看和操作这台
+机器真实的屏幕与输入。两者都**只给本机会话**，这是一条规则而不是待绕过的限制：
+
+- 设备会话的 shell、文件和工作目录都在远端机器上。一个长在**这里**的浏览器或桌面，会在声称服务于
+  该会话的同时操作错误的机器——所以设备会话干脆没有浏览器，桌面工具也会被逐会话收回。
+- 正在为某台设备创建中的会话同样算设备会话：从创建那一刻起就按设备处理，不会先当成本机。
+
+具体表现：
+
+| | |
+|---|---|
+| 浏览器 | 无头 Chromium，经由钉住版本的 Playwright MCP server 驱动，每个本机会话一个。页面快照与控制台日志写在 `$DSH_HOME/dshell/browser` 下，不会落到你的工作目录里 |
+| 你的浏览器配置 | 不受影响：浏览器以 `--isolated` 启动，不会打开你自己的 Chrome 配置或其 cookie |
+| 桌面 | dsh 的 computer-use provider，操作这台机器真实的屏幕、窗口与输入 |
+| 浏览器起不来时 | 那个会话就没有浏览器工具，dsh 会记下原因。这里刻意不当作会话失败——装不上浏览器不该让你丢掉会话 |
+| 工具是怎么被收回的 | 在会话创建的那一刻就施加；若桌面工具清单加载得更晚，加载完会再施加一次 |
+
+除了上面安装的第 2 步，这里不需要额外装什么：两张注册表和桌面驱动都是普通的上游包，dshell 提供的
+是浏览器 provider 和「按会话决定给不给」这件事。
+
+---
+
 ## 设置
 
 **设置 → 插件** 里有 dshell 的两张卡：
@@ -393,6 +452,8 @@ flowchart LR
   期间可以 `取消` 撤销。
 - **一个会话一个浏览器连接。** 同时开两个 ws 连同一个会话会被拒绝。
 - **归档 ≠ 删除。** 归档的会话仍在管道图里（它可能还是一条合法管道的一端），删除才会把它摘掉。
+- **浏览器与桌面只给本机会话。** 设备会话两者都没有，这是刻意的：两者都会作用在这台机器上，而会话
+  的活干在另一台。桌面这一半能不能用，取决于安装第 2 步里那两个上游包。
 - 管道面板靠轮询刷新（约 3 秒一次），没有推送通道；正在传输的文件会以 1 秒的节奏刷新状态卡。
 
 ---
@@ -401,15 +462,16 @@ flowchart LR
 
 | 文档 | 什么时候读 |
 |---|---|
-| [`docs/dshell-design.md`](docs/dshell-design.md) | 目标、非目标与十条设计决策（含为什么不是一个聊天窗口） |
+| [`docs/dshell-design.md`](docs/dshell-design.md) | 目标、非目标与十一条设计决策（含为什么不是一个聊天窗口） |
 | [`docs/dshell-architecture.md`](docs/dshell-architecture.md) | 写代码前：ws 协议、Cordis 扩展点、包布局、CSS 约定 |
 | [`docs/dshell-packages.md`](docs/dshell-packages.md) | 查某个功能属于哪个插件 |
 | [`docs/dshell-roadmap.md`](docs/dshell-roadmap.md) | 阶段计划与每个阶段的验收标准 |
 | [`docs/dshell-setup.md`](docs/dshell-setup.md) | 搭环境、排错、构建顺序 |
 | [`docs/README.md`](docs/README.md) | 文档索引与更新规则 |
 
-插件共 11 个包（`@nexus-aethra/dshell-*`）：`std`（契约）、`storage`（存储引擎）、`bundle`（唯一的
-patch 层）、`conversation`、`terminal-bridge`、`mode`、`commands`、`workspace`、`files`、`ssh`、`buffer`。
+插件共 12 个包（`@nexus-aethra/dshell-*`），一起发布：`std`（契约）、`storage`（存储引擎）、
+`bundle`（唯一的 patch 层）、`conversation`、`terminal-bridge`、`mode`、`commands`、`workspace`、
+`files`、`ssh`、`buffer`、`host-tools`（浏览器 provider，以及「本机能力按会话发放」这件事）。
 
 ## 许可
 

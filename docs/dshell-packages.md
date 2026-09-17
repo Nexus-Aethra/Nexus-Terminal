@@ -492,7 +492,7 @@ root, and why each manifest now carries:
   a dependency at all;
 - `@deepseek-ai/cordis` as a peer (`^4.0.2`), matching how dsh publishes its own
   packages;
-- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.1` on
+- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.2` on
   pack;
 - `@deepseek-ai/schemastery` as a peer for the same reason as the rest of the
   list: despite the vendor-library look, it is one of the 241 runtime-owned
@@ -525,7 +525,7 @@ copies of a core package.
   (`@nexus-aethra/dshell-*`). `@deepseek-ai/…` is dsh's own npm org and is not
   publishable by an outside account.
 - Publish order is dependency order — `dshell-std` first, `dshell-bundle` last —
-  because each package's `workspace:^` edges become `^0.1.1` ranges that must
+  because each package's `workspace:^` edges become `^0.1.2` ranges that must
   already resolve.
 
 ### Verifying a published artifact
