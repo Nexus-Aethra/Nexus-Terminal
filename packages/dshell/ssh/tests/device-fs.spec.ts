@@ -7,8 +7,8 @@
  * leaves a partial file behind. What needs the rig is the transport, not the
  * rules, and those rules are the part a refactor would break silently.
  */
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
-import { stat as statPath } from 'node:fs/promises'
+import { createHash, randomBytes } from 'node:crypto'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat as statPath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -178,5 +178,156 @@ describe('write', () => {
     await expect(files.write(join(root, 'a-directory'), Buffer.from('x\n')))
       .rejects.toMatchObject({ code: 'FS_NOT_REGULAR_FILE' })
     expect((await files.stat(join(root, 'a-directory'), true))?.kind).toBe('directory')
+  })
+})
+
+describe('mkdir', () => {
+  it('creates a directory, recursively, in one call', async () => {
+    await files.mkdir([join(root, 'new', 'deep', 'dir')], true)
+    expect((await files.stat(join(root, 'new', 'deep', 'dir'), true))?.kind).toBe('directory')
+  })
+
+  it('refuses a directory that already exists when recursive is false', async () => {
+    await expect(files.mkdir([join(root, 'sub')], false)).rejects.toMatchObject({ code: 'FS_IO_ERROR' })
+  })
+
+  it('succeeds for an existing directory when recursive is true', async () => {
+    await files.mkdir([join(root, 'sub')], true)
+    expect((await files.stat(join(root, 'sub'), true))?.kind).toBe('directory')
+  })
+
+  it('refuses to create a parent that is a file', async () => {
+    await writeFile(join(root, 'a-file'), 'x')
+    await expect(files.mkdir([join(root, 'a-file', 'inside')], true))
+      .rejects.toMatchObject({ code: 'FS_NOT_DIRECTORY' })
+  })
+})
+
+describe('remove', () => {
+  it('removes a directory recursively, tolerating absence when forced', async () => {
+    await files.mkdir([join(root, 'to-remove')], true)
+    await writeFile(join(root, 'to-remove', 'inside.txt'), 'x')
+    await files.remove(join(root, 'to-remove'), true)
+    expect(await files.stat(join(root, 'to-remove'), true)).toBeNull()
+    // Absent + forced is a no-op, not an error.
+    await files.remove(join(root, 'to-remove'), true)
+  })
+
+  it('refuses to remove an absent path without force', async () => {
+    await expect(files.remove(join(root, 'absent'), false)).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
+  })
+})
+
+describe('rename', () => {
+  it('moves one path to another and returns the destination metadata', async () => {
+    await writeFile(join(root, 'src.txt'), 'src')
+    const moved = await files.rename(join(root, 'src.txt'), join(root, 'dst.txt'), false)
+    expect(moved?.kind).toBe('file')
+    expect(await files.stat(join(root, 'src.txt'), true)).toBeNull()
+    expect(await readFile(join(root, 'dst.txt'), 'utf8')).toBe('src')
+  })
+
+  it('overwrites an existing destination when asked', async () => {
+    await writeFile(join(root, 'old.txt'), 'old')
+    await writeFile(join(root, 'new.txt'), 'new')
+    await files.rename(join(root, 'old.txt'), join(root, 'new.txt'), true)
+    expect(await readFile(join(root, 'new.txt'), 'utf8')).toBe('old')
+  })
+
+  it('refuses to overwrite when not asked', async () => {
+    await writeFile(join(root, 'a'), 'a')
+    await writeFile(join(root, 'b'), 'b')
+    await expect(files.rename(join(root, 'a'), join(root, 'b'), false)).rejects.toMatchObject({ code: 'FS_NOT_OBSERVED' })
+  })
+
+  it('refuses a missing source', async () => {
+    await expect(files.rename(join(root, 'absent'), join(root, 'dst'), false)).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
+  })
+})
+
+describe('sha256', () => {
+  it('hashes a file and matches node own digest', async () => {
+    await writeFile(join(root, 'hash.txt'), 'hello')
+    const expected = createHash('sha256').update('hello').digest('hex')
+    expect(await files.sha256(join(root, 'hash.txt'))).toBe(expected)
+  })
+
+  it('returns a different digest for different bytes', async () => {
+    await writeFile(join(root, 'one.txt'), 'one')
+    await writeFile(join(root, 'two.txt'), 'two')
+    expect(await files.sha256(join(root, 'one.txt'))).not.toBe(await files.sha256(join(root, 'two.txt')))
+  })
+
+  it('reports an absent file as FS_NOT_FOUND', async () => {
+    await expect(files.sha256(join(root, 'absent.txt'))).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
+  })
+})
+
+describe('copy', () => {
+  it('copies a file end-to-end and reports the device own digest', async () => {
+    await writeFile(join(root, 'src.bin'), 'hello, world')
+    const events: { written: number; totalBytes: number }[] = []
+    const outcome = await files.copy(join(root, 'src.bin'), join(root, 'dst.bin'), false, undefined,
+      (written, totalBytes) => { events.push({ written, totalBytes }) }, new AbortController().signal)
+    expect(outcome.bytes).toBe(12)
+    expect(outcome.destination.kind).toBe('file')
+    const expected = createHash('sha256').update('hello, world').digest('hex')
+    expect(outcome.sourceSha256).toBe(expected)
+    expect(await readFile(join(root, 'dst.bin'), 'utf8')).toBe('hello, world')
+    // At least one progress event was reported.
+    expect(events.length).toBeGreaterThan(0)
+  })
+
+  it('refuses a copy that would land on an existing destination', async () => {
+    await writeFile(join(root, 'src.txt'), 'one')
+    await writeFile(join(root, 'dst.txt'), 'two')
+    await expect(files.copy(join(root, 'src.txt'), join(root, 'dst.txt'), false, undefined,
+      () => undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'FS_NOT_OBSERVED' })
+    expect(await readFile(join(root, 'dst.txt'), 'utf8')).toBe('two')
+  })
+
+  it('refuses a copy that would land on a directory', async () => {
+    await writeFile(join(root, 'src.txt'), 'one')
+    await mkdir(join(root, 'a-dir'))
+    await expect(files.copy(join(root, 'src.txt'), join(root, 'a-dir'), false, undefined,
+      () => undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'FS_NOT_REGULAR_FILE' })
+  })
+
+  it('rejects a digest mismatch before any byte is published', async () => {
+    await writeFile(join(root, 'src.txt'), 'one')
+    const dst = join(root, `dst-${randomBytes(4).toString('hex')}.txt`)
+    await expect(files.copy(join(root, 'src.txt'), dst, false, '0'.repeat(64),
+      () => undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'FS_IO_ERROR' })
+    // The destination was never renamed into place: the digest check happens
+    // after the staging file is written but before the rename, so the
+    // destination does not exist when the copy is rejected.
+    expect(await files.stat(dst, true)).toBeNull()
+  })
+
+  it('preserves the destination mode when overwriting an existing file', async () => {
+    await writeFile(join(root, 'src.txt'), 'one')
+    await writeFile(join(root, 'dst.txt'), 'old')
+    await chmod(join(root, 'dst.txt'), 0o640)
+    await files.copy(join(root, 'src.txt'), join(root, 'dst.txt'), true, undefined,
+      () => undefined, new AbortController().signal)
+    expect((await statPath(join(root, 'dst.txt'))).mode & 0o777).toBe(0o640)
+  })
+
+  it('creates missing parents of the destination', async () => {
+    await writeFile(join(root, 'src.txt'), 'one')
+    await files.copy(join(root, 'src.txt'), join(root, 'made', 'up', 'dst.txt'), false, undefined,
+      () => undefined, new AbortController().signal)
+    expect(await readFile(join(root, 'made', 'up', 'dst.txt'), 'utf8')).toBe('one')
+  })
+
+  it('refuses a source that is not a regular file', async () => {
+    await mkdir(join(root, 'src-dir'))
+    await expect(files.copy(join(root, 'src-dir'), join(root, 'dst'), false, undefined,
+      () => undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'FS_NOT_REGULAR_FILE' })
+  })
+
+  it('refuses a missing source', async () => {
+    await expect(files.copy(join(root, 'absent'), join(root, 'dst'), false, undefined,
+      () => undefined, new AbortController().signal)).rejects.toMatchObject({ code: 'FS_NOT_FOUND' })
   })
 })

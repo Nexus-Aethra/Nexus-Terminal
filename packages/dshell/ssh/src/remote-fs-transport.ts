@@ -121,4 +121,83 @@ export interface RemoteFsTransport {
    *   same breath, or undefined when the caller must ask afterwards.
    */
   write(path: string, content: string, signal?: AbortSignal): Promise<RemoteStat | undefined>
+
+  /**
+   * Replace a file's contents with arbitrary bytes.
+   *
+   * Distinct from {@link write} because text is a lossy encoding for binary
+   * content and a transfer that needs to land a non-text file whole cannot go
+   * through the text entry point.
+   *
+   * @param path - absolute device path to publish.
+   * @param bytes - the file's whole contents, exactly as they should land.
+   * @param signal - cancellation; a published file is not rolled back.
+   * @returns the published file's metadata, or undefined when this lane must
+   *   be asked separately for it.
+   */
+  writeBytes(path: string, bytes: Uint8Array, signal?: AbortSignal): Promise<RemoteStat | undefined>
+
+  /**
+   * Create one or more directories.
+   *
+   * @param paths - absolute device paths to create.
+   * @param recursive - whether to create missing parents.
+   * @param signal - cancellation.
+   */
+  mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void>
+
+  /**
+   * Remove one path, recursively and tolerating absence.
+   *
+   * @param path - absolute device path to remove.
+   * @param force - whether to ignore absence.
+   * @param signal - cancellation.
+   */
+  remove(path: string, force: boolean, signal?: AbortSignal): Promise<void>
+
+  /**
+   * Rename one path to another.
+   *
+   * @param from - absolute device path that exists.
+   * @param to - absolute device path that may or may not exist.
+   * @param overwrite - whether to replace an existing destination.
+   * @param signal - cancellation; a renamed file is not rolled back.
+   * @returns the destination's metadata, or undefined when the rename deleted
+   *   the source without creating a replacement.
+   */
+  rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<RemoteStat | undefined>
+
+  /**
+   * The whole-file SHA-256 of one path, computed on the device.
+   *
+   * @param path - absolute device path of the source.
+   * @param signal - cancellation.
+   * @returns the lowercase hex digest.
+   */
+  sha256(path: string, signal?: AbortSignal): Promise<string>
+
+  /**
+   * Copy one file on the device.
+   *
+   * Starts the copy and reports progress through `onProgress`, which the host
+   * uses to advance a view field. The progress callback is fired on the
+   * device's chunk boundaries and may run while the request's reply is still
+   * outstanding.
+   *
+   * @param source - absolute device path of the source file.
+   * @param destination - absolute device path of the destination file.
+   * @param overwrite - whether to replace an existing destination.
+   * @param expectedSha256 - optional source digest to verify against.
+   * @param onProgress - called as bytes move; the helper layer always supplies one.
+   * @param signal - cancellation; the copy stops at its next chunk boundary.
+   * @returns the destination's metadata, the source's digest, and the bytes copied.
+   */
+  copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: RemoteStat; sourceSha256: string; bytes: number }>
 }

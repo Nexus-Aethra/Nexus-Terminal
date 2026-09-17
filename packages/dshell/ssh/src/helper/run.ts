@@ -33,12 +33,23 @@ import {
   echoReply,
   echoRequest,
   emptyRequest,
+  fsCopyIdRequest,
+  fsCopyProgressReply,
+  fsCopyReply,
+  fsCopyRequest,
   fsListReply,
+  fsMkdirRequest,
   fsPathRequest,
   fsReadRangeReply,
   fsReadRangeRequest,
+  fsRemoveRequest,
+  fsRenameReply,
+  fsRenameRequest,
   fsResolveReply,
+  fsSha256Reply,
+  fsSha256Request,
   fsStatReply,
+  fsWriteBytesRequest,
   fsWriteReply,
   fsWriteRequest,
   helloReply,
@@ -226,6 +237,54 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
         const input = fsWriteRequest.parse(raw)
         const written = await files.write(input.path, Buffer.from(input.data, 'base64'))
         return fsWriteReply.parse({ kind: written.kind, size: written.size, version: written.version })
+      }
+      if (method === HELPER_OPS.fsWriteBytes) {
+        const input = fsWriteBytesRequest.parse(raw)
+        const written = await files.write(input.path, Buffer.from(input.data, 'base64'))
+        return fsWriteReply.parse({ kind: written.kind, size: written.size, version: written.version })
+      }
+      if (method === HELPER_OPS.fsMkdir) {
+        const input = fsMkdirRequest.parse(raw)
+        await files.mkdir(input.paths, input.recursive)
+        return null
+      }
+      if (method === HELPER_OPS.fsRemove) {
+        const input = fsRemoveRequest.parse(raw)
+        await files.remove(input.path, input.force)
+        return null
+      }
+      if (method === HELPER_OPS.fsRename) {
+        const input = fsRenameRequest.parse(raw)
+        const moved = await files.rename(input.from, input.to, input.overwrite)
+        // The destination is null when the rename deleted the source without
+        // creating a replacement (a path whose destination was an empty
+        // directory on some platforms, say). The seam reports it as null.
+        return fsRenameReply.parse(moved === null ? null : { kind: moved.kind, size: moved.size, version: moved.version })
+      }
+      if (method === HELPER_OPS.fsSha256) {
+        const input = fsSha256Request.parse(raw)
+        const hex = await files.sha256(input.path)
+        return fsSha256Reply.parse({ hex })
+      }
+      if (method === HELPER_OPS.fsCopy) {
+        // fsCopy is the long-running op: a single request whose reply is the
+        // copy's outcome. The host polls `fs.copyProgress` on a separate
+        // request to learn the bytes-moved; the helper tracks the in-flight
+        // copy by the host-allocated id carried in the request.
+        const input = fsCopyRequest.parse(raw)
+        const outcome = await files.startCopy(
+          input.source, input.destination, input.copyId, input.overwrite, input.expectedSha256, transport.signal,
+        )
+        return fsCopyReply.parse({
+          destination: { kind: outcome.destination.kind, size: outcome.destination.size, version: outcome.destination.version },
+          sourceSha256: outcome.sourceSha256,
+          bytes: outcome.bytes,
+        })
+      }
+      if (method === HELPER_OPS.fsCopyProgress) {
+        const input = fsCopyIdRequest.parse(raw)
+        const progress = files.readCopyProgress(input.id)
+        return fsCopyProgressReply.parse(progress)
       }
       // Deliberately the same boundary upstream drew: an unrecognised method is
       // a hard failure, never a guess. A helper that answered optimistically

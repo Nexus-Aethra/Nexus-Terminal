@@ -19,14 +19,19 @@
  */
 import { FsError, FsVersion, type FsErrorCode } from '@deepseek-ai/dsh-fs'
 import { RemoteOperationError } from '@deepseek-ai/dsh-ssh/protocol'
-import type { z } from 'zod'
+import { createHash } from 'node:crypto'
+import { z } from 'zod'
 import {
   DSHELL_HELPER_MAX_READ_BYTES,
   DSHELL_HELPER_MAX_WRITE_BYTES,
   HELPER_OPS,
+  fsCopyProgressReply,
+  fsCopyReply,
   fsListReply,
   fsReadRangeReply,
+  fsRenameReply,
   fsResolveReply,
+  fsSha256Reply,
   fsStatReply,
   fsWriteReply,
 } from './helper/protocol.js'
@@ -191,6 +196,112 @@ export class HelperFsTransport implements RemoteFsTransport {
     const seam = branded(written)
     return { kind: seam.kind, size: seam.size, version: FsVersion(seam.version) }
   }
+
+  /** @inheritDoc */
+  async writeBytes(path: string, bytes: Uint8Array, signal?: AbortSignal): Promise<RemoteStat | undefined> {
+    if (bytes.byteLength > DSHELL_HELPER_MAX_WRITE_BYTES) {
+      throw new FsError(
+        `cannot write "${path}": ${String(bytes.byteLength)} bytes exceeds the ${String(DSHELL_HELPER_MAX_WRITE_BYTES)} byte limit of a single write`,
+        'FS_TOO_LARGE',
+      )
+    }
+    const written = await this.call<WireStat>(
+      HELPER_OPS.fsWriteBytes,
+      { path, data: Buffer.from(bytes).toString('base64') },
+      fsWriteReply,
+      signal,
+    )
+    const seam = branded(written)
+    return { kind: seam.kind, size: seam.size, version: FsVersion(seam.version) }
+  }
+
+  /** @inheritDoc */
+  async mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void> {
+    await this.call(HELPER_OPS.fsMkdir, { paths: [...paths], recursive }, z.null(), signal)
+  }
+
+  /** @inheritDoc */
+  async remove(path: string, force: boolean, signal?: AbortSignal): Promise<void> {
+    await this.call(HELPER_OPS.fsRemove, { path, force }, z.null(), signal)
+  }
+
+  /** @inheritDoc */
+  async rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<RemoteStat | undefined> {
+    const reply = await this.call<WireStat | null>(HELPER_OPS.fsRename, { from, to, overwrite }, fsRenameReply, signal)
+    if (reply === null) return undefined
+    const seam = branded(reply)
+    return { kind: seam.kind, size: seam.size, version: FsVersion(seam.version) }
+  }
+
+  /** @inheritDoc */
+  async sha256(path: string, signal?: AbortSignal): Promise<string> {
+    const reply = await this.call<{ hex: string }>(HELPER_OPS.fsSha256, { path }, fsSha256Reply, signal)
+    return reply.hex
+  }
+
+  /** @inheritDoc */
+  async copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: RemoteStat; sourceSha256: string; bytes: number }> {
+    // The id is allocated here, on the host, so the progress poll can fire on
+    // the very next tick. The helper registers the in-flight copy under this
+    // same id; an id that is already in flight is refused.
+    const copyId = randomUUID()
+    // The progress loop is a 50 ms poll on a separate request. The helper's
+    // progress op is one map read, so this stays cheap; a busy host cannot
+    // stall the copy because the loop awaits each tick before firing the
+    // next.
+    let last = 0
+    const poll = (async () => {
+      while (!signal.aborted) {
+        await new Promise<void>(resolve => { setTimeout(resolve, 50).unref?.() })
+        const progress = await this.call<{ totalBytes: number; written: number; running: boolean }>(
+          HELPER_OPS.fsCopyProgress,
+          { id: copyId },
+          fsCopyProgressReply,
+          signal,
+        )
+        if (progress.written !== last) {
+          last = progress.written
+          onProgress(progress.written, progress.totalBytes)
+        }
+        if (!progress.running) return
+      }
+    })().catch(() => undefined)
+    try {
+      const reply = await this.call<{ destination: WireStat; sourceSha256: string; bytes: number }>(
+        HELPER_OPS.fsCopy,
+        {
+          copyId,
+          source,
+          destination,
+          overwrite,
+          ...expectedSha256 === undefined ? {} : { expectedSha256 },
+        },
+        fsCopyReply,
+        signal,
+      )
+      const seam = branded(reply.destination)
+      return {
+        destination: { kind: seam.kind, size: seam.size, version: FsVersion(seam.version) },
+        sourceSha256: reply.sourceSha256,
+        bytes: reply.bytes,
+      }
+    } finally {
+      await poll
+    }
+  }
+}
+
+/** A short id, host-allocated; collision-free enough for one helper process. */
+function randomUUID(): string {
+  return createHash('sha256').update(`${String(process.pid)}-${String(Date.now())}-${String(Math.random())}`)
+    .digest('hex').slice(0, 16)
 }
 
 /**
