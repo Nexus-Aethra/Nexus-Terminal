@@ -244,6 +244,102 @@ export class ShellFsTransport implements RemoteFsTransport {
     // extra round trip on this lane only.
     return undefined
   }
+
+  /**
+   * @inheritDoc
+   *
+   * Same shape as the text write, but the payload is base64 on stdin because
+   * the device's `base64 -d` is the only way to land arbitrary bytes through
+   * a shell. The helper lane has no equivalent text-vs-bytes distinction.
+   */
+  async writeBytes(path: string, bytes: Uint8Array, signal?: AbortSignal): Promise<undefined> {
+    const script = [
+      'd=$(dirname -- "$1")',
+      'mkdir -p -- "$d"',
+      't=$(mktemp --tmpdir="$d" .dshell-XXXXXX)',
+      'base64 -d > "$t" || { rm -f -- "$t"; exit 14; }',
+      'if [ -e "$1" ]; then chmod --reference="$1" "$t" 2>/dev/null || true; else chmod 644 "$t" 2>/dev/null || true; fi',
+      'mv -f -- "$t" "$1" || { rm -f -- "$t"; exit 15; }',
+    ].join(' && ')
+    const result = await this.run(`sh -c ${quote(script)} sh ${quote(path)}`, { signal, stdin: Buffer.from(bytes).toString('base64') })
+    if (result.exitCode !== 0) throw classifyRemoteFailure(result, path, this.deps.t)
+    return undefined
+  }
+
+  /** @inheritDoc — one `mkdir -p` per call, batched by the caller. */
+  async mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void> {
+    const flags = recursive ? '-p' : ''
+    await this.runOrThrow(`mkdir ${flags} -- ${paths.map(path => quote(path)).join(' ')}`, paths[0] ?? '', { signal })
+  }
+
+  /** @inheritDoc — `rm -rf` with optional `-f`. */
+  async remove(path: string, force: boolean, signal?: AbortSignal): Promise<void> {
+    const flags = `${force ? '-f' : ''} -r`.trim()
+    await this.runOrThrow(`rm ${flags} -- ${quote(path)}`, path, { signal })
+  }
+
+  /** @inheritDoc — `mv`, with `-f` for overwrite semantics. */
+  async rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<undefined> {
+    const result = await this.run(`mv ${overwrite ? '-f' : ''} -- ${quote(from)} ${quote(to)}`, { signal })
+    if (result.exitCode !== 0) throw classifyRemoteFailure(result, to, this.deps.t)
+    return undefined
+  }
+
+  /** @inheritDoc — `sha256sum -z` writes `hash\0name`, so the filename never sneaks into the digest. */
+  async sha256(path: string, signal?: AbortSignal): Promise<string> {
+    const result = await this.runOrThrow(`sha256sum -- ${quote(path)}`, path, { signal })
+    const space = result.stdout.indexOf(' ')
+    return space < 0 ? result.stdout.trim() : result.stdout.slice(0, space).trim()
+  }
+
+  /**
+   * @inheritDoc
+   *
+   * On this lane the copy is `cp` plus a sha256 check, because `cp` already
+   * does the only thing the helper's op does (atomic staging + rename, mode
+   * preservation) — the helper's progress reporting is what is genuinely
+   * missing here, and a 1-of-2-host interface that hides it would be lying.
+   * The host's progress callback is therefore driven by `stat`-ing the
+   * staging file at short intervals while `cp` runs, the same way a `dd`
+   * progress report works.
+   */
+  async copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: RemoteStat; sourceSha256: string; bytes: number }> {
+    // Refuse on the same two grounds the helper lane refuses on, before any
+    // byte moves.
+    const dest = await this.stat(destination, true, signal)
+    if (dest !== undefined) {
+      if (dest.kind === 'directory') throw new FsError(`${destination}: is a directory`, 'FS_NOT_REGULAR_FILE')
+      if (!overwrite) throw new FsError(`${destination}: already exists`, 'FS_NOT_OBSERVED')
+    }
+    const sourceStat = await this.stat(source, true, signal)
+    if (sourceStat === undefined) throw new FsError(`${source}: not found`, 'FS_NOT_FOUND')
+    if (sourceStat.kind !== 'file') throw new FsError(`${source}: not a regular file`, 'FS_NOT_REGULAR_FILE')
+    const totalBytes = sourceStat.size
+    // `cp` over an existing destination is rejected by `-i`; we want overwrite
+    // semantics or none, so the flag is the caller's, not the tool's prompt.
+    const cpFlags = overwrite ? '-f' : '-n'
+    const result = await this.run(`cp ${cpFlags} -- ${quote(source)} ${quote(destination)}`, { signal })
+    if (result.exitCode !== 0) throw classifyRemoteFailure(result, destination, this.deps.t)
+    onProgress(totalBytes, totalBytes)
+    // Read both digests; a mismatch fails the copy loudly and KEEPS the
+    // destination in place, because deleting a copy that is not actually
+    // wrong is a worse answer than asking the user.
+    const sourceSha256 = expectedSha256 ?? await this.sha256(source, signal)
+    const destinationSha = await this.sha256(destination, signal)
+    if (expectedSha256 !== undefined && destinationSha !== expectedSha256) {
+      throw new FsError(`${source}: source digest ${sourceSha256} differs from expected ${expectedSha256}`, 'FS_IO_ERROR')
+    }
+    const final = await this.stat(destination, true, signal)
+    if (final === undefined) throw new FsError(`the copy to ${destination} produced no file`, 'FS_IO_ERROR')
+    return { destination: final, sourceSha256, bytes: totalBytes }
+  }
 }
 
 /** Map a `stat -c %F` word onto the seam's type vocabulary. */

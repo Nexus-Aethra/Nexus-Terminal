@@ -77,6 +77,20 @@ export const HELPER_OPS = {
   fsReadRange: 'fs.readRange',
   /** Replace a file's contents atomically. */
   fsWrite: 'fs.write',
+  /** Replace a file's contents with bytes carried in the request. */
+  fsWriteBytes: 'fs.writeBytes',
+  /** Create one or more directories, optionally recursive. */
+  fsMkdir: 'fs.mkdir',
+  /** Remove one path, recursively and tolerating absence. */
+  fsRemove: 'fs.remove',
+  /** Rename one path, optionally over an existing one. */
+  fsRename: 'fs.rename',
+  /** Stream one file's SHA-256 digest as hex, computed on the device. */
+  fsSha256: 'fs.sha256',
+  /** Stream one source file's bytes to a destination path on the device. */
+  fsCopy: 'fs.copy',
+  /** Read the current progress of an in-flight copy. */
+  fsCopyProgress: 'fs.copyProgress',
 } as const
 
 /**
@@ -382,3 +396,114 @@ export const fsWriteRequest = z.object({
  */
 export const fsWriteReply = remoteFsStat
 
+/**
+ * Bytes carried as base64, the wire shape every binary field on this protocol
+ * takes. Shared by the write-bytes, write, read-range and copy ops.
+ *
+ * Sized like {@link fsWriteRequest}: the frame ceiling bounds every message,
+ * base64 inflates by a third, and a write that asks to publish bytes has the
+ * same one-message constraint.
+ */
+export const fsWriteBytesRequest = z.object({
+  path: remoteAbsolutePath,
+  data: z.string().max(Math.ceil(DSHELL_HELPER_MAX_WRITE_BYTES / 3) * 4),
+}).strict()
+
+/**
+ * Create one or more directories.
+ *
+ * `paths` rather than one: a chunked copy makes its scratch directory along
+ * with every nested one inside it, and a per-path request would be one round
+ * trip per directory. The recursive flag covers both: a true value turns each
+ * path into `mkdir -p` semantics, the same wording the local backend uses.
+ */
+export const fsMkdirRequest = z.object({
+  paths: z.array(remoteAbsolutePath).min(1),
+  recursive: z.boolean(),
+}).strict()
+
+/** Remove one path, recursively and tolerating absence. */
+export const fsRemoveRequest = z.object({
+  path: remoteAbsolutePath,
+  force: z.boolean(),
+}).strict()
+
+/** Rename one path to another, optionally over an existing one. */
+export const fsRenameRequest = z.object({
+  from: remoteAbsolutePath,
+  to: remoteAbsolutePath,
+  overwrite: z.boolean(),
+}).strict()
+
+/**
+ * The whole-file SHA-256 of one path, requested as an op rather than as a
+ * side-effect of `fs.copy` so a caller that already has the bytes can verify
+ * against the device's own digest without going through a copy.
+ */
+export const fsSha256Request = z.object({
+  path: remoteAbsolutePath,
+}).strict()
+
+/** The hex digest, the same shape the local `sha256sum -z` produces. */
+export const fsSha256Reply = z.object({ hex: z.string().regex(/^[0-9a-f]{64}$/) }).strict()
+
+/**
+ * The whole-shape, two-realm call that replaces `split` + base64 relay +
+ * `cat` + `sha256sum` + `rm -rf` on the chunked path.
+ *
+ * Both source and destination are device paths; this op is what makes the
+ * device do the copy internally, so a multi-gigabyte transfer is one request
+ * whose reply is the outcome. Progress is reported on a separate
+ * `fs.copyProgress` op, keyed by the `copyId` the host allocates here.
+ *
+ * `expectedSha256` is optional: a caller that has the source bytes already
+ * (an in-process local file, an earlier read) can pin the copy; a caller that
+ * does not lets the device compute the source's digest itself and report it
+ * back.
+ */
+export const fsCopyRequest = z.object({
+  /** A host-allocated id used to query progress on a separate request. */
+  copyId: z.string().min(1),
+  source: remoteAbsolutePath,
+  destination: remoteAbsolutePath,
+  /** Refuse when the destination exists unless this is true. */
+  overwrite: z.boolean(),
+  /** Hex digest to compare the source against before copying; absent means skip the read-side check. */
+  expectedSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+}).strict()
+
+/**
+ * Progress on a `fs.copy`. The frame carries one increment; the host advances
+ * the job's `bytes` and `chunksDone` from it.
+ */
+export const fsCopyProgress = z.object({
+  /** Bytes the device has written to the staging file so far. */
+  written: z.number().int().nonnegative(),
+  /** Whole-file size of the source as the device saw it. */
+  totalBytes: z.number().int().nonnegative(),
+}).strict()
+
+/**
+ * The reply of `fs.copy`: the destination's metadata after the rename, plus
+ * the digest the device computed for the source so a caller without
+ * `expectedSha256` can verify on its own side too.
+ */
+export const fsCopyReply = z.object({
+  destination: remoteFsStat,
+  sourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  bytes: z.number().int().nonnegative(),
+}).strict()
+
+/** The rename reply: the destination's metadata after publication. */
+export const fsRenameReply = remoteFsStat.nullable()
+
+
+/** Address one in-flight copy. */
+export const fsCopyIdRequest = z.object({ id: z.string().min(1) }).strict()
+
+/** Progress of an in-flight copy: total, written so far, and whether it is still running. */
+export const fsCopyProgressReply = z.object({
+  totalBytes: z.number().int().nonnegative(),
+  written: z.number().int().nonnegative(),
+  running: z.boolean(),
+}).strict()

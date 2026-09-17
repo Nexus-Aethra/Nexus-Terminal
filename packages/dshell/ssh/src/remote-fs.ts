@@ -258,6 +258,67 @@ export class RemoteFileSystem {
     return await this.transport.write(remote, content, signal)
       ?? await this.transport.stat(remote, true, signal)
   }
+
+  /**
+   * Write bytes to one device path, exactly as they should land.
+   *
+   * Distinct from `writeText` because text is a lossy encoding for binary
+   * content. The seam's textual `writeText` does not go through here, and a
+   * binary transfer does not go through there.
+   *
+   * @param remote - absolute device path.
+   * @param bytes - the file's whole contents.
+   * @param signal - cancellation; a published file is not rolled back.
+   */
+  async writeBytes(remote: string, bytes: Uint8Array, signal?: AbortSignal): Promise<{ version: FsVersion } | undefined> {
+    return await this.transport.writeBytes(remote, bytes, signal)
+      ?? await this.transport.stat(remote, true, signal)
+  }
+
+  /** Create one or more directories on the device. */
+  async mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void> {
+    await this.transport.mkdir(paths, recursive, signal)
+  }
+
+  /** Remove one path, recursively and tolerating absence when forced. */
+  async remove(path: string, force: boolean, signal?: AbortSignal): Promise<void> {
+    await this.transport.remove(path, force, signal)
+  }
+
+  /** Rename one device path to another, optionally overwriting. */
+  async rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<{ version: FsVersion } | undefined> {
+    const info = await this.transport.rename(from, to, overwrite, signal)
+    return info === undefined ? undefined : { version: info.version }
+  }
+
+  /** The whole-file SHA-256 of one device path, computed on the device. */
+  async sha256(path: string, signal?: AbortSignal): Promise<string> {
+    return await this.transport.sha256(path, signal)
+  }
+
+  /**
+   * Copy one file on the device, end-to-end.
+   *
+   * Returns when the copy is done. Progress is reported on `onProgress` while
+   * the copy is running, on the same connection: the helper lane polls the
+   * device on a 50 ms cadence, the shell lane fires `totalBytes` at
+   * completion (its `cp` cannot give incremental progress without lying).
+   */
+  async copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: { version: FsVersion }; sourceSha256: string; bytes: number }> {
+    const outcome = await this.transport.copy(source, destination, overwrite, expectedSha256, onProgress, signal)
+    return {
+      destination: { version: outcome.destination.version },
+      sourceSha256: outcome.sourceSha256,
+      bytes: outcome.bytes,
+    }
+  }
 }
 
 /** Decode UTF-8 bytes, reporting the seam's not-text code for binary content. */

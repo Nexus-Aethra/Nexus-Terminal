@@ -20,15 +20,15 @@
  * means are all decided on the host, where the same answers apply to a local
  * session. This is the device's half of the seam and nothing more.
  */
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { z } from 'zod'
-import type { remoteFsCode, remoteFsKind } from './protocol.js'
+import type { remoteFsKind } from './protocol.js'
 
 /** The seam's names for the failures a device can originate. */
-export type DeviceFsCode = z.infer<typeof remoteFsCode>
+export type DeviceFsCode = DeviceFsErrorCode
 
 /** What a path is, in the seam's vocabulary. */
 export type DeviceFsKind = z.infer<typeof remoteFsKind>
@@ -59,11 +59,14 @@ export interface DeviceListEntry {
  * platform's own text, naming the path and the errno.
  */
 export class DeviceFsError extends Error {
-  constructor(message: string, readonly code: DeviceFsCode) {
+  constructor(message: string, readonly code: DeviceFsErrorCode) {
     super(message)
     this.name = 'DeviceFsError'
   }
 }
+
+/** The seam's names for the failures a device can originate. */
+export type DeviceFsErrorCode = 'FS_NOT_FOUND' | 'FS_NOT_DIRECTORY' | 'FS_NOT_REGULAR_FILE' | 'FS_PERMISSION_DENIED' | 'FS_TOO_LARGE' | 'FS_IO_ERROR' | 'FS_ABORTED' | 'FS_NOT_OBSERVED'
 
 /** Whether an error means "nothing is there" rather than "something went wrong". */
 function isAbsent(error: unknown): boolean {
@@ -301,4 +304,277 @@ export class DeviceFileSystem {
     if (written === null) throw new DeviceFsError(`the write to ${basename(path)} produced no file`, 'FS_IO_ERROR')
     return written
   }
+
+  /**
+   * Create one or more directories.
+   *
+   * Each path is created independently; a failure on the third path leaves the
+   * first two made. The recursive flag turns each path into `mkdir -p`
+   * semantics, the same wording the local backend uses.
+   *
+   * @param paths - absolute device paths to create.
+   * @param recursive - whether to create missing parents.
+   */
+  async mkdir(paths: readonly string[], recursive: boolean): Promise<void> {
+    for (const path of paths) {
+      try {
+        await mkdir(path, { recursive })
+      } catch (error) {
+        if (!recursive && errorCode(error) === 'EEXIST') {
+          // Without `-p`, asking to create something that already exists is
+          // `EEXIST`. With `-p` it is the success case; a directory is itself
+          // a fine result for `mkdir -p`.
+          throw new DeviceFsError(`${path}: file exists`, 'FS_IO_ERROR')
+        }
+        throw failure(error)
+      }
+    }
+  }
+
+  /**
+   * Remove one path. Recursive and tolerate absence.
+   *
+   * `force: true` swallows `ENOENT`, which is the only difference from `rm`.
+   * Anything else (a directory a user does not own, a busy mount) is a real
+   * failure and is reported as one.
+   */
+  async remove(path: string, force: boolean): Promise<void> {
+    try {
+      await rm(path, { recursive: true, force })
+    } catch (error) {
+      // `force: true` already turns ENOENT into a no-op; an error here is
+      // either a real fault or a misuse of `force: false`, both worth raising.
+      if (force && errorCode(error) === 'ENOENT') return
+      throw failure(error)
+    }
+  }
+
+  /**
+   * Rename one path to another.
+   *
+   * `rename(2)` on POSIX overwrites an existing destination atomically — there
+   * is no `EEXIST` to trap. The "refuse when not asked" rule is enforced here,
+   * before the platform rename, because the platform is happy either way and
+   * a caller that said "no overwrite" deserves a typed refusal rather than a
+   * silent replace.
+   *
+   * @param from - absolute source path; must exist.
+   * @param to - absolute destination path; may exist if `overwrite` is true.
+   */
+  async rename(from: string, to: string, overwrite: boolean): Promise<DeviceStat | null> {
+    const existing = await this.stat(to, true)
+    if (existing !== null && !overwrite) {
+      throw new DeviceFsError(`${to}: already exists`, 'FS_NOT_OBSERVED')
+    }
+    try {
+      await rename(from, to)
+    } catch (error) {
+      throw failure(error)
+    }
+    return await this.stat(to, true)
+  }
+
+  /**
+   * The whole-file SHA-256 of one path, computed on the device.
+   *
+   * Streams the file so a multi-gigabyte source is not read into memory in one
+   * go. The hash is whatever the bytes are: a caller that wants a verified
+   * digest over text should pass UTF-8 bytes in and let the helper hash them.
+   */
+  async sha256(path: string): Promise<string> {
+    const handle = await attempt(() => open(path, 'r'))
+    try {
+      const hash = createHash('sha256')
+      const buffer = Buffer.allocUnsafe(64 * 1024)
+      for (;;) {
+        const { bytesRead } = await attempt(() => handle.read(buffer, 0, buffer.length, null))
+        if (bytesRead === 0) break
+        hash.update(buffer.subarray(0, bytesRead))
+      }
+      return hash.digest('hex')
+    } finally {
+      await handle.close().catch(() => undefined)
+    }
+  }
+
+  /**
+   * Copy one file on the device, internally.
+   *
+   * Streams source → staging while computing SHA-256, then renames into place.
+   * The destination refusal (target is a directory, or already exists with
+   * `overwrite: false`) is decided up front and reported as a typed code so
+   * the host does not have to translate one.
+   *
+   * The copy is started by `startCopy`, which returns an id the host uses to
+   * poll progress on a separate request. Running the copy in a separate
+   * Promise keeps the request/reply shape of the wire intact while letting
+   * the UI see the bytes move.
+   *
+   * @param source - absolute device path of the source file.
+   * @param destination - absolute device path of the destination file.
+   * @param id - host-allocated id used to look up progress; rejected if it is already in flight.
+   * @param overwrite - whether to replace an existing destination.
+   * @param expectedSha256 - source digest to verify against; absent means skip the read-side check.
+   * @param signal - cancellation; the helper stops at the next chunk boundary.
+   * @returns the copy's completion promise.
+   */
+  startCopy(
+    source: string,
+    destination: string,
+    id: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    signal: AbortSignal,
+  ): Promise<{ destination: DeviceStat; sourceSha256: string; bytes: number }> {
+    if (this.copies.has(id)) throw new DeviceFsError(`the dshell SSH helper already has a copy in flight for id ${id}`, 'FS_IO_ERROR')
+    const tracker: CopyTracker = { written: 0, totalBytes: 0, running: true }
+    this.copies.set(id, tracker)
+    return this.runCopy(id, source, destination, overwrite, expectedSha256, tracker, signal)
+      .finally(() => { tracker.running = false })
+  }
+
+  /**
+   * The end-to-end copy primitive, exposed for tests and for callers (the
+   * host's transport) that don't need progress polling. Allocates a fresh
+   * id each time and returns when the copy is done.
+   *
+   * The wire's `fs.copy` op uses `startCopy` directly with a host-allocated
+   * id, so progress events can be polled on `fs.copyProgress` while the copy
+   * runs; this convenience method is the no-progress variant.
+   */
+  async copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: DeviceStat; sourceSha256: string; bytes: number }> {
+    const id = randomBytes(8).toString('hex')
+    let lastWritten = 0
+    let lastTotal = 0
+    const progressTimer = setInterval(() => {
+      const t = this.copies.get(id)
+      if (t !== undefined) {
+        lastTotal = t.totalBytes
+        if (t.written !== lastWritten) {
+          lastWritten = t.written
+          onProgress(t.written, t.totalBytes)
+        }
+      }
+    }, 20).unref()
+    try {
+      const outcome = await this.startCopy(source, destination, id, overwrite, expectedSha256, signal)
+      // The copy is done: emit a final tick at the totals so callers (and
+      // tests) that only ever see the final state still observe at least
+      // one event, regardless of how quickly the bytes moved.
+      if (lastWritten !== outcome.bytes || lastTotal !== outcome.destination.size) {
+        onProgress(outcome.bytes, outcome.bytes)
+      }
+      return outcome
+    } finally {
+      clearInterval(progressTimer)
+    }
+  }
+
+  /**
+   * Read one in-flight copy's progress, by id.
+   *
+   * The id is unique per helper process and per request; a host that asks
+   * about an unknown id has nothing to learn, and gets zero bytes back
+   * (rather than an error, since a finished copy's id may legitimately not
+   * be in the table any more).
+   */
+  readCopyProgress(id: string): { totalBytes: number; written: number; running: boolean } {
+    const tracker = this.copies.get(id)
+    if (tracker === undefined) return { totalBytes: 0, written: 0, running: false }
+    return { totalBytes: tracker.totalBytes, written: tracker.written, running: tracker.running }
+  }
+
+  /** The in-flight copy table, looked up by id from {@link startCopy}. */
+  private readonly copies = new Map<string, CopyTracker>()
+
+  /** The actual copy loop, with the tracker it updates as it goes. */
+  private async runCopy(
+    id: string,
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    tracker: CopyTracker,
+    signal: AbortSignal,
+  ): Promise<{ destination: DeviceStat; sourceSha256: string; bytes: number }> {
+    const sourceInfo = await this.stat(source, true)
+    if (sourceInfo === null) throw new DeviceFsError(`${source}: not found`, 'FS_NOT_FOUND')
+    if (sourceInfo.kind !== 'file') throw new DeviceFsError(`${source}: not a regular file`, 'FS_NOT_REGULAR_FILE')
+    tracker.totalBytes = sourceInfo.size
+    // Refuse the destination up front, with the typed code the host speaks.
+    const destInfo = await this.stat(destination, true)
+    if (destInfo !== null) {
+      if (destInfo.kind === 'directory') throw new DeviceFsError(`${destination}: is a directory`, 'FS_NOT_REGULAR_FILE')
+      if (!overwrite) throw new DeviceFsError(`${destination}: already exists`, 'FS_NOT_OBSERVED')
+    }
+    const sourceHandle = await attempt(() => open(source, 'r'))
+    const directory = dirname(destination)
+    await attempt(() => mkdir(directory, { recursive: true }))
+    const staging = `${destination}.dshell-xfer-${randomBytes(6).toString('hex')}.tmp`
+    let staged = false
+    try {
+      const stagingHandle = await attempt(() => open(staging, 'wx', 0o600))
+      staged = true
+      let sourceSha256 = ''
+      try {
+        const hash = createHash('sha256')
+        const buffer = Buffer.allocUnsafe(64 * 1024)
+        let written = 0
+        let offset = 0
+        try {
+          for (;;) {
+            if (signal.aborted) throw new DeviceFsError(`the copy to ${destination} was cancelled`, 'FS_ABORTED')
+            const { bytesRead } = await attempt(() => sourceHandle.read(buffer, 0, buffer.length, offset))
+            if (bytesRead === 0) break
+            const chunk = buffer.subarray(0, bytesRead)
+            await attempt(() => stagingHandle.write(chunk, 0, chunk.length))
+            hash.update(chunk)
+            written += bytesRead
+            offset += bytesRead
+            tracker.written = written
+          }
+        } finally {
+          await sourceHandle.close().catch(() => undefined)
+        }
+        sourceSha256 = hash.digest('hex')
+        if (expectedSha256 !== undefined && expectedSha256 !== sourceSha256) {
+          throw new DeviceFsError(
+            `${source}: source digest ${sourceSha256} differs from expected ${expectedSha256}`,
+            'FS_IO_ERROR',
+          )
+        }
+        // Preserve the destination's mode if there is one; a new file gets
+        // 0o600, the same default the single-file write path uses.
+        const mode = destInfo === null ? 0o600 : destInfo.mode
+        await attempt(() => stagingHandle.chmod(mode))
+      } finally {
+        await stagingHandle.close().catch(() => undefined)
+      }
+      await attempt(() => rename(staging, destination))
+      staged = false
+      const written = await this.stat(destination, true)
+      if (written === null) throw new DeviceFsError(`the copy to ${destination} produced no file`, 'FS_IO_ERROR')
+      return { destination: written, sourceSha256, bytes: sourceInfo.size }
+    } finally {
+      this.copies.delete(id)
+      if (staged) await unlink(staging).catch(() => undefined)
+    }
+  }
+}
+
+/** The fields a running copy exposes to the helper's progress op. */
+interface CopyTracker {
+  /** Bytes the device has written to the staging file so far. */
+  written: number
+  /** Whole-file size of the source as the device saw it. */
+  totalBytes: number
+  /** Whether the copy is still running. */
+  running: boolean
 }
