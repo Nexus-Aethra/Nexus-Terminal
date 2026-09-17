@@ -137,7 +137,15 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     // builds its own ssh argv, so routing it would recurse into this same seam —
     // and `ssh` is a bare name, so it would otherwise look perfectly routable
     // and end up running an ssh client *on the device*, with the host's argv,
-    // credentials and known_hosts paths. The file layer still uses this until M2.
+    // credentials and known_hosts paths.
+    //
+    // That hop is not migration debt. It is the lane this seam takes whenever
+    // the RPC branch below does not apply — no verified connection, an
+    // unresolvable program, or a stdio shape the connection does not carry —
+    // and it is the only lane a device without Node has. The file layer keeps
+    // its own copy of the same two-lane choice (`remote-fs-shell.ts` beside
+    // `remote-fs-helper.ts`), so its commands arrive here as `ssh` and take
+    // this branch rather than being routed a second time.
     if (basename(spec.argv[0] ?? '') === 'ssh') return original.call(this, spec)
     const directory = remoteDirectory(assignment, spec.cwd)
     const program = deviceProgram(spec.argv[0] ?? '')
