@@ -13,7 +13,7 @@
  *    with the oldest queued command and slicing its output.
  *
  * Everything here is pure and side-effect free so it can be checked without a
- * live PTY (see `scripts/check-commands.ts`). Parsing is best-effort: an
+ * live PTY (`tests/commands.spec.ts`). Parsing is best-effort: an
  * untracked command (history recall, a marker-less shell) still yields a
  * record with an empty command and the raw output, and the caller always has
  * the sanitized raw delta as a fallback.

@@ -3432,3 +3432,53 @@ the web harness booting on rc.2 with all seven dshell client faces advertised.
 That schemastery is runtime-owned stopped being an inference here: it is one of
 the 241 entries in the desktop build's own `desktop-packages.json`. The
 per-check evidence is in the upgrade document's A1 section.
+
+## Phase 10.34 — T1: the assumptions become assertions
+
+The upgrade's real exposure was never the code — it was the things the repo
+believed about dsh and checked nowhere: 211 pins, 46 `link:` overrides, a bundle
+patch naming eight stock row ids, a client module table, and an install recipe
+whose package list could fall behind the workspace silently. Phase 10.33 listed
+that exposure; this phase closes it, before the host moves, so the move itself
+has a net.
+
+Three spec files, 25 cases, and every one of them was shown to bite by breaking
+what it watches:
+
+- **`bundle/tests/host-rows.spec.ts`** reads the two `web`-profile bundle patches
+  out of `dsh/` and asserts that the eight ids dshell disables still exist, that
+  its ten inserts collide with nothing, and that the profile still composes those
+  two bundles at all. dsh's patch files carry `!!js` tags, which the YAML default
+  schema refuses, so the loader extends it rather than the spec special-casing
+  them. Renaming a targeted id (`ui-jobs` → `ui-jobs-renamed`) fails the case
+  with that id in the message — which is the point: on 0.1.6 a renamed row is a
+  no-op dshell's layer cannot see, and startup is best-effort there, so nothing
+  else would have said a word.
+- **`scripts/tests/manifest-contract.spec.ts`** holds the workspace's agreement
+  with the checkout: peers and devDependencies carry the same names and ranges,
+  every declared name resolves through a root override whose target manifest
+  answers to that name, every `dsh-*` range satisfies `dsh/package.json`'s
+  version, no `@deepseek-ai/*` name is ever a dependency, `neverBundle` is a
+  subset of dsh's `PLATFORM_MODULES`, and the install recipe names every package.
+  Each of those four claims was broken in turn and went red.
+- **`terminal-bridge/tests/commands.spec.ts`** is the old
+  `scripts/check-commands.ts` moved into the suite — same 13 assertions over the
+  command splitter and the two truncation caps, now with a runner that fails a
+  build. The script is deleted; the phase that introduced it (Phase 10.5) keeps
+  its text as the record of how it was verified then.
+
+One finding came from the new checks rather than from review: `buffer`'s client
+bundle requires `@deepseek-ai/dsh-client-ui-primitives` from the module table,
+while its manifest declared that package in `devDependencies` only. Nothing had
+noticed, because the install recipe places it by hand for every profile — the
+manifest simply under-declared what the package needs from its host. Fixed in
+the same commit.
+
+One planned check changed shape, and the reason is worth keeping: the intent was
+to assert that the five seed-omission names match where the docs list them. There
+is no list to assert against — the desktop package set is generated from the
+packed tarball closure — so the check became the rule the desktop validator
+actually enforces (no first-party name in `dependencies`) plus the ownership
+check above, which together cover what the seed list was standing in for.
+
+Suite: 12 files, 172 cases, up from 9 and 147.

@@ -14,8 +14,10 @@ import { defineConfig } from 'vitest/config'
  * against a live harness instead (see docs/dshell-roadmap.md).
  *
  * `scripts/tests` is in scope for the same reason: the packaging helpers there
- * are ordinary functions, and the icon set is a fact about files rather than
- * about the harness.
+ * are ordinary functions, the icon set is a fact about files rather than about
+ * the harness, and `manifest-contract.spec.ts` holds the workspace's agreement
+ * with the host checkout — the pins, the overrides they resolve through, the
+ * client module table, and the install recipe's package list.
  */
 export default defineConfig({
   resolve: {
