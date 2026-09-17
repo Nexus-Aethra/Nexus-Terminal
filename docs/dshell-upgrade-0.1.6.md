@@ -282,7 +282,7 @@ The three compile-time breaks from §1.2 did not bite dshell's code:
 | Types | `pnpm typecheck` | clean, both programs |
 | Build | `pnpm build` | all faces emit (`terminal-bridge`, `mode`, `bundle`) |
 | Pure specs | `pnpm test` | 12 files, 172 tests pass, including `host-rows.spec.ts` against the 0.1.6 patch inventory and `manifest-contract.spec.ts` with the dual ranges now matching the host |
-| 0.1.6 symbol | `grep -c webTerminals packages/dshell/*/lib/*.js` after build | non-zero in the emitted client bundles (`terminal-bridge`, `mode`) |
+| Harness | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200. Boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions` |
 
 **Rollback:** `git -C dsh checkout dsh-v0.1.5-rc.2` plus a `pnpm install`; the
 branch is discarded.
