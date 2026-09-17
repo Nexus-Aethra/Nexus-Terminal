@@ -3482,3 +3482,39 @@ actually enforces (no first-party name in `dependencies`) plus the ownership
 check above, which together cover what the seed list was standing in for.
 
 Suite: 12 files, 172 cases, up from 9 and 147.
+
+## Phase 10.35 — A2: move the host to 0.1.6-alpha.1
+
+`dsh/` is checked out at `dsh-v0.1.6-alpha.1` (`0a15e36e`). The install step
+must use the pnpm 11.7.0 that ships inside the checkout; on this workspace the
+root `packageManager` is pnpm 9, and `npx pnpm@11.7.0` resolves that root value
+and then refuses the lockfile with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`. The
+working form is:
+
+```sh
+git -C dsh checkout dsh-v0.1.6-alpha.1
+node dsh/node_modules/.pnpm/pnpm@11.7.0/node_modules/pnpm/bin/pnpm.cjs install
+```
+
+Run from `dsh/` so the workspace file there is what controls resolution.
+
+The one infrastructure break the move surfaced: `node-pty`'s pnpm store path
+grew a `_patch_hash=` suffix in the 0.1.6 lockfile. The workspace override
+`link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty`
+pointed at a directory that no longer exists, and `packages/dshell/terminal-bridge/node_modules/node-pty`
+was a dangling symlink. Two fixes:
+
+- the root override now points at `link:./dsh/node_modules/node-pty`, the stable
+  top-level link pnpm 11 keeps;
+- the `terminal-bridge` symlink was rewritten to the new patch-hash store path.
+
+The three compile-time breaks listed in §1.2 did not bite dshell's code: the
+guide-entry `id` requirement is in `ui-sidebar-right`, which dshell does not
+touch; `SubprocessHandle.control` is present on our `SpawnHandle`; and the
+async `ShellExecutor.start` / `SandboxProvider.confine` seams are not
+implemented by our SSH layer.
+
+Acceptance: `pnpm typecheck`, `pnpm build`, `pnpm test` (12 files, 172 cases)
+and the T1 specs (`host-rows.spec.ts`, `manifest-contract.spec.ts`) all pass
+with `dsh/` at 0.1.6. The emitted client bundles carry a 0.1.6-only symbol
+(`ctx.webTerminals` / `webTerminals`).

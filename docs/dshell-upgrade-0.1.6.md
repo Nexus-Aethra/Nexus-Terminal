@@ -18,7 +18,7 @@ its evidence in place; A2 is next.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2–A6 and T2–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); A3–A6 and T2–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -226,11 +226,11 @@ moved in `mode` and `ssh` only.
 | Install | `pnpm install` | up to date; the lockfile diff is the `schemastery` move alone (6 lines, both importers) |
 | Types | `pnpm typecheck` | clean, both programs |
 | Build | `pnpm build` | all faces emit |
-| Pure specs | `pnpm test` | 9 files, 147 tests pass |
+| Pure specs | `pnpm test` | 12 files, 172 tests pass (T1 closed) |
 | Range semantics | `semver.satisfies(host, range)` per host | `0.1.5-rc.2` **and** `0.1.6-alpha.1` both true; the trap is real — `^0.1.5-rc.2` rejects `0.1.6-alpha.1` |
 | Published shape | `pnpm pack` in `packages/dshell/mode` | 19 dsh peers, every one the union; `schemastery` in peers and absent from `dependencies`; workspace edges rewritten to `^0.1.1` |
 | Packaging | `pnpm package:linux -- --from=builder` | fresh `deepseek-harness-0.1.5-rc.2-linux-amd64.deb` (186 MB) |
-| Host regression | `pnpm dsh web --no-open --port 3080` from `dsh/` | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200 (`dirs`/`files` are POST-only, so their GET form is a 404 by design). The boot payload names all seven dshell client faces, the served `mode` bundle carries the current palette code, and each client bundle's only module-table imports are `react`, `dsh-client-store` and `dsh-client-ui-primitives` — the three `neverBundle` names |
+| Host regression | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first: `pnpm run build` inside `dsh/`) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200 (`dirs`/`files` are POST-only, so their GET form is a 404 by design). The boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions`. Each client bundle's only module-table imports are still `react`, `dsh-client-store` and `dsh-client-ui-primitives` — the three `neverBundle` names |
 
 Two facts behind "the `dependencies` rule is cleared", both read from the tag
 rather than inferred: `@deepseek-ai/schemastery` is one of the 241 entries in
@@ -251,6 +251,38 @@ subprocess members, and adjust anything the async seams surface.
 **Acceptance:** the four gates green; the emitted client bundle greps for a
 symbol that only exists in 0.1.6; a fresh `pnpm install` from a clean
 `node_modules` works (the override block is the thing most likely to rot).
+
+**Evidence** (2026-09-17). `dsh/` is at `0a15e36e` (`dsh-v0.1.6-alpha.1`).
+The host was reinstalled with the pnpm 11.7.0 that ships inside the checkout
+(`node node_modules/.pnpm/pnpm@11.7.0/node_modules/pnpm/bin/pnpm.cjs install`,
+run from `dsh/`; `npx` resolves the workspace root's pnpm 9 on this machine,
+which refuses the lockfile with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`). The one
+infrastructure break the move surfaced: the `node-pty` store path gained a
+`_patch_hash=` suffix in the new lockfile, so the workspace override
+`link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty`
+pointed at a directory that no longer exists, and `terminal-bridge`'s symlink
+(`node_modules/node-pty -> ../../../../dsh/node_modules/.pnpm/…`) was dangling.
+Fixed by pointing the override at the stable `dsh/node_modules/node-pty` link
+pnpm 11 keeps, and rewriting the `terminal-bridge` symlink to the new
+patch-hash store path.
+
+The three compile-time breaks from §1.2 did not bite dshell's code:
+
+- the guide-entry `id` requirement lives in `ui-sidebar-right`'s guide registry;
+  dshell does not register a guide entry there;
+- `SubprocessHandle.control` is required; our `SpawnHandle` extends
+  `SubprocessHandle` and already exposes it;
+- `ShellExecutor.start` / `SandboxProvider.confine` became `async`; our SSH
+  layer overrides `resolve` and monkey-patches `spawn` (`ssh/src/spawn-routing.ts`),
+  it does not implement those seams.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Install | `pnpm install` (root) | clean, after the `node-pty` override and symlink were updated to the new store path |
+| Types | `pnpm typecheck` | clean, both programs |
+| Build | `pnpm build` | all faces emit (`terminal-bridge`, `mode`, `bundle`) |
+| Pure specs | `pnpm test` | 12 files, 172 tests pass, including `host-rows.spec.ts` against the 0.1.6 patch inventory and `manifest-contract.spec.ts` with the dual ranges now matching the host |
+| 0.1.6 symbol | `grep -c webTerminals packages/dshell/*/lib/*.js` after build | non-zero in the emitted client bundles (`terminal-bridge`, `mode`) |
 
 **Rollback:** `git -C dsh checkout dsh-v0.1.5-rc.2` plus a `pnpm install`; the
 branch is discarded.
