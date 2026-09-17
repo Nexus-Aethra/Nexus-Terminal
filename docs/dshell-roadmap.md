@@ -3499,14 +3499,22 @@ node dsh/node_modules/.pnpm/pnpm@11.7.0/node_modules/pnpm/bin/pnpm.cjs install
 Run from `dsh/` so the workspace file there is what controls resolution.
 
 The one infrastructure break the move surfaced: `node-pty`'s pnpm store path
-grew a `_patch_hash=` suffix in the 0.1.6 lockfile. The workspace override
+grew a `_patch_hash=` suffix in the 0.1.6 lockfile. The old override
 `link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty`
 pointed at a directory that no longer exists, and `packages/dshell/terminal-bridge/node_modules/node-pty`
-was a dangling symlink. Two fixes:
+was a dangling symlink. Both were re-pointed at the new store directory, and what
+is on disk now is the patch-hash path in both places:
 
-- the root override now points at `link:./dsh/node_modules/node-pty`, the stable
-  top-level link pnpm 11 keeps;
-- the `terminal-bridge` symlink was rewritten to the new patch-hash store path.
+- the root override (`package.json`) is
+  `link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=b40ae545…/node_modules/node-pty`;
+- `packages/dshell/terminal-bridge/node_modules/node-pty` is a symlink to that same
+  directory, and the target resolves.
+
+An earlier revision of this paragraph claimed the override had been pointed at
+`link:./dsh/node_modules/node-pty`, "the stable top-level link pnpm 11 keeps".
+That path does not exist in this checkout (`ls dsh/node_modules/node-pty` fails),
+so the record was wrong, not the fix: there is exactly one `node-pty@*` directory
+under `dsh/node_modules/.pnpm/`, the patch-hash one.
 
 The three compile-time breaks listed in §1.2 did not bite dshell's code: the
 guide-entry `id` requirement is in `ui-sidebar-right`, which dshell does not
@@ -3514,7 +3522,155 @@ touch; `SubprocessHandle.control` is present on our `SpawnHandle`; and the
 async `ShellExecutor.start` / `SandboxProvider.confine` seams are not
 implemented by our SSH layer.
 
+**Wrong on the first item** — dshell *does* register a guide entry
+(`packages/dshell/files/src/client/definition.ts`), and it did bite. Corrected in
+Phase 10.38; the other two hold.
+
 Acceptance: `pnpm typecheck`, `pnpm build`, `pnpm test` (12 files, 172 cases)
 and the T1 specs (`host-rows.spec.ts`, `manifest-contract.spec.ts`) all pass
 with `dsh/` at 0.1.6. The emitted client bundles carry a 0.1.6-only symbol
 (`ctx.webTerminals` / `webTerminals`).
+
+**Correction (Phase 10.38).** `pnpm build` was **not** green at this point, and
+the "the three compile-time breaks did not bite" paragraph above is wrong about
+one of them. Only `typecheck` and `test` were green. See Phase 10.38.
+
+## Phase 10.36 — A3: behavioral best-effort startup and row-liveness
+
+0.1.6 makes startup best-effort: optional rows that fail to activate only
+produce a warning, and the harness keeps running. That removes the implicit
+smoke test "it did not boot", so we need an explicit "our rows are live"
+assertion.
+
+Evidence collected on the 0.1.6 harness:
+
+- The boot log contains **zero** row-activation warnings — no `did not
+  activate`, no `inactive` entries, no `required startup failure`.
+- `/api/dshell/sessions` answers with the dshell workspace shape
+  (`{"archived":["session-c56e1b53-26a4-40d2-97ea-5f771f140e6c"],"pendingPurge":[]}`),
+  which proves the `dshell-workspace` row is mounted and its route is
+  processing requests.
+- The boot payload names all seven dshell client faces (`buffer`,
+  `conversation`, `files`, `mode`, `ssh`, `terminal-bridge`, `workspace`).
+- The bundle-patch row ids were already locked by T1
+  (`host-rows.spec.ts`), and they still hold on 0.1.6.
+
+The remaining A3 items — `localDisplayPath`, the `FS_NOT_FOUND` traversal
+case in the SSH file routing, the `agent/created` signature, and the message
+projection obligation — are recorded in the upgrade doc as behavioral facts
+to observe when the harness is running under a browser. They are not
+structural changes, so they do not need a phase of their own until a phase
+actually touches those seams.
+
+## Phase 10.37 — A4.1 is falsified: `ctx.ssh` is one connection, not a device
+
+A4.1 planned to let `ctx.ssh` + `SshFileSystem` carry remote fs, exec and sandbox
+*for a bound device*, demoting the mount directory and the per-tool seams to a
+compatibility path. Reading the 0.1.6 host before writing the code showed that
+shape cannot exist there, so nothing was migrated and the SSH layer stays as it
+is. This phase is the record of that, so the next person does not spend the
+attempt again.
+
+The falsifying facts, each read directly at `dsh-v0.1.6-alpha.1` (`0a15e36e`):
+
+- `ctx.ssh` is **one** connection. `Config.host` is a scalar OpenSSH alias
+  ("including its existing user, key and known-host configuration",
+  `dsh/packages/ssh/ssh/src/index.ts:18`), the service is a single
+  `SshConnection` named `ssh` (`:47`, `:73`), and `request(method, params,
+  result, signal, wait)` takes no host (`:115`).
+- Its consumers each claim a capability service **once per context**, so the ssh
+  family swaps the whole process world rather than scoping to a session:
+  `SshFileSystem` → `ctx.fs` (`dsh/packages/ssh/fs-ssh/src/index.ts:20-21`),
+  `SshSubprocessRuntime` → `ctx.subprocess`
+  (`dsh/packages/ssh/subprocess-ssh/src/index.ts:229-230`), `SshSandboxProvider`
+  → `ctx.sandbox` (`dsh/packages/ssh/sandbox-ssh/src/index.ts:10-11`).
+- Two providers of one capability in one context is an error, not a layering:
+  "a host composes exactly one provider of `ctx.shell` … mounting both fails loud
+  on a duplicate service registration"
+  (`dsh/packages/shell/shell/src/index.ts:13-17`); the duplicate throws at
+  `dsh/vendor/cordis/src/reflect.ts:290`.
+
+Mounting upstream's rows alongside our `bash-local`/`fs-local` rows would
+therefore fail rather than give one session a remote world — and if it were
+accepted, every session would move to that single device, which is the opposite
+of a per-session binding.
+
+Per-session isolation exists as a primitive but is not wired to sessions:
+`ctx.isolate(name, label?)` makes a child context with its own realm for one
+service name (`dsh/vendor/cordis/src/context.ts:121-124`), and the only
+production user is agent-presets, which mounts a preset composition **once per
+preset id** (`dsh/packages/preset/agent-presets/src/index.ts:776`, `:449`) with
+sessions binding to that standing mount (`:454`, `:491`, `:688`). Sessions on one
+preset share the instance.
+
+**Decision.** dshell's per-device transport is the design of record, not a
+compatibility path. It drives the system `ssh` through `ctx.subprocess` and needs
+no 0.1.6-only service, which is also what keeps the dual-host peer ranges honest.
+No code changed: the only artifacts from the attempt were two dependency
+additions (`@deepseek-ai/dsh-ssh`, `@deepseek-ai/dsh-fs-ssh` in
+`packages/dshell/ssh/package.json` plus their root overrides), and they were
+reverted with the lockfile.
+
+**What is still worth taking, unscheduled.** Upstream's real asset here is the
+helper *protocol* — `@deepseek-ai/dsh-ssh/protocol` (`SshRpcPeer`,
+`RemoteOperationError`) and `@deepseek-ai/dsh-ssh/schemas` with the remote helper.
+A per-device client speaking it would replace "spawn `ssh` per command against a
+mount directory" with one multiplexed, hash-verified helper session per device,
+and the device registry would stay ours because the connection count stays ours.
+That is a project the size of the existing `ssh` layer, so it is listed here as a
+candidate phase and not folded into the upgrade.
+
+**A4.2 stands, narrowed.** `ctx.webTerminals` is a client service that genuinely
+is keyed by session — `view(sessionId, …)`, `launchShells(sessionId, …)`,
+`close(sessionId, …)`, `recover(sessionId)`
+(`dsh/packages/api/terminal-controller/src/client/index.ts:68`, `:87`, `:106`,
+`:124`) — but it models a **sidebar** terminal, while dshell's is the agent's own
+PTY with a claim hook. Reuse is therefore the recovery/attach and
+shell-discovery semantics, not tab ownership. `dshell-terminal-bridge` is about
+5,800 lines (client 985 + 322, host PTY 586), so it is its own phase.
+
+Acceptance for this phase: `pnpm typecheck` and `pnpm test` (12 files, 172 cases)
+stay green with the dependency additions reverted, and the upgrade doc's A4
+section states the constraint with the citations above.
+
+## Phase 10.38 — the three client breaks A2's acceptance missed
+
+Phase 10.35 recorded all four gates green. At its merge commit they were not:
+`pnpm typecheck` and `pnpm test` were green, and `pnpm build` failed on three
+client implementations that no longer satisfied their upstream interface. This
+phase lands the fixes and the corrected record.
+
+| Site | Break | Fix |
+|---|---|---|
+| `packages/dshell/workspace/src/client/index.ts` | `IWorkspaces` and `UiWorkspace` gained a required `unarchiveSession` (TS2420, both stand-ins) | both delegate to `SessionPanelClient.unarchive`, which already existed and whose route this package serves — `workspace/src/route.ts:98` handles `action: 'unarchive'` |
+| `packages/dshell/files/src/client/definition.ts` | `SidebarRightGuideEntry` gained a required `id` (TS2741) | `id: 'files'`. §1.2 and Phase 10.35 both predicted this break "would not bite because the type lives in `ui-sidebar-right`"; that reasoning confused where the *type* lives with where a *value* is registered — dshell registers one guide entry |
+| `packages/dshell/mode/src/client/index.ts` | `CommandClaim` gained a required `name` (TS2741) | `name: next`, the canonical mode name; upstream documents it as "the key of per-command composer copy such as `hint.*`" |
+
+The other two §1.2 breaks genuinely did not bite (`SubprocessHandle.control` is
+on our `SpawnHandle`; we implement neither async `start` nor `confine`).
+
+**Why this escaped, and the gate consequence.** At the merge commit
+`pnpm typecheck` was green while `pnpm build` was red on all three rows.
+`typecheck` is `tsc -b` over `tsconfig.host.json` / `tsconfig.client.json`, which
+trusts per-project `*.tsbuildinfo`; `build` is `tsc -p` per package, which does
+not. `.tsbuildinfo` is gitignored (`.gitignore:20`), so its freshness belongs to
+one working copy and not to the commit. The mechanism was not pinned down, and
+this phase does not claim to: what is recorded is that the two gates disagreed
+on a merge commit's content, and that only `build` was telling the truth.
+
+Consequence for the T roadmap: "`pnpm typecheck` is green" must not be used as
+the compile gate on its own. Either the gate becomes `pnpm build`, or the
+check is `tsc -b … --force` (which discards the incremental state that made the
+disagreement possible). This belongs with T2 (compile-time host-contract
+assertions) and T4 (the scripted acceptance checklist), since both were premised
+on the compile gate being trustworthy.
+
+A second, related lesson: the upstream interface change surfaced only because the
+implementation *declares* `implements IWorkspaces`. A dshell class that consumed
+the service without declaring the interface would have compiled cleanly and
+failed at runtime — which is exactly the failure mode 0.1.6's best-effort startup
+(A3) no longer reports loudly.
+
+Acceptance: `pnpm typecheck`, `pnpm build` (all 11 packages) and `pnpm test`
+(12 files, 172 cases) all green at once, and the A2 and 10.35 sections carry the
+corrections.

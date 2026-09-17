@@ -26,8 +26,9 @@ Four decisions this roadmap takes, each reversible by editing this section:
    hosts before `dsh/` moves, so `main` stays installable and publishable while
    the migration is in flight (A1).
 2. **Scope is "make it work, plus the two migrations that pay for themselves"** —
-   upstream's ssh/fs stack and its client terminal model (A4). The other new
-   capabilities are listed and deferred (A6).
+   upstream's ssh/fs stack and its client terminal model (A4). A4.1 was falsified
+   on contact with the host and is now a recorded dead end; A4.2 survives. The
+   other new capabilities are listed and deferred (A6).
 3. **This document carries both roadmaps**, and `dshell-roadmap.md` gains one
    index phase pointing here, so a reader picking the next phase still lands on it.
 4. **The desktop app is in the same round**, after the web harness is green (A5):
@@ -183,8 +184,8 @@ point, in the order this roadmap would take them:
 
 | Capability | Plug-in point | What dshell gains |
 |---|---|---|
-| SSH + remote fs | `ctx.ssh`; `SshFileSystem` registers `ctx.fs`; `subprocess-ssh`, `sandbox-ssh` | The device-tree mount trick and the per-tool seams can become the standard fs/subprocess seam (A4) |
-| Client terminals | `ctx.webTerminals` + `remote.terminal`; `ui-sidebar-terminal` owns the `terminal` tab kind | Screen recovery and attach semantics for our own xterm wiring (A4); the sidebar tab kind is taken, so ours can only be an extension |
+| SSH + remote fs | `ctx.ssh` (one deployment-owned connection); `SshFileSystem`/`SshSubprocessRuntime`/`SshSandboxProvider` claim `ctx.fs`/`ctx.subprocess`/`ctx.sandbox` | Not per device: the connection is a single host alias and each provider registers once per context, so upstream's stack swaps the whole process world rather than scoping to a session's device. The reusable part is the helper protocol (A4.1) |
+| Client terminals | `ctx.webTerminals` + `remote.terminal`; `ui-sidebar-terminal` owns the `terminal` tab kind | Screen recovery and attach semantics for dshell's agent terminal (A4.2); the sidebar tab kind is taken, so ours can only be an extension |
 | Browser use | `ctx.browserUse` registry; providers: playwright-mcp, chrome-devtools-mcp, stagehand-native | Agent browser control for two patch rows (A6) |
 | Computer use | `ctx.computerUse` registry; cua-driver mcp/native | GUI control (A6) |
 | PTC | `ctx.ptcRuntime` + `ptc-runtime-node`, the `run_code` tool | Programmatic tool calls; we can register our own runtime (A6) |
@@ -262,25 +263,39 @@ infrastructure break the move surfaced: the `node-pty` store path gained a
 `link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty`
 pointed at a directory that no longer exists, and `terminal-bridge`'s symlink
 (`node_modules/node-pty -> ../../../../dsh/node_modules/.pnpm/…`) was dangling.
-Fixed by pointing the override at the stable `dsh/node_modules/node-pty` link
-pnpm 11 keeps, and rewriting the `terminal-bridge` symlink to the new
-patch-hash store path.
+Both now point at the patch-hash store directory (roadmap 10.35 carries the
+corrected record; an earlier revision of this paragraph named a
+`dsh/node_modules/node-pty` link that does not exist in this checkout).
 
-The three compile-time breaks from §1.2 did not bite dshell's code:
+**The "three breaks do not bite" claim below was wrong — `pnpm build` was red.**
+`typecheck`, `build` and `test` were all recorded green above, but at HEAD only
+`typecheck` and `test` were. Three client implementations no longer satisfied
+their upstream interface:
 
-- the guide-entry `id` requirement lives in `ui-sidebar-right`'s guide registry;
-  dshell does not register a guide entry there;
-- `SubprocessHandle.control` is required; our `SpawnHandle` extends
-  `SubprocessHandle` and already exposes it;
-- `ShellExecutor.start` / `SandboxProvider.confine` became `async`; our SSH
-  layer overrides `resolve` and monkey-patches `spawn` (`ssh/src/spawn-routing.ts`),
-  it does not implement those seams.
+| Site | Break | Fix |
+|---|---|---|
+| `packages/dshell/workspace/src/client/index.ts` | `IWorkspaces` and `UiWorkspace` gained a required `unarchiveSession` (TS2420) | both stand-ins delegate to the panel client's existing `unarchive`, which this package's own `/api/dshell/sessions` route already handles (`workspace/src/route.ts:98`) |
+| `packages/dshell/files/src/client/definition.ts` | `SidebarRightGuideEntry` gained a required `id` (TS2741) | `id: 'files'` on the single entry — §1.2 predicted this one would not bite because the type lives in `ui-sidebar-right`, but dshell *does* register a guide entry |
+| `packages/dshell/mode/src/client/index.ts` | `CommandClaim` gained a required `name` (TS2741) | `name: next`, the canonical mode name — the key the composer's per-command copy is looked up under |
+
+The `SubprocessHandle.control` and async `start`/`confine` items did not bite, as
+§1.2 predicted.
+
+**The two gates disagreed, and that is worth knowing.** At HEAD `pnpm typecheck`
+was green while `pnpm build` failed on all three rows. `typecheck` runs `tsc -b`
+over `tsconfig.host.json` / `tsconfig.client.json`, which trusts each project's
+`*.tsbuildinfo`; `build` runs `tsc -p` per package. `.tsbuildinfo` is gitignored
+(`.gitignore:20`), so its freshness is a property of one working copy rather than
+of the commit, which makes "`pnpm typecheck` is green" a weaker statement than it
+reads. The mechanism was not pinned down; the disagreement is certain — observed
+on the merge commit — and `build` is the gate that caught the truth. That is now
+recorded as a T-roadmap item rather than a mystery.
 
 | Check | Command | Result |
 | --- | --- | --- |
 | Install | `pnpm install` (root) | clean, after the `node-pty` override and symlink were updated to the new store path |
-| Types | `pnpm typecheck` | clean, both programs |
-| Build | `pnpm build` | all faces emit (`terminal-bridge`, `mode`, `bundle`) |
+| Types | `pnpm typecheck` | clean, both programs — but see the gate-disagreement note above: this was clean at HEAD while `build` was red, so it is not on its own a compile gate |
+| Build | `pnpm build` | all 11 packages emit. **Not** clean at HEAD: it failed on the three client rows above and needed the fixes recorded there; green only after them |
 | Pure specs | `pnpm test` | 12 files, 172 tests pass, including `host-rows.spec.ts` against the 0.1.6 patch inventory and `manifest-contract.spec.ts` with the dual ranges now matching the host |
 | Harness | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200. Boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions` |
 
@@ -298,28 +313,103 @@ projection obligation where the next person will need them.
 **Acceptance:** each item has a line in the verification checklist (§4) and a
 green run; the "rows are live" assertion is one of them, not a copy of a boot log.
 
+**Evidence** (2026-09-17, host at `0.1.6-alpha.1`). The web harness boot log
+contains **zero** row-activation warnings — no `did not activate`, no
+`inactive` entries, no `required startup failure`. The `/api/dshell/sessions`
+route answers with the dshell workspace shape (`{"archived":[…],"pendingPurge":[]}`),
+and the boot payload names all seven dshell client faces plus the three new
+0.1.6 faces (`dsh-api-terminal-controller`, `dsh-client-ui-sidebar-terminal`,
+`dsh-client-ui-settings-unarchive-sessions`). The bundle-patch row ids were
+already locked by T1 (`host-rows.spec.ts`), and they still hold on 0.1.6.
+
 **Rollback:** per item; nothing here is structural.
 
 ### A4 — The two migrations that pay for themselves
 
-Two independent steps, in this order:
+Two independent steps. **Step 1 was falsified on `0.1.6-alpha.1` before any code
+landed**; step 2 survives with a narrower claim than first made.
 
-1. **SSH on the upstream seam.** Let `ctx.ssh` + `SshFileSystem` carry remote fs,
-   exec and sandbox for a bound device, and demote the mount directory and the
-   per-tool seams to a compatibility path behind a switch. dshell keeps what
-   upstream does not have: the device registry and its UI, identity and
-   `known_hosts` handling, helper provisioning, and any host↔remote path
-   presentation.
-2. **Client terminals on `ctx.webTerminals`.** Replace the hand-rolled attach and
-   recovery wiring with the upstream model, keeping the in-conversation block
-   rendering that is dshell's own.
+#### A4.1 — SSH on the upstream seam: falsified, re-scoped
 
-**Acceptance:** on the local sshd rig (127.0.0.1:2222), fs read/write, command
-execution and an interactive shell all work through the new seam, and the old
-path can be switched back on; a session's terminal recovers its screen after a
-reload through the upstream model.
+The plan was to let `ctx.ssh` + `SshFileSystem` carry remote fs, exec and sandbox
+*for a bound device*, demoting the mount directory and the per-tool seams to a
+compatibility path. That shape is not expressible in this host.
 
-**Rollback:** each step keeps its own switch, so either can be off independently.
+- **`ctx.ssh` is one connection, not a device set.** Its `Config.host` is a
+  scalar — "OpenSSH host alias, including its existing user, key and known-host
+  configuration" (`dsh/packages/ssh/ssh/src/index.ts:18`) — and the service is a
+  single `SshConnection` registered as `ssh` (`…/ssh/src/index.ts:47`, `:73`).
+  The transfer method takes no host: `request(method, params, result, signal,
+  wait)` (`…/ssh/src/index.ts:115`).
+- **Its consumers claim capability services once per context.**
+  `SshFileSystem extends FileSystem` with `inject = ['ssh', 'sandboxPolicy']`
+  (`dsh/packages/ssh/fs-ssh/src/index.ts:20-21`), `SshSubprocessRuntime extends
+  SubprocessRuntime` with `inject = ['ssh']`
+  (`dsh/packages/ssh/subprocess-ssh/src/index.ts:229-230`), and
+  `SshSandboxProvider extends SandboxProvider` with `inject = ['ssh']`
+  (`dsh/packages/ssh/sandbox-ssh/src/index.ts:10-11`). The shell service states
+  the invariant outright: "a host composes exactly one provider of `ctx.shell` …
+  mounting both fails loud on a duplicate service registration"
+  (`dsh/packages/shell/shell/src/index.ts:13-17`), and the duplicate is rejected
+  at `dsh/vendor/cordis/src/reflect.ts:290`.
+
+Mounting the upstream family next to dshell's `bash-local`/`fs-local` rows
+therefore does not give a bound session a remote world: it fails as a duplicate
+registration, and were it accepted it would move **every** session onto that one
+device — the opposite of a per-session binding.
+
+Per-session isolation does exist as a primitive. `ctx.isolate(name, label?)`
+creates a child context with its own realm for one service name
+(`dsh/vendor/cordis/src/context.ts:121-124`), but nothing in dsh scopes a
+capability through it per session. Its only production user is agent-presets,
+which mounts a preset's composition **once per preset id**
+(`dsh/packages/preset/agent-presets/src/index.ts:776`, `:449`) and has each
+session bind to that standing mount (`:454`, `:491`, `:688`): two sessions on one
+preset share the instance, and host-plane rows that inject `ctx.subprocess` keep
+resolving the root provider regardless.
+
+**Decision: dshell's own per-device transport stays the design of record, not a
+compatibility path.** It drives the system `ssh` through `ctx.subprocess` and needs
+none of the 0.1.6-only services, which is also what keeps the dual-host pins of
+§1.1 honest. There is nothing to roll back, because no code landed.
+
+**Recorded follow-up, not scheduled.** What upstream actually offers here is a
+*protocol*, not a provider: `@deepseek-ai/dsh-ssh/protocol` (`SshRpcPeer`,
+`RemoteOperationError`) plus the remote helper and its schemas
+(`@deepseek-ai/dsh-ssh/schemas`). A per-device client speaking that protocol would
+replace "spawn `ssh` per command against a mount directory" with one multiplexed,
+hash-verified helper session per device — and it would keep the device registry,
+because the connection count stays dshell's business. That is a project on the
+order of the existing `ssh` layer, so it is listed in the roadmap as its own
+phase rather than inside an upgrade.
+
+#### A4.2 — Client terminals on `ctx.webTerminals`: survives, narrower
+
+`ctx.webTerminals` is real and **is** keyed by session, which is why it is the one
+piece of 0.1.6's terminal work that fits dshell's shape: `view(sessionId, key,
+terminalId?, shellPath?)`, `launchShells(sessionId, signal)`, `close(sessionId,
+key, terminalId?)` and `recover(sessionId)`
+(`dsh/packages/api/terminal-controller/src/client/index.ts:68`, `:87`, `:106`,
+`:124`). It is a **client** service, provided by the `dsh-api-terminal-controller`
+face and consumed by `ui-sidebar-terminal`
+(`dsh/packages/client/ui-sidebar-terminal/src/client/index.ts:22`, `:40`).
+
+The claim to correct: this is not "replace our xterm wiring". dshell's terminal is
+the *agent's* own PTY, with a claim hook that unifies the model's `bash` with it;
+`webTerminals` models a **sidebar terminal** per session. Reuse therefore means
+adopting the recovery/attach and shell-discovery semantics, not the sidebar's tab
+ownership — `ui-sidebar-terminal` already owns the `terminal` tab kind, so
+dshell's surface can only be an extension.
+
+Size, so the next phase can be scoped honestly: `dshell-terminal-bridge` is about
+5,800 lines of TypeScript, and the parts this touches are the client
+(`src/client/index.ts`, 985 lines; `src/client/channel.ts`, 322) plus the host PTY
+(`src/pty.ts`, 586). It is its own phase, not a step.
+
+**Acceptance:** a session's terminal recovers its screen after a reload through the
+upstream model, and the in-conversation block rendering is unchanged.
+
+**Rollback:** A4.2 keeps its own switch; A4.1 needs none.
 
 ### A5 — Desktop and release
 
@@ -461,7 +551,8 @@ upgrade is "run it" rather than "re-read twenty phases":
   and one device-session variant;
 - rendering: the light/dark pass — palette classes, ANSI inks per span, the
   swatches, the picker dialog;
-- the local sshd rig: fs, exec, interactive shell through the seam A4 moved;
+- the local sshd rig: fs, exec, interactive shell through dshell's per-device
+  seams (unchanged by A4 — see A4.1);
 - packaging: `linux-unpacked` payload, icon hashes, `.deb` install, AppArmor,
   launch;
 - publish: `dist` metadata and the tarball's bytes, not the CLI's word.
