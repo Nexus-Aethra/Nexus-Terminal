@@ -103,25 +103,21 @@ describe('the dshell manifests', () => {
     // The override is the workspace's map from a first-party name to the
     // checkout path, and its target manifest is what proves the name is real:
     // a typo resolves to nothing, a moved package resolves to the wrong one.
+    // The check covers every override, not only the `@deepseek-ai/*` ones:
+    // `node-pty`'s store-path override is the one that broke when pnpm
+    // 11.7.0 started appending `patch_hash=` to its directory name.
     const problems: string[] = []
-    for (const pkg of DSHell_PACKAGES) {
-      const manifest = manifestOf(pkg)
-      const names = [...declared(manifest.peerDependencies), ...declared(manifest.dependencies), ...declared(manifest.optionalDependencies)]
-      for (const [name] of names) {
-        const target = OVERRIDES[name]
-        if (target === undefined) { problems.push(`${pkg}: ${name} has no root pnpm.overrides entry`); continue }
-        if (!target.startsWith('link:')) { problems.push(`${pkg}: ${name} override is not a link (${target})`); continue }
-        const dir = join(REPO_ROOT, target.slice('link:'.length))
-        if (!existsSync(join(dir, 'package.json'))) { problems.push(`${pkg}: ${name} links to a missing package (${dir})`); continue }
-        const owner = readJson(join(dir, 'package.json')).name
-        if (owner !== name) problems.push(`${pkg}: ${name} links to a package named ${String(owner)}`)
-      }
+    for (const [name, target] of Object.entries(OVERRIDES)) {
+      if (!target.startsWith('link:')) { problems.push(`${name} override is not a link (${target})`); continue }
+      const dir = join(REPO_ROOT, target.slice('link:'.length))
+      if (!existsSync(join(dir, 'package.json'))) { problems.push(`${name} links to a missing package (${dir})`); continue }
+      const owner = readJson(join(dir, 'package.json')).name
+      if (owner !== name) problems.push(`${name} links to a package named ${String(owner)}`)
     }
     expect(problems).toEqual([])
   })
 
-  it('never name a first-party package as a dependency', () => {
-    // The desktop profile fails on this for the packages its runtime owns. We
+  it('never name a first-party package as a dependency', () => {    // The desktop profile fails on this for the packages its runtime owns. We
     // cannot see that list from here, so the rule is absolute: if the package
     // is first-party, it is a peer.
     const offenders: string[] = []
