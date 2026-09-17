@@ -23,9 +23,9 @@ import { DeviceStore, type DeviceConnection } from './devices.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
 import { sshDeviceRoot } from './paths.js'
-import { isUnder, mountFor, remoteDirFor } from './mount.js'
+import { isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
-import { interactiveShellArgv, localCwd, quote, remoteShellLine, sshArgv, sshEnv } from './runner.js'
+import { interactiveShellArgv, localCwd, quote, sshArgv, sshEnv } from './runner.js'
 
 /**
  * Service name under which the router is published.
@@ -166,6 +166,13 @@ export class SshRouter {
    * at call time, so a switch needs no re-binding.
    */
   private t!: DshellSshTranslate
+  /**
+   * Told when a device or an assignment changed, so anything cached about a
+   * device — a resolved helper target, a live connection — can be dropped or
+   * re-established. Assigned by the subprocess seam, which owns those caches;
+   * absent in tests, where nothing needs invalidating.
+   */
+  onDeviceChanged: ((deviceId: string, event: 'saved' | 'removed' | 'bound') => void) | undefined
 
   /**
    * @param root - resolves the device directory (`<data root>/dshell/ssh`).
@@ -201,6 +208,15 @@ export class SshRouter {
    */
   bindCopy(t: DshellSshTranslate): void {
     this.t = t
+  }
+
+  /**
+   * One device's connection record from the routing cache.
+   * @param deviceId - device to look up.
+   * @returns the resolved connection, or undefined when it is not loaded.
+   */
+  deviceFor(deviceId: string): DeviceConnection | undefined {
+    return this.connections.get(deviceId)
   }
 
   /** Every configured device. */
@@ -245,6 +261,7 @@ export class SshRouter {
       if (ctx !== undefined) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
     }
     await this.bindings.set(sessionId, deviceId, remoteRoot, mount)
+    if (deviceId !== null) this.onDeviceChanged?.(deviceId, 'bound')
   }
 
   /**
@@ -254,6 +271,7 @@ export class SshRouter {
   async saveDevice(input: Parameters<DeviceStore['save']>[0]) {
     const view = await this.devices.save(input, this.t)
     await this.refreshDevices()
+    this.onDeviceChanged?.(view.id, 'saved')
     return view
   }
 
@@ -264,6 +282,7 @@ export class SshRouter {
   async removeDevice(deviceId: string): Promise<void> {
     await this.devices.remove(deviceId)
     await this.refreshDevices()
+    this.onDeviceChanged?.(deviceId, 'removed')
   }
 
   /**
@@ -527,8 +546,8 @@ export function installShellRouting(ctx: Context, router: SshRouter, t: DshellSs
   target.resolve = function resolve(this: unknown, request: ShellExecRequest): ShellExecSpec {
     const spec = original.call(this, request)
     const agent = ctx.agents.currentInitiator()
-    const target = agent === undefined ? undefined : router.targetForSession(String(agent.id))
-    if (target === undefined) {
+    const assignment = agent === undefined ? undefined : router.targetForSession(String(agent.id))
+    if (assignment === undefined) {
       // A session whose directory is a mount belongs to a device even when the
       // assignment is missing — the device may have been deleted, or a bind may
       // have failed. Running the command here would execute it on this machine
@@ -536,25 +555,25 @@ export function installShellRouting(ctx: Context, router: SshRouter, t: DshellSs
       if (isUnder(mountBase(), spec.workdir)) throw new Error(unboundMountMessage(spec.workdir, t))
       return spec
     }
-    const { device, remoteRoot, mount } = target
-    ctx.logger.info(`dshell-ssh: session "${String(agent?.id)}" runs on device "${device.name}"`)
-    // The directory the command runs in follows the caller's, translated: a
-    // tool that resolved a relative workdir against the session directory
-    // lands in the matching place on the device, and an absolute path the
-    // model gave is already a device path. A binding without a mount (written
-    // before mounts existed) has nothing to translate and uses the root.
-    const remoteDir = mount === undefined
-      ? remoteRoot
-      : remoteDirFor({ mount, remoteRoot }, spec.workdir)
+    ctx.logger.info(`dshell-ssh: session "${String(agent?.id)}" runs on device "${assignment.device.name}"`)
+    // The command and the directory are deliberately left alone. Rewriting the
+    // command into an `ssh … bash -lc` line is what this milestone removes, and
+    // the workdir stays the session's own path — the mount standing in for the
+    // device tree — because that is the path space every caller above this seam
+    // speaks: a tool resolved its relative path against it. The translation to a
+    // device directory happens in the subprocess seam, where the process
+    // actually leaves, so there is one place that knows the mapping rather than
+    // two that must agree about it.
     return {
       ...spec,
-      command: remoteShellLine(device, spec.command, remoteDir),
-      workdir: localCwd(),
       // The session's access mode describes what may happen on THIS machine,
-      // and the only thing running here now is the `ssh` client. Leaving the
-      // policy in place would confine that client — a workspace-write sandbox
-      // denies the network, so the connection itself would fail — while the
-      // command that actually matters executes under the device's own policy.
+      // and nothing runs here any more: the command is served by a helper on the
+      // device. Beyond being meaningless locally, an active policy would be
+      // actively wrong — `SandboxBashExecutor` confines by wrapping `argv` in a
+      // *host* runner program, and that wrapped argv would then be handed to a
+      // device that does not have it. Confinement on the device is a later
+      // commitment (upstream's `sandbox-ssh` is the model), so for now the
+      // command runs there under the device's own policy and says so here.
       ...spec.sandboxPolicy === undefined
         ? {}
         : { sandboxPolicy: { ...spec.sandboxPolicy, mode: 'danger-full-access' } },
