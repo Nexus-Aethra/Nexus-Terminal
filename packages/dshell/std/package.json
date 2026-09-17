@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-std",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "dshell standard layer: the wire contracts every plugin shares (paths + shapes), with no dependency on dsh and no feature code \u2014 the single place a dsh interface change is absorbed.",
   "license": "MIT",
   "repository": {

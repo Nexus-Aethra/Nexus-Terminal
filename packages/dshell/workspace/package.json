@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-workspace",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "dshell workspace removal (design 4.7): same-key stub providers for workspaceRegistry / workspaces / uiWorkspace so the stock web-app workspace rows can be disabled, plus a flat session list for the sidebar.",
   "license": "MIT",
   "repository": {
