@@ -414,6 +414,9 @@ been shown to fail when its rule is broken.
   `0.1.5-rc.2` peers. A1's widened ranges are what let a `0.1.2` serve both
   hosts; publishing it before the host moves is optional but keeps the registry
   releasable.
-- **Stale counts in existing documents**, to fix when this doc lands: the "190
-  pins" figure in Phase 10.4 (211 today), "80 specs" in Phase 10.26 (147 today),
-  and the verbatim-duplicated Phase 10.29/10.30 blocks in `dshell-roadmap.md`.
+- **Two kinds of stale number in `dshell-roadmap.md`.** The "190 pins" figure in
+  Phase 10.4 and "80 specs" in Phase 10.26 were true when written and are not true
+  now (211 pins, 147 cases) — they are a phase's record, so they stay as they are;
+  read them as history, and take the counts from this document or from the tree.
+  The verbatim-duplicated Phase 10.29/10.30 blocks are a different thing: a defect
+  worth removing in a documentation pass of its own.
