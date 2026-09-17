@@ -36,6 +36,7 @@ import type {} from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import { Feasibility, type DeviceRoutingSeat } from './feasibility.js'
 import type { DshellBufferHostTranslate } from './host-locales.js'
+import { DEVICE_FS_SERVICE, type DeviceFsSeat } from '@nexus-aethra/dshell-std'
 import {
   sessionLabel, renderRequestNotice, renderSettlementNotice, requestSummary, settlementSummary,
 } from './notice.js'
@@ -151,6 +152,8 @@ export interface GrantsForResult {
 export class BufferService {
   /** dshell-ssh's router when composed; read for where a peer runs. */
   private readonly routing: DeviceRoutingSeat | undefined
+  /** dshell-ssh's byte-level device ops seat when composed; absent means the host-process paths. */
+  private readonly deviceFs: DeviceFsSeat | undefined
   private links: BufferLink[] = []
   private tickets: BufferTicket[] = []
   private grants: BufferGrant[] = []
@@ -199,6 +202,10 @@ export class BufferService {
     // probe, and this package must not depend on that bundle.
     const routing = this.ctx.get('dshellSshRouting') as unknown as DeviceRoutingSeat | undefined
     this.routing = routing
+    // Same for the byte-level device ops seat (M3b); a composition without
+    // dshell-ssh reports `undefined`, and the relay falls back to the same
+    // in-process path it always used.
+    this.deviceFs = this.ctx.get(DEVICE_FS_SERVICE) as unknown as DeviceFsSeat | undefined
     this.feasibility = new Feasibility(this.ctx, routing)
     this.ctx.inject(['subprocess'], (probeCtx) => { this.probeCtx = probeCtx })
   }
@@ -935,69 +942,84 @@ export class BufferService {
         return this.ctx.fs.processPath(target)
       })
     }
+    // Both scratch paths exist so the two-host branch can use them; the
+    // device-host branch never writes to either.
     const sourceScratch = await scratchOf(sourceWorld)
     const destinationScratch = await scratchOf(destinationWorld)
     try {
-      // Slice in the source world and pin the whole-file checksum.
-      const sourcePath = this.ctx.fs.processPath(source)
-      await this.execAs(
-        sourceWorld,
-        `mkdir -p -- ${quote(sourceScratch)} && split -b ${String(CHUNK_BYTES)} -d -a 4 -- ${quote(sourcePath)} ${quote(sourceScratch + '/p')}`
-        + ` && sha256sum ${quote(sourcePath)} > ${quote(sourceScratch + '/sum')}`,
-        signal,
-      )
-      const sumOf = (text: string): string =>
-        text.split('\n').map(line => line.trim()).find(line => line.length > 0)?.split(/\s+/u)[0] ?? ''
-      const sourceSha = sumOf(await this.readWorldFile(sourceWorld, `${sourceScratch}/sum`, signal))
-      const entries = await this.ctx.agents.withInitiator(
-        sourceWorld,
-        async () => await this.ctx.fs.listDir(
-          await this.ctx.fs.resolve(sourceScratch, this.resolveOptions(sourceWorld, signal)),
-          signal,
-        ),
-      )
-      const names = entries.filter(entry => entry.type === 'file' && entry.name.startsWith('p')).map(entry => entry.name).sort()
-      if (names.length !== chunksTotal) {
-        throw new Error(`分块数量不符：预期 ${String(chunksTotal)}，实际 ${String(names.length)}`)
-      }
+      // The two worlds share no filesystem, so the file moves through the
+      // harness in bounded pieces: the source world reads each chunk at an
+      // offset (ctx.fs.readByteRange), the destination world receives each
+      // chunk's bytes, and the destination world lands the assembled file
+      // with one deviceFs.writeBytes (which the helper stages atomically).
+      // No scratch parts on either side, no split / cat / sha256sum scripts.
       const destinationPath = this.ctx.fs.processPath(destination)
-      await this.execAs(destinationWorld, `mkdir -p -- ${quote(destinationScratch)}`, signal)
+      const destinationOps = this.deviceOpsFor(destinationWorld)
       let bytesDone = 0
-      for (const [index, name] of names.entries()) {
+      const buffers: Buffer[] = []
+      let total = 0
+      for (let index = 0; index < chunksTotal; index += 1) {
         signal?.throwIfAborted()
-        const bytes = await this.ctx.agents.withInitiator(
+        const length = Math.min(CHUNK_BYTES, size - index * CHUNK_BYTES)
+        const chunk = await this.ctx.agents.withInitiator(
           sourceWorld,
-          async () => await this.ctx.fs.readBytes(
-            await this.ctx.fs.resolve(`${sourceScratch}/${name}`, this.resolveOptions(sourceWorld, signal)),
-            signal,
-            CHUNK_BYTES,
-          ),
-        )
-        await this.ctx.agents.withInitiator(
-          destinationWorld,
-          async () => await this.writeBytesAs(
-            destinationWorld,
-            await this.ctx.fs.resolve(`${destinationScratch}/${name}`, this.resolveOptions(destinationWorld, signal)),
-            bytes,
+          async () => await this.ctx.fs.readByteRange(
+            source,
+            { offset: index * CHUNK_BYTES, length },
             signal,
           ),
         )
-        bytesDone += bytes.byteLength
+        bytesDone += chunk.byteLength
         this.transfers.set(id, { ...record, bytesDone, chunksDone: index + 1 })
+        if (destinationOps !== undefined) {
+          buffers.push(Buffer.from(chunk))
+          total += chunk.byteLength
+        } else {
+          await this.writeBytesAs(
+            destinationWorld,
+            await this.ctx.fs.resolve(`${destinationScratch}/p${String(index).padStart(4, '0')}`,
+              this.resolveOptions(destinationWorld, signal)),
+            chunk,
+            signal,
+          )
+        }
       }
-      // Reassemble in the destination world and verify the whole-file digest.
-      await this.execAs(
-        destinationWorld,
-        `mkdir -p -- ${quote(posixDirname(destinationPath))} && cat ${quote(destinationScratch)}/p* > ${quote(destinationPath)}`
-        + ` && sha256sum ${quote(destinationPath)} > ${quote(destinationScratch + '/sum')}`,
-        signal,
-      )
-      const destinationSha = sumOf(await this.readWorldFile(destinationWorld, `${destinationScratch}/sum`, signal))
-      if (sourceSha === '' || destinationSha !== sourceSha) {
-        throw new Error(`分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha || '未知'}。中间数据保留在 ${sourceScratch} 与 ${destinationScratch}`)
+      // Land the assembled file in the destination world, then verify.
+      if (destinationOps !== undefined) {
+        const assembled = Buffer.concat(buffers, total)
+        if (assembled.byteLength !== size) {
+          throw new Error(`分块重组字节数 ${String(assembled.byteLength)} 与期望 ${String(size)} 不一致。`)
+        }
+        await destinationOps.mkdir([posixDirname(destinationPath)], true)
+        await destinationOps.writeBytes(destinationPath, assembled, signal)
+        const destinationSha = await destinationOps.sha256(destinationPath, signal)
+        const sourcePath = this.ctx.fs.processPath(source)
+        const sourceSha = await this.sha256AcrossWorld(sourceWorld, sourcePath, signal)
+        if (sourceSha === '' || destinationSha !== sourceSha) {
+          throw new Error(
+            `分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha || '未知'}。`,
+          )
+        }
+        // The destination's atomic staging left a clean publish; nothing to
+        // clean up. The source world had no scratch either.
+      } else {
+        // Two hosts: cat the staging parts on the destination and verify.
+        await this.execAs(
+          destinationWorld,
+          `mkdir -p -- ${quote(posixDirname(destinationPath))} && cat ${quote(destinationScratch)}/p* > ${quote(destinationPath)}`
+          + ` && sha256sum ${quote(destinationPath)} > ${quote(destinationScratch + '/sum')}`,
+          signal,
+        )
+        const sumOf = (text: string): string =>
+          text.split('\n').map(line => line.trim()).find(line => line.length > 0)?.split(/\s+/u)[0] ?? ''
+        const destinationSha = sumOf(await this.readWorldFile(destinationWorld, `${destinationScratch}/sum`, signal))
+        const sourceSha = sumOf(await this.readWorldFile(sourceWorld, `${sourceScratch}/sum`, signal))
+        if (sourceSha === '' || destinationSha !== sourceSha) {
+          throw new Error(`分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha || '未知'}。中间数据保留在 ${sourceScratch} 与 ${destinationScratch}`)
+        }
+        await this.execAs(sourceWorld, `rm -rf -- ${quote(sourceScratch)}`, signal)
+        await this.execAs(destinationWorld, `rm -rf -- ${quote(destinationScratch)}`, signal)
       }
-      await this.execAs(sourceWorld, `rm -rf -- ${quote(sourceScratch)}`, signal)
-      await this.execAs(destinationWorld, `rm -rf -- ${quote(destinationScratch)}`, signal)
       const finished: BufferTransfer = { ...record, bytesDone: size, chunksDone: chunksTotal, finishedAt: Date.now() }
       this.transfers.set(id, finished)
       this.pruneTransfer(id)
@@ -1055,43 +1077,70 @@ export class BufferService {
   }
 
   /**
-   * Write bytes into ONE session's execution world.
-   *
-   * `ctx.fs` has no byte write — both of its mutations take text, and its
-   * remote half encodes stdin as UTF-8 — so the bytes travel base64 on the
-   * shell seam's stdin and are decoded by the destination world's own
-   * `base64 -d`. That seam is the right one rather than a new filesystem
-   * method: it already routes per initiator (a device session decodes on the
-   * device, with no new transport), and the executor already fences the run by
-   * the session's resolved policy, so this write is bounded exactly where
-   * `writeText` would be — a grant cannot reach outside what that session's
-   * own mode allows.
+   * The whole-file SHA-256 of one path in one world, via `deviceFs` when the
+   * world is a device session and via the host `sha256sum` otherwise.
    */
-  private async writeBytesAs(world: Agent, target: FsTarget, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+  private async sha256AcrossWorld(world: Agent, path: string, signal?: AbortSignal): Promise<string> {
+    const ops = this.deviceOpsFor(world)
+    if (ops !== undefined) return await ops.sha256(path, signal)
+    return await this.sha256sumInWorld(world, path, signal)
+  }
+
+  /** Run `sha256sum` on one path inside one world. */
+  private async sha256sumInWorld(world: Agent, path: string, signal?: AbortSignal): Promise<string> {
     const shell = this.ctx.get('shell')
     if (shell === undefined) {
-      throw new Error('本次组合没有 shell 服务，无法把字节写入目标执行环境')
+      throw new Error('本次组合没有 shell 服务，无法计算远端文件的校验和')
     }
-    // `processPath` is the path this filesystem's own world can open, which is
-    // the device path for a remote target and the host path locally — exactly
-    // the string the destination shell needs.
-    const path = this.ctx.fs.processPath(target)
     const cwd = world.session.header.cwd
     const policy = this.ctx.get('sandboxPolicy')?.resolve({ session: world.session })
     const spec = this.ctx.agents.withInitiator(world, () => shell.resolve({
-      command: `mkdir -p -- ${quote(posixDirname(path))} && base64 -d > ${quote(path)}`,
+      command: `sha256sum -- ${quote(path)}`,
       ...cwd === undefined ? {} : { workdir: cwd },
       ...policy === undefined ? {} : { sandboxPolicy: policy },
       ...signal === undefined ? {} : { signal },
     }))
-    const result = await shell.run({ ...spec, stdin: Buffer.from(bytes).toString('base64') })
-    if (result.exitCode !== 0) {
-      const detail = result.stderr.text.trim()
-      throw new Error(
-        `写入 ${target.displayPath} 失败：`
-        + (detail.length > 0 ? detail : `退出码 ${String(result.exitCode ?? result.signal ?? 'unknown')}`),
-      )
+    const result = await shell.run(spec)
+    if (result.exitCode !== 0) return ''
+    return (result.stdout.text.trim().split(/\s+/u)[0] ?? '')
+  }
+
+  /**
+   * Write bytes into ONE session's execution world.
+   *
+   * When the world is bound to a device, `ctx.deviceFs.writeBytes` lands the
+   * bytes on the device directly: the helper stages atomically and creates
+   * missing parents. When the world is the host (or no helper is up), this
+   * falls back to `node:fs.writeFile` — the same in-process path the pre-M3
+   * implementation always used.
+   */
+  private async writeBytesAs(world: Agent, target: FsTarget, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+    const ops = this.deviceOpsFor(world)
+    if (ops !== undefined) {
+      // `processPath` is the device path the helper can open, exactly the
+      // spelling the destination ops need.
+      const path = this.ctx.fs.processPath(target)
+      await ops.mkdir([posixDirname(path)], true)
+      await ops.writeBytes(path, bytes, signal)
+      return
     }
+    const path = this.ctx.fs.processPath(target)
+    const { promises: fs } = await import('node:fs')
+    await fs.mkdir(posixDirname(path), { recursive: true })
+    await fs.writeFile(path, bytes, { signal })
+  }
+
+  /**
+   * The byte-level device ops for one session world, scoped to its initiator.
+   *
+   * The seat reads the ambient initiator on every call, so wrapping the
+   * lookup in `withInitiator(world, ...)` is what makes the right device
+   * answer. Returns `undefined` for a host world or for a device world
+   * without a helper up; the caller falls back to its in-process path.
+   */
+  private deviceOpsFor(world: Agent): import('@nexus-aethra/dshell-std').DeviceFsOps | undefined {
+    if (this.deviceFs === undefined) return undefined
+    return this.ctx.agents.withInitiator(world, () => this.deviceFs!.forInitiator())
   }
 
   /** The fs resolution options for one session: its cwd and the call's signal. */
