@@ -373,15 +373,32 @@ compatibility path.** It drives the system `ssh` through `ctx.subprocess` and ne
 none of the 0.1.6-only services, which is also what keeps the dual-host pins of
 §1.1 honest. There is nothing to roll back, because no code landed.
 
-**Recorded follow-up, not scheduled.** What upstream actually offers here is a
+**Follow-up: scheduled, as roadmap 10.39.** What upstream actually offers here is a
 *protocol*, not a provider: `@deepseek-ai/dsh-ssh/protocol` (`SshRpcPeer`,
 `RemoteOperationError`) plus the remote helper and its schemas
-(`@deepseek-ai/dsh-ssh/schemas`). A per-device client speaking that protocol would
-replace "spawn `ssh` per command against a mount directory" with one multiplexed,
-hash-verified helper session per device — and it would keep the device registry,
-because the connection count stays dshell's business. That is a project on the
-order of the existing `ssh` layer, so it is listed in the roadmap as its own
-phase rather than inside an upgrade.
+(`@deepseek-ai/dsh-ssh/schemas`). A per-device client speaking that protocol
+replaces "spawn `ssh` per command against a mount directory" with one multiplexed
+helper session per device, and it keeps the device registry because the connection
+count stays dshell's business.
+
+Two things were decided by measurement rather than by argument, on the throwaway
+rig (`127.0.0.1:2222`, remote node v24.21.0) — see 10.39 for the numbers:
+
+- **We write the helper; we reuse their framing.** Their helper cannot be
+  extended: an unknown method is a hard `throw new Error('Unknown SSH helper
+  operation: …')` (`dsh/packages/ssh/ssh/src/helper.ts:239`), and `dsh/` is
+  read-only for us. A helper of ours answered their `SshRpcPeer` handshake and
+  served a `dshell.*` method of our own on the same connection.
+- **Deployment can be one file.** Their helper still imports eight first-party
+  packages plus `zod`, and `dsh-subprocess-local` needs node-pty's native
+  `spawn-helper` prebuilt, so their README's "install the built helper and its
+  matching runtime dependencies on the remote host" is literal. A helper that
+  implements its own ops needs only `SshRpcPeer` and its schemas, which bundle
+  into a single file whose remaining imports are four node builtins.
+
+The one piece the single-file story does **not** cover is the remote PTY, which
+needs a native allocation path (node-pty's prebuilt, or `ssh -tt` as today). That
+is 10.39's open decision, not a settled one.
 
 #### A4.2 — Client terminals on `ctx.webTerminals`: survives, narrower
 

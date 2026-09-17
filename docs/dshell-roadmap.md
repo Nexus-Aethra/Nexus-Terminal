@@ -3674,3 +3674,140 @@ failed at runtime — which is exactly the failure mode 0.1.6's best-effort star
 Acceptance: `pnpm typecheck`, `pnpm build` (all 11 packages) and `pnpm test`
 (12 files, 172 cases) all green at once, and the A2 and 10.35 sections carry the
 corrections.
+
+## Phase 10.39 — the device seam moves to RPC (design + spike)
+
+Assembling remote commands as shell text is not a durable way to run a session on
+a device. Every structured operation has to be *encoded* as a string and then
+parsed back: `find -printf '%f\0'` with backslash-zero characters so the remote
+shell does not turn them into real NULs, `LC_ALL=C` around `stat`/`find`, and a
+nesting depth of quoting that exists only to smuggle a directory into an argv
+element. Each of those is a correctness and an injection surface at the same
+time. This phase replaces the encoding with a contract.
+
+### The decision
+
+**dshell writes its own helper; upstream's `SshRpcPeer` framing and op vocabulary
+are the contract.** Not their helper.
+
+Three reasons, each checkable:
+
+1. **Their helper cannot be extended.** The dispatch ends in a hard
+   `throw new Error('Unknown SSH helper operation: ${method}')`
+   (`dsh/packages/ssh/ssh/src/helper.ts:239`), so "extend their RPC" cannot mean
+   adding methods to it, and `dsh/` is read-only for us.
+2. **Their helper is heavy to deploy.** `lib/helper.js` still imports
+   `@deepseek-ai/cordis`, `dsh-fs`, `dsh-fs-sandbox`, `dsh-sandbox-local`,
+   `dsh-sandbox-policy`, `dsh-session-projection`, `dsh-subprocess`,
+   `dsh-subprocess-local` and `zod`; `dsh-subprocess-local` additionally needs
+   node-pty's native prebuilt `spawn-helper` (`scripts/ensure-spawn-helper.mjs`).
+   Their README says it plainly: "Install the built helper and its matching
+   runtime dependencies on the remote host."
+3. **Their connection refuses half our devices.** `SshConnection.start()` pins
+   `BatchMode=yes` and `StrictHostKeyChecking=yes`
+   (`dsh/packages/ssh/ssh/src/index.ts:263-265`) and manages no known_hosts. Our
+   registry has `auth: "password"` devices, and password login is exactly what
+   `BatchMode` disables.
+
+### Spike results (2026-09-17, rig `127.0.0.1:2222`, remote node v24.21.0)
+
+A helper of ours, importing their framing class, plus a client of ours:
+
+```
+hello in 144ms -> {"protocol":1,"platform":"linux","node":"…v24.21.0/bin/node","root":"/home/wpp"}
+dshell.ping -> {"pong":"DSHELL","at":…}                    ← our own op, same connection
+dshell.list -> {"entries":[{"name":"…","size":89,"dir":false},…]}   ← structured, not parsed text
+unknown method -> Unknown SSH helper operation: dshell.nope         ← same boundary as theirs
+```
+
+- the handshake costs 144–186 ms **including** the ssh connection setup;
+- `SshRpcPeer` works on both ends, so nothing binds us to their helper artifact;
+- our own method names coexist with their vocabulary on one connection;
+- the identical run against a `tsdown` bundle: **one file, 139,283 bytes**, whose
+  only remaining imports are `node:crypto`, `node:events`,
+  `node:fs/promises`, `node:path`. Everything else — `SshRpcPeer`, `zod` — is
+  inlined. Deployment for the fs/exec op set is therefore "one file plus node".
+
+### Target shape
+
+- One long-lived `ssh -T -M` child per device. **We already multiplex**:
+  `runner.ts:90-92` sets `ControlMaster=auto`,
+  `ControlPath=<data root>/dshell/ssh/ctl/<tag>`, `ControlPersist=120s`. The
+  transport does not change; what changes is that the connection carries a
+  process instead of one exec per command.
+- One helper process on the device, JSON-RPC over that child's stdio via
+  `SshRpcPeer`.
+- Op names mirror theirs where the semantics match, so a future swap stays cheap;
+  our own needs go under `dshell.*`.
+- No command string is assembled anywhere: arguments travel as JSON.
+
+| Their op | dshell use |
+|---|---|
+| `fs.resolve`, `fs.stat`, `fs.lstat`, `fs.list`, `fs.next` | replaces the `find`/`stat` text parsing, including the NUL and `LC_ALL=C` workarounds |
+| `fs.write`, `fs.edit`, `fs.stream` | replaces the host-side `cat`/redirect assembly for read/write/edit and the buffer relay |
+| `process.prepare`/`start`/`done`/`wait`/`terminate` | replaces the assembled `bash -lc` line; argv travels as a list |
+| `executable` | replaces the `rg` presence assumption in glob/grep |
+| `terminal.environment` | shell discovery for the device |
+| `sandbox` | deferred; we do not sandbox on the device today |
+
+### Staging
+
+- **S1 — transport, fs and exec.** Kills the assembly for `read`/`write`/`edit`/
+  `list`/`glob`/`grep`/`bash`. This is where the encoding pain actually is, and
+  it is the part the spike proved deployable as one file.
+- **S2 — terminal.** Open decision, because a PTY cannot be allocated in pure JS:
+  either keep today's `ssh -tt 'exec bash -l'` for the interactive terminal, or
+  deploy a native allocation path per device. Not settled here.
+
+### What we keep
+
+The device registry and its UI, password *and* key auth, per-device
+`known_hosts`, and `remoteRoot`/mount for the session's own directory — the
+harness reads that directory locally for instruction files, project discovery and
+sandbox roots, so the mount stays regardless of how commands travel.
+
+### Security: what this does and does not buy
+
+It does **not** make the device trusted, and the honest accounting matters because
+the motivation for this phase is partly risk:
+
+- **Gained:** the entire quoting/injection class disappears. Arguments are JSON,
+  never a shell string, so there is no nested-quote depth to get wrong and no
+  `NUL` smuggling. The local hop no longer has to be handed
+  `danger-full-access` to fit a `cd … && …` through it, because there is no
+  command to fit.
+- **Taken on:** a persistent Node process on the device that can perform
+  filesystem and process operations as the device user — a longer-lived surface
+  than short-lived execs, and one whose integrity now depends on a deployed
+  artifact. Upstream's own caveat applies verbatim: digest verification "does not
+  make writable deployment files safe to execute or authenticate a malicious SSH
+  host." We would verify our helper's hash the same way and for the same limited
+  reason — detecting an unexpected installed artifact, not authenticating a host.
+
+So the net effect is a smaller *error* surface with a different *trust* surface.
+The device-trust work (host-key pinning, which is still open in 10.10) is
+unaffected and still needed.
+
+### Open questions, stated rather than assumed
+
+- **PTY** (above) — the only piece outside the single-file story.
+- **Protocol version.** Their `SSH_PROTOCOL_VERSION` and `helloSchema` are
+  versioned. We should pin to a version we have read and keep our own handshake
+  tolerant, rather than inheriting alpha churn on a wire format.
+- **Helper upgrade.** How a device's installed helper is refreshed when dshell
+  updates: hash-pinned, but who pushes it, and what happens to a live session.
+
+### Verification
+
+On the rig, the same three seams that are tested by hand today — `bash`, a
+relative read/write, and `grep`/`glob` — must pass over the RPC path, plus one
+red-light case: kill the helper mid-operation and require the client to report an
+unconfirmed outcome rather than silently retry (their peer contract is explicit
+that cancellation never replays an ambiguous mutation, and ours must match).
+
+Acceptance for S1: those checks green on the rig with the RPC path on, and the
+current exec path still available per device so any single device can be moved
+back without a rebuild.
+
+**Rollback:** per-device, and the existing exec path is not deleted until S1 is
+green on the rig.
