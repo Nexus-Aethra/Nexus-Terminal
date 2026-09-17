@@ -55,6 +55,45 @@ function controlPath(device: DeviceConnection): string | undefined {
 }
 
 /**
+ * The trust options every harness-spawned `ssh` carries, whatever it runs.
+ *
+ * Shared by the per-command invocations and by the helper connection, because
+ * the two must make the same first-contact and known-hosts decision: a device
+ * whose host key is trusted for one path and not the other would produce two
+ * different answers to "is this the machine I meant".
+ *
+ * @returns the `-o` option words, in order.
+ */
+function trustOptions(): string[] {
+  return [
+    // Trust on first use. The alternative — refusing unknown hosts — would make
+    // a freshly added device unusable without a manual known_hosts edit.
+    '-o', 'StrictHostKeyChecking=accept-new',
+    // A device's host key is this plugin's own record of trust, not the harness
+    // user's. Without this, `accept-new` writes it into their personal
+    // ~/.ssh/known_hosts, which makes dshell's first-contact decision their own
+    // ssh client's too — and they never saw the fingerprint it trusted.
+    '-o', `UserKnownHostsFile=${sshKnownHostsPath()}`,
+    '-o', 'ConnectTimeout=10',
+  ]
+}
+
+/**
+ * Keepalives bound a connection whose peer has gone away. Without them a
+ * connection that dies half-open leaves a live control socket in front of a
+ * dead sshd, and every later command and terminal hangs behind it with no
+ * error — the shell simply never starts. Probing means the master notices and
+ * exits, and the next invocation dials a fresh connection.
+ *
+ * @param interval - seconds between probes.
+ * @param countMax - unanswered probes before the connection is dropped.
+ * @returns the `-o` option words, in order.
+ */
+function keepaliveOptions(interval: number, countMax: number): string[] {
+  return ['-o', `ServerAliveInterval=${interval}`, '-o', `ServerAliveCountMax=${countMax}`]
+}
+
+/**
  * Options every harness-spawned `ssh` carries, apart from authentication.
  *
  * BatchMode is deliberately NOT here: it disables prompting wholesale, which
@@ -69,15 +108,7 @@ function controlPath(device: DeviceConnection): string | undefined {
 function baseOptions(device: DeviceConnection): string[] {
   const control = controlPath(device)
   return [
-    // Trust on first use. The alternative — refusing unknown hosts — would make
-    // a freshly added device unusable without a manual known_hosts edit.
-    '-o', 'StrictHostKeyChecking=accept-new',
-    // A device's host key is this plugin's own record of trust, not the harness
-    // user's. Without this, `accept-new` writes it into their personal
-    // ~/.ssh/known_hosts, which makes dshell's first-contact decision their own
-    // ssh client's too — and they never saw the fingerprint it trusted.
-    '-o', `UserKnownHostsFile=${sshKnownHostsPath()}`,
-    '-o', 'ConnectTimeout=10',
+    ...trustOptions(),
     // Connection reuse. One tool call is several `ssh` invocations — a file read
     // is a resolve, a stat and a cat — and each fresh connection costs a TCP
     // handshake plus authentication (about a second against a remote host,
@@ -91,13 +122,7 @@ function baseOptions(device: DeviceConnection): string[] {
           '-o', `ControlPath=${control}`,
           '-o', 'ControlPersist=120s',
         ],
-    // Keepalives bound a master whose peer has gone away. Without them a
-    // connection that dies half-open leaves a live control socket in front of a
-    // dead sshd, and every later command and terminal hangs behind it with no
-    // error — the shell simply never starts. Probing means the master notices and
-    // exits, and the next invocation dials a fresh connection.
-    '-o', 'ServerAliveInterval=15',
-    '-o', 'ServerAliveCountMax=3',
+    ...keepaliveOptions(15, 3),
   ]
 }
 
@@ -171,6 +196,51 @@ export function sshArgv(device: DeviceConnection, remoteCommand: string): string
     remoteCommand,
   ]
 }
+
+/**
+ * The `ssh` argv that runs the device's helper process, for the life of one
+ * connection.
+ *
+ * Distinct from {@link sshArgv} in the three ways a long-lived process needs
+ * rather than one command: the control socket is private to this connection
+ * (the shared one exists to amortise many short invocations, and a helper
+ * master dying under it would take unrelated commands with it), the master is
+ * not persisted past the child (`ControlPersist=no`, because the child IS the
+ * connection), and keepalives are tightened to the helper's lease so a dead
+ * link is noticed before the lease expires rather than after.
+ *
+ * `--disable-sigusr1` is a security measure, not a preference. Node opens its
+ * inspector on SIGUSR1, and a device's sandbox confines file effects only, so
+ * a same-user process can still signal this one; without the flag the
+ * inspector would expose the helper's unrestricted filesystem and process
+ * services to anyone who can send that signal.
+ *
+ * @param device - device to connect to.
+ * @param options - the remote Node executable, the installed helper entry, and
+ *   the private control socket path for this connection.
+ * @returns argv for the local `ssh` process; its stdin/stdout carry the RPC.
+ */
+export function helperArgv(
+  device: DeviceConnection,
+  options: { node: string; helper: string; control: string },
+): string[] {
+  const remoteCommand = [options.node, '--disable-sigusr1', options.helper].map(quote).join(' ')
+  return [
+    'ssh',
+    ...trustOptions(),
+    '-T',
+    '-o', 'ControlMaster=auto',
+    '-o', `ControlPath=${options.control}`,
+    '-o', 'ControlPersist=no',
+    ...keepaliveOptions(10, 3),
+    '-p', String(device.port),
+    ...authArgs(device),
+    destination(device),
+    '--',
+    remoteCommand,
+  ]
+}
+
 
 /**
  * The local shell line that runs a command on the device in a remote

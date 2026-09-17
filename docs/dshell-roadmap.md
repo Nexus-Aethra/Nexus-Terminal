@@ -3884,3 +3884,129 @@ reports "no helper" and offers install; install then Test reports a hash match;
 rebuild the helper and the next connect detects the mismatch and redeploys. The
 "no node" path must report itself clearly and route to the compatibility tier
 rather than attempting an install.
+
+### Development plan (M0–M4)
+
+Agreed 2026-09-17. Migration first, provisioning last, so every milestone before
+M4 is developed against a helper deployed to the rig by hand.
+
+| Milestone | Delivers | Ends when |
+|---|---|---|
+| **M0** | The spine: helper protocol, device helper, connection manager, build and dependency wiring. No behaviour change. | Handshake + echo round trip on the rig (done — see 10.40). |
+| **M1** | `exec` through the `ctx.subprocess.spawn` seam: the router stops rewriting commands, and a bound session's spawns return a helper-backed handle. | On the rig: `bash` (relative workdir, exit code, stderr, an over-limit output that spills), `grep`/`glob`, and the red-light case (kill the helper mid-exec → reported as unconfirmed, never silently retried). |
+| **M2** | `fs.*` ops: `resolve`/`stat`/`lstat`/`list`/`next`/`read`/`write`/`edit`/`remove`/`rename`/`mkdir`/`publish`, with typed errors. `remote-fs.ts` loses its shell text and its English-stderr classifiers. | On the rig: relative read/write; a permission and a not-found case arriving as typed errors; the `find -printf '%f\0'` path gone. |
+| **M3** | Transfers and the buffer relay move onto `fs.*`, and the three duplicate `quote` helpers disappear with their last callers. | On the rig: a large file copied both ways, a cross-session buffer copy, and a checksum mismatch handled. |
+| **M4** | Provisioning: the Test action probes for Node and the helper, an install action bootstraps it, and a digest mismatch redeploys. | The provisioning acceptance above. |
+
+Out of scope for this round, recorded: the remote interactive terminal (it keeps
+today's `ssh -tt` path, and the PTY question stays open), and the two single-use
+`bash -c` probes in `files` (the PATH lookup and the completion oracle).
+
+Three constraints shape every milestone:
+
+1. **The connection must bypass the seam being wrapped.** A bound session's
+   subprocesses are routed by wrapping `ctx.subprocess.spawn`, so the connection
+   that serves them is spawned with `node:child_process` directly. Creating it
+   through `ctx.subprocess` would recurse.
+2. **The fallback is also the no-Node tier.** A device without a verified helper
+   keeps the current assembled-command path — one code path serving both "not
+   migrated yet" and "cannot run a helper at all".
+3. **`pnpm typecheck`, `pnpm build` and `pnpm test` stay green at every
+   milestone**, and the fallback stays reachable.
+
+## Phase 10.40 — M0: the helper spine
+
+The scaffold for everything above: dshell's own device helper, the connection
+that owns it, the wire contract between them, and the build and dependency wiring
+that turn the helper into one deployable file. No behaviour changes — nothing in
+the existing seams consults any of it yet.
+
+### What landed
+
+- `ssh/src/helper/protocol.ts` — the operation set and its schemas. Names mirror
+  dsh-ssh's where the semantics match; everything else is `dshell.*`. The
+  revision is deliberately independent of `SSH_PROTOCOL_VERSION`: the framing is
+  theirs, the operations are ours.
+- `ssh/src/helper/run.ts` — the device-side behaviour, over explicit streams so
+  it can be driven without spawning. Owns the handshake, the lease, and the
+  deliberate refusal of unknown operations.
+- `ssh/src/helper-entry.ts` — the launch shape: its own path (which the handshake
+  hashes), the signals that mean the connection is over, no arguments accepted.
+- `ssh/src/connection.ts` — one ssh child, one helper, one `SshRpcPeer`;
+  handshake, digest check, lease heartbeat, disposal, and a pool keyed by device
+  and target.
+- `runner.ts` — `trustOptions` and `keepaliveOptions` extracted so
+  `helperArgv` reuses the *same* trust and authentication options as the
+  per-command invocations. A device whose host key was trusted on one path and
+  not the other would be two different answers to "is this the machine I meant".
+- `tsdown.dshell.preset.ts` — `dshellNodeBundle`, and the ssh package builds two
+  artifacts now (`lib/client.js`, `lib/helper.js`), with `./helper` exported.
+
+### Evidence
+
+Rig `127.0.0.1:2222` (the throwaway device), host and device on Node v24.21.0,
+helper deployed as `~/.dshell/helper/helper-<sha256>.js`:
+
+```
+artifact hash: 84d72c09ad105311571d6a74c84023fe6282c31603ad674a9eb665d4c3d0e33c
+hello in 153ms -> {"protocol":1,"hash":"84d72c09…","platform":"linux",
+                   "node":"…/v24.21.0/bin/node","nodeVersion":"v24.21.0","root":"/home/wpp"}
+dshell.echo -> {"label":"dshell","upper":"DSHELL","pid":86034,"cwd":"/home/wpp"}
+echo pid differs from the host pid: 86018
+disposed cleanly
+MISMATCH -> the device's dshell SSH helper differs from this build (device 84d72c09ad10…, expected ffffffffffff…)
+ABSENT   -> the dshell SSH helper did not start on the device: … Cannot find module '/home/wpp/.dshell/helper/does-not-exist.js'
+```
+
+The echo's pid differing from the host's is the part that matters: the rig is the
+same machine, so it is the only proof the work happened in a process the ssh
+connection started rather than locally.
+
+`lib/helper.js` is 262,079 bytes and imports only `node:crypto`, `node:events`,
+`node:fs` and `node:url`.
+
+### The traps, each of which cost real time
+
+- **One zod, or nothing compiles.** `SshRpcPeer`'s signature is written in zod's
+  types, so our schemas must be the *same zod* dsh-ssh resolves. `^4.4.3`
+  resolved 4.6.5 while their tree had 4.4.3, and the result was
+  `Type instantiation is excessively deep and possibly infinite` plus a
+  structural-mismatch error naming nothing near the cause (a 40-line dump ending
+  at `_zod.version.minor`). Pinned to the exact version, and
+  `helper-artifact.spec.ts` now asserts the two versions are equal, so the next
+  such drift is one red test instead of an afternoon.
+- **`alwaysBundle` must match subpath imports.** Matching the bare package name
+  leaves `@deepseek-ai/dsh-ssh/protocol` external, and the artifact *looked*
+  fine — it built, it ran — while quietly requiring a `node_modules` the device
+  does not have. Patterns are `^pkg(/|$)` now.
+- **Self-containment is a build gate, not an assertion.**
+  `deps.onlyImport: []` makes tsdown refuse to emit when anything
+  package-shaped would remain an import; node's built-ins are always allowed.
+  Red-light tested: emptying `alwaysBundle` fails the build naming both
+  offenders. A post-hoc spec could only have described the problem.
+- **The remote helper path must be absolute.** `helperArgv` quotes each word for
+  the remote shell, and a quoted `~` never expands — so `~/.dshell/helper/…`
+  is a path that cannot work, and the design's shorthand has to be read as
+  `${HOME}`-expanded by whoever installs it.
+- **`tsc -p` emits JS for files only the bundle needs.** `lib/helper-entry.js`
+  and `lib/helper/run.js` appear beside the bundle and are unreachable once it
+  exists, while `files: ["lib"]` would happily ship them;
+  `scripts/drop-intermediates.mjs` removes exactly those two and the spec asserts
+  they are gone (its neighbour, `lib/helper/protocol.js`, is a real host module
+  and must stay).
+- **A pre-handshake failure needs a different error path.** The peer rejects a
+  pending request with "outcome is unknown", which wins the race against the
+  child's exit and buries the cause. The handshake now waits for the child (which
+  must be exiting, since the channel closed) so the ssh client's stderr is in
+  hand, and a self-diagnosed failure outranks a transport one — without which
+  tearing down after a digest mismatch would replace the mismatch with
+  "did not start", hiding the actual problem.
+
+### Not yet true
+
+Nothing routes through the spine, so the helper is inert in a real session; M1
+wires the first seam. The pool's disposal is not bound to anything yet (no
+device deletion, no host unload), which M1 must do or a device change would leave
+a helper behind. And the lease/heartbeat pair is exercised only by the rig run:
+its interaction with a *hanging* device (as opposed to a closed one) is
+unverified.

@@ -66,6 +66,7 @@
       "@deepseek-ai/dsh-session-stats": "link:./dsh/packages/session/session-stats",
       "@deepseek-ai/dsh-settings": "link:./dsh/packages/settings/settings",
       "@deepseek-ai/dsh-shell": "link:./dsh/packages/shell/shell",
+      "@deepseek-ai/dsh-ssh": "link:./dsh/packages/ssh/ssh",
       "@deepseek-ai/dsh-subprocess": "link:./dsh/packages/subprocess/subprocess",
       "@deepseek-ai/dsh-subprocess-local": "link:./dsh/packages/subprocess/subprocess-local",
       "@deepseek-ai/dsh-system-prompt": "link:./dsh/packages/core/system-prompt",

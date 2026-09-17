@@ -41,6 +41,7 @@ overrides:
   '@deepseek-ai/dsh-session-stats': link:./dsh/packages/session/session-stats
   '@deepseek-ai/dsh-settings': link:./dsh/packages/settings/settings
   '@deepseek-ai/dsh-shell': link:./dsh/packages/shell/shell
+  '@deepseek-ai/dsh-ssh': link:./dsh/packages/ssh/ssh
   '@deepseek-ai/dsh-subprocess': link:./dsh/packages/subprocess/subprocess
   '@deepseek-ai/dsh-subprocess-local': link:./dsh/packages/subprocess/subprocess-local
   '@deepseek-ai/dsh-system-prompt': link:./dsh/packages/core/system-prompt
@@ -50,7 +51,7 @@ overrides:
   '@deepseek-ai/dsh-tool-terminal': link:./dsh/packages/terminal/tool-terminal
   '@deepseek-ai/dsh-tools': link:./dsh/packages/core/tools
   '@deepseek-ai/schemastery': link:./dsh/vendor/schemastery
-  node-pty: link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty
+  node-pty: link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0/node_modules/node-pty
 
 importers:
 
@@ -448,6 +449,9 @@ importers:
       '@nexus-aethra/dshell-std':
         specifier: workspace:^
         version: link:../std
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: link:../../../dsh/vendor/cordis
@@ -500,6 +504,9 @@ importers:
       '@deepseek-ai/dsh-shell':
         specifier: link:../../../dsh/packages/shell/shell
         version: link:../../../dsh/packages/shell/shell
+      '@deepseek-ai/dsh-ssh':
+        specifier: link:../../../dsh/packages/ssh/ssh
+        version: link:../../../dsh/packages/ssh/ssh
       '@deepseek-ai/dsh-subprocess':
         specifier: link:../../../dsh/packages/subprocess/subprocess
         version: link:../../../dsh/packages/subprocess/subprocess
@@ -547,8 +554,8 @@ importers:
         specifier: workspace:^
         version: link:../storage
       node-pty:
-        specifier: link:../../../dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty
-        version: link:../../../dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15/node_modules/node-pty
+        specifier: link:../../../dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0/node_modules/node-pty
+        version: link:../../../dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0/node_modules/node-pty
       ws:
         specifier: ^8.21.0
         version: 8.21.3
@@ -1634,6 +1641,9 @@ packages:
   yuku-parser@0.8.7:
     resolution: {integrity: sha512-vRD9nwt4L3aYpxNqeSC4WqLv58xrXef0Ong1Mc45CTXTIpvLafx7JO05sczmQZwdLEZvywrLOGdNC5+Rp5N1BQ==}
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
     engines: {node: '>=12.7.0'}
@@ -2333,6 +2343,8 @@ snapshots:
       '@yuku-parser/binding-linux-x64-musl': 0.8.7
       '@yuku-parser/binding-win32-arm64': 0.8.7
       '@yuku-parser/binding-win32-x64': 0.8.7
+
+  zod@4.4.3: {}
 
   zustand@4.5.7(@types/react@18.3.31)(react@18.3.1):
     dependencies:

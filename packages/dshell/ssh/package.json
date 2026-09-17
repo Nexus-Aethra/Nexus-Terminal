@@ -23,6 +23,10 @@
     "./client": {
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
+    },
+    "./helper": {
+      "types": "./lib/types/helper-entry.d.ts",
+      "default": "./lib/helper.js"
     }
   },
   "dsh": {
@@ -31,7 +35,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json --emitDeclarationOnly false && tsdown --config-loader tsx",
+    "build": "tsc -p tsconfig.json --emitDeclarationOnly false && tsdown --config-loader tsx && node scripts/drop-intermediates.mjs",
     "build:host": "tsc -p tsconfig.json --emitDeclarationOnly false",
     "build:client": "tsdown --config-loader tsx"
   },
@@ -42,7 +46,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@nexus-aethra/dshell-std": "workspace:^"
+    "@nexus-aethra/dshell-std": "workspace:^",
+    "zod": "4.4.3"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
@@ -62,6 +67,7 @@
     "@deepseek-ai/dsh-session": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-settings": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-shell": "0.1.5-rc.2 || 0.1.6-alpha.1",
+    "@deepseek-ai/dsh-ssh": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-subprocess": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.2"
   },
@@ -83,6 +89,7 @@
     "@deepseek-ai/dsh-session": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-settings": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-shell": "0.1.5-rc.2 || 0.1.6-alpha.1",
+    "@deepseek-ai/dsh-ssh": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/dsh-subprocess": "0.1.5-rc.2 || 0.1.6-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@types/node": "^24",
