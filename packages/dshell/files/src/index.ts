@@ -28,6 +28,7 @@ import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-shell'
 // Type-only: pulls the terminal bridge's service merge (ctx.dshellTerminalBridge).
 import type { DshellTerminalBridge } from '@nexus-aethra/dshell-terminal-bridge'
+import { DEVICE_FS_SERVICE, type DeviceFsSeat } from '@nexus-aethra/dshell-std'
 import { createFilesRoute } from './route.js'
 import { TransferEngine, type TransferRoutingSeat } from './transfer.js'
 import { createTransferRoute } from './transfer-route.js'
@@ -71,10 +72,13 @@ export function apply(ctx: Context): void {
     // which is how bytes reach a world (`ctx.fs` has no byte write). The device
     // router is optional and read structurally through a getter — a composition
     // without dshell-ssh then has no remote side to offer, which the view says.
+    // The byte-level device ops are also optional; the engine falls back to its
+    // in-process paths when the seat reports no device for the ambient call.
     routeCtx.inject(['shell'], (shellCtx) => {
       const engine = new TransferEngine(
         shellCtx,
         () => shellCtx.get('dshellSshRouting') as unknown as TransferRoutingSeat | undefined,
+        () => shellCtx.get(DEVICE_FS_SERVICE) as unknown as DeviceFsSeat | undefined,
       )
       shellCtx.effect(
         () => shellCtx.connection.fetch.register(createTransferRoute(engine)),

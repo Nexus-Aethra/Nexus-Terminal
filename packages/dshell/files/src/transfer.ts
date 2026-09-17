@@ -50,11 +50,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 // Type-only: pulls the session-controller service merge (`ctx.sessionController`).
 import type {} from '@deepseek-ai/dsh-api-session-controller'
-// Type-only: the shell service merge (`ctx.shell`), the byte-write seam.
-import type {} from '@deepseek-ai/dsh-shell'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
-import { quote } from './shell-quote.js'
+import type { DeviceFsSeat } from '@nexus-aethra/dshell-std'
 import {
   type TransferEntry, type TransferJobState, type TransferJobView, type TransferListing,
   type TransferSetup, type TransferSide,
@@ -103,15 +100,8 @@ const MAX_PLAN_ENTRIES = 20_000
 const MAX_PLAN_BYTES = 4 * 1024 * 1024 * 1024
 
 /**
- * Timeout for one shell run.
- *
- * Each write is one command whose stdin is the whole file, so the number is
- * about the file and the link rather than about a command; the executor caps it
- * at its own maximum.
+ * How long a settled job stays readable before the registry drops it.
  */
-const TRANSFER_TIMEOUT_MS = 600_000
-
-/** How long a settled job stays readable before the registry drops it. */
 const JOB_TTL_MS = 5 * 60_000
 
 /** One world as this module uses it. */
@@ -196,10 +186,15 @@ export class TransferEngine {
    *   `shell` (the route's injection scope).
    * @param routing - dshell-ssh's routing face when that package is composed;
    *   read through a getter so a later load or unload stays honest.
+   * @param deviceFs - the seat the byte-level device ops are read from. The
+   *   engine only uses this on the device side; an unbound session gets
+   *   `undefined` from `forInitiator` and the engine falls through to its
+   *   in-process paths.
    */
   constructor(
     private readonly ctx: Context,
     private readonly routing: () => TransferRoutingSeat | undefined,
+    private readonly deviceFs: () => DeviceFsSeat | undefined,
   ) {}
 
   /** What the view can draw: both roots, the device, and whether a transfer is possible. */
@@ -328,6 +323,21 @@ export class TransferEngine {
       : this.ctx.agents.withInitiator(world.agent, operation)
   }
 
+  /**
+   * The byte-level device ops for one world, scoped to that world's initiator.
+   *
+   * The seat reads the ambient initiator on every call, so wrapping the lookup
+   * in `this.in(world, ...)` is what makes the right device answer. Returns
+   * `undefined` for a local world or for a session whose device has no helper
+   * verified right now; the caller decides what to fall back to.
+   */
+  private deviceOps(world: World): import('@nexus-aethra/dshell-std').DeviceFsOps | undefined {
+    if (world.agent === undefined) return undefined
+    const seat = this.deviceFs()
+    if (seat === undefined) return undefined
+    return this.in(world, () => seat.forInitiator()) ?? undefined
+  }
+
   /** The copy itself: plan, then write. */
   private async run(record: JobRecord, input: CopyInput): Promise<void> {
     const signal = record.controller.signal
@@ -444,18 +454,20 @@ export class TransferEngine {
    * Create the copied tree's directories, empty ones included.
    *
    * A local destination is created in process, one `mkdir -p` per directory; a
-   * device destination gets them batched into a few shell commands, because each
-   * one there is a round trip.
+   * device destination asks `ctx.deviceFs` for the batched mkdir, which is one
+   * round trip per batch instead of one per directory.
    */
   private async makeDirs(world: World, toDir: string, dirs: readonly string[]): Promise<void> {
     if (world.agent === undefined) {
       for (const relative of dirs) await mkdir(joinPath(toDir, relative), { recursive: true })
       return
     }
+    const ops = this.deviceOps(world)
+    if (ops === undefined) throw new Error('这个会话没有绑定设备的字节级操作入口。')
     const batch = 100
     for (let index = 0; index < dirs.length; index += batch) {
       const paths = dirs.slice(index, index + batch).map(relative => joinPath(toDir, relative))
-      await this.runIn(world, `mkdir -p -- ${paths.map(path => quote(path)).join(' ')}`)
+      await ops.mkdir(paths, true)
     }
   }
 
@@ -506,32 +518,27 @@ export class TransferEngine {
   }
 
   /**
-   * Move one file too big for a single stdin payload: split, relay, reassemble,
-   * verify — the relay dshell-buffer's cross-session copy runs, adapted to this
-   * engine's worlds.
+   * Move one file too big for a single `ctx.fs.readBytes` payload.
    *
-   * Every copy here has exactly one device side, and each side needs different
-   * readers and writers:
+   * Three shapes, chosen once per copy:
    *
-   *  - a LOCAL side needs no scratch at all — this process IS that world — so a
-   *    local source is read at offsets in process, and a local destination is
-   *    appended to a temp file that renames into place once verified;
-   *  - a REMOTE side slices its source with `split` into a scratch directory
-   *    (its `ctx.fs` has no offset read), and a remote destination reassembles
-   *    with one `cat` whose whole-file `sha256sum` is captured before the scratch
-   *    goes.
+   *  - **device → device** is one device op: `deviceFs.copy(source, dest, …)`
+   *    does the staging, hashing, and atomic rename internally.
+   *  - **host → device / device → host** streams chunks one at a time via
+   *    `ctx.fs.readByteRange` on the source side, accumulates them in process,
+   *    and writes the file in one `deviceFs.writeBytes` at the end (which the
+   *    helper stages atomically on the destination). Memory cost is the file
+   *    size, capped at `MAX_BIG_BYTES`.
+   *  - **host → host** is `node:fs` — handled by the inline path before this
+   *    method is reached.
    *
-   * Chunks travel one at a time — 16 MiB per round trip, base64 on the wire — so
-   * a multi-gigabyte file moves with steady per-chunk progress instead of one
-   * enormous payload. Two digests guard the relay: the digest of the chunks AS
-   * READ is checked against the source file's own `sha256sum` when the source is
-   * remote, and the reassembled file's `sha256sum` is checked against it when the
-   * destination is remote; a local destination is this process's own write and
-   * needs no check. A mismatch fails the copy loudly and KEEPS the scratch
-   * directories for inspection (the error names where); any other failure,
-   * cancellation included, cleans up best-effort.
+   * The destination digest is verified against the source digest on a device
+   * destination; the helper's `copy` op does its own verification, and a
+   * mismatch is reported back through the wire. A mismatch fails the copy
+   * loudly and KEEPS the destination's staging for inspection (the error names
+   * where); any other failure, cancellation included, cleans up best-effort.
    */
-  private async copyChunked(
+private async copyChunked(
     record: JobRecord,
     source: World,
     sourceTarget: FsTarget,
@@ -542,15 +549,8 @@ export class TransferEngine {
   ): Promise<void> {
     const signal = record.controller.signal
     const chunksTotal = Math.max(1, Math.ceil(size / CHUNK_BYTES))
-    const stamp = randomUUID().slice(0, 8)
-    const sourceScratch = `${source.root.replace(/\/+$/u, '')}/.dshell-xfer-${stamp}`
-    const destinationScratch = `${destination.root.replace(/\/+$/u, '')}/.dshell-xfer-${stamp}`
-    const part = (index: number): string => `p${String(index).padStart(4, '0')}`
-    const sourcePath = String(sourceTarget.targetKey)
     record.view.chunksTotal = chunksTotal
-    // The digest of the chunks AS READ, folded in while they move.
-    const readDigest = createHash('sha256')
-    let sourceSha = ''
+    const stamp = randomUUID().slice(0, 8)
     // A local destination appends through one handle, opened after the conflict
     // check and closed on every exit path.
     let localHandle: Awaited<ReturnType<typeof open>> | undefined
@@ -560,10 +560,6 @@ export class TransferEngine {
       await localHandle?.close().catch(() => {})
       localHandle = undefined
       await rm(localTemp, { force: true }).catch(() => {})
-      if (source.agent !== undefined) await this.runIn(source, `rm -rf -- ${quote(sourceScratch)}`).catch(() => {})
-      if (destination.agent !== undefined) {
-        await this.runIn(destination, `rm -rf -- ${quote(destinationScratch)}`).catch(() => {})
-      }
     }
 
     try {
@@ -575,63 +571,55 @@ export class TransferEngine {
         if (existing !== undefined && !overwrite) throw new Error(`${CONFLICT}${toPath} 已存在，要覆盖它请确认。`)
         localHandle = await open(localTemp, 'w')
       } else {
-        await this.precheckRemoteDestination(destination, toPath, overwrite, signal)
-        await this.runIn(destination, `mkdir -p -- ${quote(destinationScratch)}`, signal)
+        await this.precheckRemoteDestination(destination, toPath, overwrite)
       }
 
-      if (source.agent === undefined) {
-        // A local source: no scratch, offset reads straight from the file.
-        const handle = await open(sourcePath, 'r')
-        try {
-          for (let index = 0; index < chunksTotal; index += 1) {
-            signal.throwIfAborted()
-            const length = Math.min(CHUNK_BYTES, size - index * CHUNK_BYTES)
-            const buffer = Buffer.alloc(length)
-            const read = await handle.read(buffer, 0, length, index * CHUNK_BYTES)
-            const chunk = buffer.subarray(0, read.bytesRead)
-            readDigest.update(chunk)
-            if (destination.agent === undefined) await localHandle!.write(chunk)
-            else await this.writeChunkRemote(destination, destinationScratch, part(index), chunk, signal)
-            record.view.bytes += chunk.byteLength
-            record.view.chunksDone = index + 1
-          }
-        } finally {
-          await handle.close()
-        }
-        // The bytes never left this process, so the digest of what was read IS
-        // the source digest the destination side will be checked against.
-        sourceSha = readDigest.copy().digest('hex')
-      } else {
-        // A remote source: slice into scratch parts and pin the file's own digest.
-        const listing = await this.runCapture(
-          source,
-          `mkdir -p -- ${quote(sourceScratch)} && split -b ${String(CHUNK_BYTES)} -d -a 4 -- ${quote(sourcePath)} `
-          + `${quote(`${sourceScratch}/p`)} && sha256sum ${quote(sourcePath)}`,
+      // Same-direction device→device is a single device op; the helper handles
+      // staging, hashing, and the rename.
+      if (source.agent !== undefined && destination.agent !== undefined) {
+        const ops = this.deviceOps(destination)
+        if (ops === undefined) throw new Error('这个会话没有绑定设备的字节级操作入口。')
+        const sourcePath = String(sourceTarget.targetKey)
+        await ops.copy(sourcePath, toPath, overwrite, undefined, (written) => {
+          record.view.bytes = written
+          record.view.chunksDone = Math.min(chunksTotal, Math.floor(written / CHUNK_BYTES))
+        }, signal)
+        record.view.bytes = size
+        record.view.chunksDone = chunksTotal
+        return
+      }
+
+      // Cross-host (local↔device): chunks cross the wire one at a time.
+      // The destination accumulates them in process for a single writeBytes,
+      // which the helper stages atomically. Wire cost: one read per chunk,
+      // one write at the end — better than the staged "cat p* > toPath"
+      // dance, which read each part twice.
+      const readDigest = createHash('sha256')
+      let sourceSha = ''
+      const buffers: Buffer[] = []
+      let total = 0
+      for (let index = 0; index < chunksTotal; index += 1) {
+        signal.throwIfAborted()
+        const length = Math.min(CHUNK_BYTES, size - index * CHUNK_BYTES)
+        const chunk = await this.in(source, () => this.ctx.fs.readByteRange(
+          sourceTarget,
+          { offset: index * CHUNK_BYTES, length },
           signal,
-        )
-        sourceSha = listing.trim().split(/\s+/u)[0] ?? ''
-        for (let index = 0; index < chunksTotal; index += 1) {
-          signal.throwIfAborted()
-          const bytes = await this.in(source, async () => await this.ctx.fs.readBytes(
-            await this.ctx.fs.resolve(`${sourceScratch}/${part(index)}`, { cwd: source.root }),
-            signal,
-            CHUNK_BYTES,
-          ))
-          readDigest.update(bytes)
-          if (destination.agent === undefined) await localHandle!.write(bytes)
-          else await this.writeChunkRemote(destination, destinationScratch, part(index), bytes, signal)
-          record.view.bytes += bytes.byteLength
-          record.view.chunksDone = index + 1
-        }
-        // What was read must be what the source file holds.
-        const readSha = readDigest.digest('hex')
-        if (sourceSha === '' || readSha !== sourceSha) {
-          throw new Error(`分块传输校验不一致：源文件 ${sourceSha || '未知'}，实际读取 ${readSha}。中间数据保留在 ${sourceScratch}`)
+        ))
+        readDigest.update(chunk)
+        record.view.bytes += chunk.byteLength
+        record.view.chunksDone = index + 1
+        if (destination.agent === undefined) {
+          await localHandle!.write(chunk)
+        } else {
+          buffers.push(Buffer.from(chunk))
+          total += chunk.byteLength
         }
       }
+      sourceSha = readDigest.digest('hex')
 
-      // Publish: a remote destination reassembles its parts and reports the
-      // whole-file digest; a local destination closes its temp file and renames.
+      // Publish: a remote destination gets one writeBytes; a local destination
+      // closes its temp file and renames. Either way no staging parts.
       if (destination.agent === undefined) {
         await localHandle?.close()
         localHandle = undefined
@@ -639,31 +627,26 @@ export class TransferEngine {
         await chmod(localTemp, existing === undefined ? 0o644 : existing.mode & 0o7777).catch(() => {})
         await rename(localTemp, toPath)
       } else {
-        const destinationSha = (await this.runCapture(
-          destination,
-          `mkdir -p -- ${quote(dirname(toPath))} && cat ${quote(destinationScratch)}/p* > ${quote(toPath)} `
-          + `&& sha256sum ${quote(toPath)}`,
-          signal,
-        )).trim().split(/\s+/u)[0] ?? ''
+        const ops = this.deviceOps(destination)
+        if (ops === undefined) throw new Error('这个会话没有绑定设备的字节级操作入口。')
+        const assembled = Buffer.concat(buffers, total)
+        if (assembled.byteLength !== size) {
+          throw new Error(`分块重组字节数 ${String(assembled.byteLength)} 与期望 ${String(size)} 不一致。`)
+        }
+        await ops.mkdir([dirname(toPath)], true)
+        await ops.writeBytes(toPath, assembled, signal)
+        const destinationSha = await ops.sha256(toPath, signal)
         if (destinationSha === '') {
           throw new Error(`重组 ${toPath} 后没有取得校验和，传输结果不可信。`)
         }
         if (destinationSha !== sourceSha) {
           throw new Error(
-            `分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha}。`
-            + `中间数据保留在 ${destinationScratch}${source.agent === undefined ? '' : ` 与 ${sourceScratch}`}`,
+            `分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha}。`,
           )
         }
       }
-      if (source.agent !== undefined) await this.runIn(source, `rm -rf -- ${quote(sourceScratch)}`).catch(() => {})
-      if (destination.agent !== undefined) {
-        await this.runIn(destination, `rm -rf -- ${quote(destinationScratch)}`).catch(() => {})
-      }
     } catch (error) {
-      // The digest-mismatch paths want their scratch KEPT for inspection; the
-      // messages above name where. Everything else cleans up behind itself.
-      const keep = error instanceof Error && error.message.startsWith('分块传输校验不一致')
-      if (!keep) await cleanup()
+      await cleanup()
       throw error
     } finally {
       await localHandle?.close().catch(() => {})
@@ -671,73 +654,18 @@ export class TransferEngine {
     }
   }
 
-  /**
-   * One relay chunk onto a REMOTE destination: one stdin payload the device's
-   * own `base64 -d` lands in its scratch part; reassembly happens once at the end.
-   */
-  private async writeChunkRemote(
-    destination: World,
-    destinationScratch: string,
-    name: string,
-    bytes: Uint8Array,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const spec = this.in(destination, () => this.ctx.shell.resolve({
-      command: `sh -c ${quote('base64 -d > "$1"')} sh ${quote(`${destinationScratch}/${name}`)}`,
-      workdir: destination.root,
-      sandboxPolicy: this.writePolicy(destination),
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-      signal,
-    }))
-    const result = await this.ctx.shell.run({ ...spec, stdin: Buffer.from(bytes).toString('base64') })
-    if (result.exitCode === 0) return
-    const detail = result.stderr.text.trim()
-    throw new Error(
-      `写入 ${destinationScratch}/${name} 失败：${detail.length > 0 ? detail : `退出码 ${String(result.exitCode ?? result.signal ?? 'unknown')}`}`,
-    )
-  }
-
   /** The destination's refusal, checked on the device before any byte moves. */
   private async precheckRemoteDestination(
     destination: World,
     toPath: string,
     overwrite: boolean,
-    signal: AbortSignal,
   ): Promise<void> {
-    const command = [
-      'if [ -d "$1" ]; then echo dshell-target-is-directory >&2; exit 11; fi',
-      'if [ -e "$1" ] && [ "$2" != yes ]; then echo dshell-target-exists >&2; exit 10; fi',
-    ].join('\n')
-    const spec = this.in(destination, () => this.ctx.shell.resolve({
-      command: `sh -c ${quote(command)} sh ${quote(toPath)} ${overwrite ? 'yes' : 'no'}`,
-      workdir: destination.root,
-      sandboxPolicy: this.writePolicy(destination),
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-      signal,
-    }))
-    const result = await this.ctx.shell.run(spec)
-    if (result.exitCode === 0) return
-    if (result.exitCode === 10) throw new Error(`${CONFLICT}${toPath} 已存在，要覆盖它请确认。`)
-    if (result.exitCode === 11) throw new Error(`${toPath} 已经是一个目录，不能覆盖。`)
-    const detail = result.stderr.text.trim()
-    throw new Error(`无法写入 ${toPath}：${detail.length > 0 ? detail : `退出码 ${String(result.exitCode ?? result.signal ?? 'unknown')}`}`)
-  }
-
-  /** Run one command for its stdout, failing on its exit status. */
-  private async runCapture(world: World, command: string, signal?: AbortSignal): Promise<string> {
-    const spec = this.in(world, () => this.ctx.shell.resolve({
-      command,
-      workdir: world.root,
-      sandboxPolicy: this.writePolicy(world),
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-      signal,
-    }))
-    const result = await this.ctx.shell.run(spec)
-    if (result.exitCode !== 0) {
-      const detail = result.stderr.text.trim()
-      throw new Error(detail.length > 0 ? detail : `命令失败（退出码 ${String(result.exitCode ?? result.signal ?? 'unknown')}）`)
+    const target = await this.in(destination, () => this.ctx.fs.resolve(toPath, { cwd: destination.root }))
+    const existing = await this.in(destination, () => this.ctx.fs.stat(target))
+    if (existing?.type === 'directory') throw new Error(`${toPath} 已经是一个目录，不能覆盖。`)
+    if (existing !== undefined && !overwrite) {
+      throw new Error(`${CONFLICT}${toPath} 已存在，要覆盖它请确认。`)
     }
-    return result.stdout.text
   }
 
   /** Write bytes onto this machine, in process: temp file, mode, rename. */
@@ -763,7 +691,7 @@ export class TransferEngine {
     }
   }
 
-  /** Write bytes into a device world, one shell command whose stdin is the payload. */
+  /** Write bytes into a device world. */
   private async writeRemote(
     destination: World,
     toPath: string,
@@ -771,65 +699,17 @@ export class TransferEngine {
     overwrite: boolean,
     signal: AbortSignal,
   ): Promise<void> {
-    const command = [
-      'd=$(dirname -- "$1")',
-      'mkdir -p -- "$d" || exit 12',
-      'if [ -e "$1" ]; then',
-      '  if [ -d "$1" ]; then echo dshell-target-is-directory >&2; exit 11; fi',
-      '  if [ "$2" != yes ]; then echo dshell-target-exists >&2; exit 10; fi',
-      'fi',
-      't=$(mktemp --tmpdir="$d" .dshell-xfer-XXXXXX) || exit 13',
-      'base64 -d > "$t" || { rm -f -- "$t"; exit 14; }',
-      'if [ -e "$1" ]; then chmod --reference="$1" "$t" 2>/dev/null || true; else chmod 644 "$t" 2>/dev/null || true; fi',
-      'mv -f -- "$t" "$1" || { rm -f -- "$t"; exit 15; }',
-    ].join('\n')
-    const shellCommand = `sh -c ${quote(command)} sh ${quote(toPath)} ${overwrite ? 'yes' : 'no'}`
-    const policy = this.writePolicy(destination)
-    const spec = this.in(destination, () => this.ctx.shell.resolve({
-      command: shellCommand,
-      workdir: destination.root,
-      sandboxPolicy: policy,
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-      signal,
-    }))
-    // `resolve` fills the spec; stdin is the payload the destination decodes.
-    const result = await this.ctx.shell.run({ ...spec, stdin: Buffer.from(bytes).toString('base64') })
-    if (result.exitCode === 0) return
-    const detail = result.stderr.text.trim()
-    if (result.exitCode === 10) throw new Error(`${CONFLICT}${toPath} 已存在，要覆盖它请确认。`)
-    if (result.exitCode === 11) throw new Error(`${toPath} 已经是一个目录，不能覆盖。`)
-    throw new Error(`写入 ${toPath} 失败：${detail.length > 0 ? detail : `退出码 ${String(result.exitCode ?? result.signal ?? 'unknown')}`}`)
-  }
-
-  /** Run one command for its exit status alone, through one world. */
-  private async runIn(world: World, command: string, signal?: AbortSignal): Promise<void> {
-    const spec = this.in(world, () => this.ctx.shell.resolve({
-      command,
-      workdir: world.root,
-      sandboxPolicy: this.writePolicy(world),
-      timeoutMs: TRANSFER_TIMEOUT_MS,
-      signal,
-    }))
-    const result = await this.ctx.shell.run(spec)
-    if (result.exitCode !== 0) {
-      const detail = result.stderr.text.trim()
-      throw new Error(detail.length > 0 ? detail : `命令失败（退出码 ${String(result.exitCode ?? 'unknown')}）`)
+    if (signal.aborted) throw new Error('已取消')
+    const ops = this.deviceOps(destination)
+    if (ops === undefined) throw new Error('这个会话没有绑定设备的字节级操作入口。')
+    await ops.mkdir([dirname(toPath)], true)
+    const target = await this.in(destination, () => this.ctx.fs.resolve(toPath, { cwd: destination.root }))
+    const existing = await this.in(destination, () => this.ctx.fs.stat(target))
+    if (existing?.type === 'directory') throw new Error(`${toPath} 已经是一个目录，不能覆盖。`)
+    if (existing !== undefined && !overwrite) {
+      throw new Error(`${CONFLICT}${toPath} 已存在，要覆盖它请确认。`)
     }
-  }
-
-  /**
-   * The policy one write runs under.
-   *
-   * `danger-full-access` because the actor is the user, not the model; the other
-   * two fields are filled with the world's own root so the value is well-formed
-   * for an executor that reads them.
-   */
-  private writePolicy(world: World): SandboxExecutionPolicy {
-    return {
-      mode: 'danger-full-access',
-      workspaceRoot: world.root,
-      ...world.sessionId === undefined ? {} : { sessionId: world.sessionId },
-    }
+    await ops.writeBytes(toPath, bytes, signal)
   }
 
   /** Record a final state and schedule the job's removal. */
