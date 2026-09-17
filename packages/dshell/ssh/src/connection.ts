@@ -307,8 +307,23 @@ export class DshellSshConnection {
  * against the old pair.
  */
 export class DshellSshConnections {
-  private readonly entries = new Map<string, { key: string; connection: Promise<DshellSshConnection> }>()
+  private readonly entries = new Map<string, { key: string; connection: Promise<DshellSshConnection>; live?: DshellSshConnection }>()
   private disposed = false
+
+  /**
+   * The connection for a device, if one is verified **now**.
+   *
+   * Synchronous on purpose: the subprocess seam cannot await, so it asks this
+   * before deciding between the RPC path and the assembled-command one. An
+   * absent answer is not an error — it means "not connected yet", and the
+   * caller falls back rather than waiting.
+   *
+   * @param deviceId - device to look up.
+   * @returns the verified connection, or undefined when there is none.
+   */
+  peek(deviceId: string): DshellSshConnection | undefined {
+    return this.entries.get(deviceId)?.live
+  }
 
   /**
    * The live connection for a device, established on first use.
@@ -336,7 +351,13 @@ export class DshellSshConnections {
         throw error
       }
     })()
-    this.entries.set(device.id, { key, connection: pending })
+    const entry: { key: string; connection: Promise<DshellSshConnection>; live?: DshellSshConnection } = { key, connection: pending }
+    this.entries.set(device.id, entry)
+    void pending.then((connection) => {
+      // Only publish into the entry we created: a superseding resolve may have
+      // replaced the map by the time this settles.
+      if (this.entries.get(device.id) === entry) entry.live = connection
+    }).catch(() => undefined)
     try {
       return await pending
     } catch (error) {

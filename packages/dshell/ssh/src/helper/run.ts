@@ -16,13 +16,18 @@
  * client that stops sending heartbeats makes the helper exit by itself.
  */
 import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { SshRpcPeer } from '@deepseek-ai/dsh-ssh/protocol'
+import { RemoteProcesses } from './processes.js'
 import {
   DSHELL_HELPER_LEASE_MS,
   DSHELL_HELPER_MAX_FRAME_BYTES,
   DSHELL_HELPER_MAX_PENDING,
+  DSHELL_HELPER_MAX_PROCESSES,
   DSHELL_HELPER_PROTOCOL,
   echoReply,
   echoRequest,
@@ -30,6 +35,13 @@ import {
   helloReply,
   helloRequest,
   HELPER_OPS,
+  processDoneReply,
+  processIdRequest,
+  processPrepareReply,
+  processPrepareRequest,
+  processSnapshotReply,
+  processSnapshotRequest,
+  processWaitReply,
 } from './protocol.js'
 
 /** The helper's own streams and identity. */
@@ -67,6 +79,10 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
   let leaseMs = DSHELL_HELPER_LEASE_MS
   let lease: NodeJS.Timeout | undefined
   const done = Promise.withResolvers<void>()
+  // Spills and nothing else go here: it is a private working directory, not a
+  // place a caller is told about beyond the files it asks for.
+  const root = await mkdtemp(join(tmpdir(), 'dshell-helper-'))
+  const processes = new RemoteProcesses(() => root, DSHELL_HELPER_MAX_PROCESSES)
 
   /**
    * Release the lease and stop the peer. Idempotent because several paths race
@@ -77,6 +93,10 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
   const close = (reason: string): void => {
     if (lease !== undefined) { clearTimeout(lease); lease = undefined }
     peer?.close(new Error(reason))
+    // The children go with the connection. A helper that exited while its
+    // processes kept running would leave work on the device that nothing knows
+    // about any more — including, on lease expiry, after the client is gone.
+    void processes.close().finally(() => rm(root, { recursive: true, force: true })).catch(() => undefined)
   }
 
   const touchLease = (): void => {
@@ -139,6 +159,39 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
           pid: process.pid,
           cwd: process.cwd(),
         })
+      }
+      if (method === HELPER_OPS.processPrepare) {
+        const input = processPrepareRequest.parse(raw)
+        const started = processes.prepare(input)
+        return processPrepareReply.parse(started)
+      }
+      if (method === HELPER_OPS.processSnapshot) {
+        const input = processSnapshotRequest.parse(raw)
+        const read = processes.snapshot(input.id, input.stream, input.fromByte)
+        return processSnapshotReply.parse({
+          chunk: read.chunk.toString('base64'),
+          from: read.from,
+          totalBytes: read.totalBytes,
+        })
+      }
+      if (method === HELPER_OPS.processDone) {
+        const input = processIdRequest.parse(raw)
+        const finished = await processes.done(input.id)
+        return processDoneReply.parse({
+          outcome: finished.outcome,
+          collected: {
+            stdout: { tail: finished.collected.stdout.tail.toString('base64'), totalBytes: finished.collected.stdout.totalBytes },
+            stderr: { tail: finished.collected.stderr.tail.toString('base64'), totalBytes: finished.collected.stderr.totalBytes },
+          },
+          spills: finished.spills,
+        })
+      }
+      if (method === HELPER_OPS.processTerminate) {
+        processes.terminate(processIdRequest.parse(raw).id)
+        return null
+      }
+      if (method === HELPER_OPS.processWait) {
+        return processWaitReply.parse(await processes.wait(processIdRequest.parse(raw).id))
       }
       // Deliberately the same boundary upstream drew: an unrecognised method is
       // a hard failure, never a guess. A helper that answered optimistically

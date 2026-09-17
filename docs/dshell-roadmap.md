@@ -4010,3 +4010,111 @@ device deletion, no host unload), which M1 must do or a device change would leav
 a helper behind. And the lease/heartbeat pair is exercised only by the rig run:
 its interaction with a *hanging* device (as opposed to a closed one) is
 unverified.
+
+## Phase 10.41 — M1: exec through the subprocess seam
+
+The first seam that acts on the spine. A device session's processes now leave
+through `ctx.subprocess.spawn`, so the shell executor, the search tool and
+anything else that spawns keep their own timeouts, caps, spills, streaming and
+background handles — those live above this seam — and only the location changes.
+
+### What landed
+
+- `ssh/src/helper/protocol.ts` — the process operations (`prepare`, `snapshot`,
+  `done`, `terminate`, `wait`) and their schemas.
+- `ssh/src/helper/processes.ts` — the device's process table: bounded output
+  windows, spill files, group termination, and reaping on close.
+- `ssh/src/remote-process.ts` — `SubprocessHandle` over the wire, including the
+  synchronous, offset-based readers the seam demands.
+- `ssh/src/helper/target.ts` — the target probe (the device's home and a Node
+  executable, in one round trip), memoized per device and dropped when a device
+  changes.
+- `ssh/src/router.ts` — **stops rewriting the command**, and leaves `workdir` as
+  the session's own mount path. The translation to a device directory now happens
+  once, in the subprocess seam, instead of here and there.
+- `ssh/src/spawn-routing.ts` — the three-outcome seam, and the owner of the
+  connection pool's lifetime (created here, disposed with the plugin, released
+  when a device is saved, deleted or re-bound).
+
+### Evidence
+
+Rig `127.0.0.1:2222`, driven through the real connection with the exact specs the
+two callers build:
+
+```
+1. exit 7 | stdout "/tmp/dshell-sshd\nhello" | stderr "oops" | ran in the device directory: true
+2. total 108894 bytes | lossy true | kept the tail: true | spill /tmp/dshell-helper-…/….stdout
+3. rg exit 0 | files 9 | no spill: true
+4. missing program -> mapped: … missing (spawn … ENOENT)
+5. fallback exit 0 | files 9
+6. RED LIGHT -> done rejected: SSH helper disconnected; outcome is unknown
+   output after the kill is empty, not invented: ""
+   the connection stays failed, so nothing is retried silently
+```
+
+Observations 1–3 are `bash-local`'s spec (exit code, both streams, the working
+directory) and the search tool's (a host-resolved rg path, collect without
+spill, read after `done`). Observation 5 is the **fallback tier** measured rather
+than asserted: the assembled line returns the same 9 files, so a device with no
+helper behaves as it did before this milestone. Observation 6 is the red light —
+killing the helper mid-execution must not be mistakable for a finished command,
+and the empty output is the tell that nothing was invented to fill the gap.
+
+### Decisions and traps
+
+- **`danger-full-access` stays, for a better reason than it had.** The active row
+  is `bash-sandbox`, and it confines by wrapping `argv` in a *host* runner
+  program before spawning. Handing that wrapped argv to a device that does not
+  have the runner would fail; the policy is also meaningless there. So the
+  override remains, now as "the confinement does not belong on this machine"
+  rather than "it would confine the ssh client".
+- **RPC serves collect mode only, and the fallback is a capability tier, not just
+  a migration tier.** `'pipe'`, `'inherit'` and a control channel take the
+  assembled path, which serves them because the local ssh client has real pipes.
+  That is a better answer than refusing them.
+- **`ssh` is checked before the RPC branch.** It is a bare name, so it looks
+  perfectly routable — and routing it would run an ssh client *on the device*
+  with the host's argv, credentials and known_hosts paths.
+- **The assembled line uses the device's name for the program.** The caller's
+  unresolved rg path is absolute to the host and would not exist on the device;
+  the old rg-only special case is now the general rule, which is also what keeps
+  the no-helper tier behaving as it did.
+- **A start can fail in the platform's own time.** Node reports a missing program
+  on the child's `error` event, after `spawn` returned, so the helper cannot know
+  synchronously: `prepare` reports no `pid` and the failure surfaces on `done`,
+  where the `ENOENT` is. Translation had to cover both ends — an earlier revision
+  only translated the prepare rejection, and the rg diagnostic silently never
+  fired. Observation 4 is what caught it.
+- **Live output is polled, and only once a reader has read.** The seam's readers
+  are synchronous, so live output can only come from what has already arrived; a
+  reader that reads after `done` (the foreground and search shapes) never polls
+  at all. Granularity is the poll interval — a real difference from upstream's
+  forwarded sockets, and the first thing to revisit if background shells need
+  smooth streaming.
+- **Children are started in their own process group and terminated as one.**
+  `child.kill()` reaches only the process it names, so `bash -c 'thing & wait'`
+  would leave `thing` running after the caller believed it stopped. A new group
+  plus a negative-pid kill is the equivalent of what the ssh client's
+  disconnection used to achieve.
+- **The helper reaps its own children**, on close and on lease expiry, so a host
+  that dies without saying goodbye leaves nothing running on the device.
+- **An abort that lands before `prepare` returns still terminates.** The
+  termination request follows the promise for the process id rather than the id
+  itself; without that, a cancellation in that window left a process nobody could
+  name any more.
+- **`spillPath` is a device path.** Correct rather than confusing in a device
+  session — every file operation there is remote too, so the same tools can read
+  it — but not something the harness itself can open, and any message showing it
+  should say which machine it names.
+
+### Not yet true
+
+- Acceptance was measured at the mechanism level, through the specs the callers
+  build, not through a live browser session. End-to-end belongs to the T4
+  checklist.
+- Warm-on-bind is fire-and-forget, so on a freshly started host the first tool
+  call may take the fallback path while the helper connects. One round trip, no
+  failure.
+- `remote-fs` still uses the assembled hop; moving it onto fs operations is M2.
+- There is still no confinement *on* the device: the command runs under the
+  device's own policy, which the seam says so explicitly.
