@@ -214,6 +214,27 @@ export class DeviceStore {
   }
 
   /**
+   * Record one helper deployment result against a device.
+   *
+   * The install action owns this write. `save` is the user's device form and
+   * requires the connection fields a deployment does not touch; routing a
+   * status update through it would also re-read the login method, which is
+   * what would otherwise retire an unrelated stored secret.
+   * @param deviceId - device to update.
+   * @param helper - the status the check just produced.
+   * @returns the updated view, or undefined when the device is unknown.
+   */
+  async setHelper(deviceId: string, helper: DeviceHelperStatus): Promise<DeviceView | undefined> {
+    await this.ensure()
+    const record = this.records.find(candidate => candidate.id === deviceId)
+    if (record === undefined) return undefined
+    const next: DeviceRecord = { ...record, helper }
+    this.records = this.records.map(candidate => (candidate.id === deviceId ? next : candidate))
+    await this.saveDocument()
+    return this.view(next)
+  }
+
+  /**
    * Remove one device and its key.
    * @param deviceId - device to remove.
    */

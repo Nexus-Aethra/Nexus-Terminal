@@ -24,8 +24,8 @@ import { DeviceStore, type DeviceConnection } from './devices.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
 import { localHelperArtifact } from './connection.js'
-import { deployHelper } from './helper/install.js'
-import { PROBE } from './helper/target.js'
+import { deployHelper, helperPathFor } from './helper/install.js'
+import { PROBE, installProbe } from './helper/target.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import { sshDeviceRoot } from './paths.js'
 import { isUnder, mountFor } from './mount.js'
@@ -329,33 +329,39 @@ export class SshRouter {
     if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
     const artifact = localHelperArtifact()
     const probe = await this.probeDevice(ctx, device)
+    let status: DeviceHelperStatus
     if (probe.node === undefined) {
-      return {
+      status = {
         state: 'absent',
         expected: artifact.hash,
         message: this.t('install.noNode'),
       }
+    } else {
+      const outcome = await deployHelper(ctx, device, artifact.path, artifact.hash, probe.home)
+      status = outcome.onDevice === artifact.hash
+        ? {
+            state: 'present',
+            onDevice: outcome.onDevice,
+            expected: artifact.hash,
+            path: outcome.path,
+            message: outcome.message,
+          }
+        : {
+            state: 'mismatch',
+            onDevice: outcome.onDevice,
+            expected: artifact.hash,
+            path: outcome.path,
+            // The digests the copy used to spell inline now travel on the
+            // status fields and reach the reader through the card's tooltip.
+            message: this.t('install.mismatch'),
+          }
     }
-    const outcome = await deployHelper(ctx, device, artifact.path, artifact.hash, probe.home)
-    if (outcome.onDevice !== artifact.hash) {
-      return {
-        state: 'mismatch',
-        onDevice: outcome.onDevice,
-        expected: artifact.hash,
-        path: outcome.path,
-        message: this.t('install.mismatch', {
-          expected: artifact.hash,
-          onDevice: outcome.onDevice || this.t('install.unknownDigest'),
-        }),
-      }
-    }
-    return {
-      state: 'present',
-      onDevice: outcome.onDevice,
-      expected: artifact.hash,
-      path: outcome.path,
-      message: outcome.message,
-    }
+    // Record the result against the device. The card reads its status off the
+    // device view, so a check that is not written shows for exactly one
+    // response and then vanishes — a redeploy reporting success, and a reload
+    // showing nothing at all.
+    await this.devices.setHelper(deviceId, status)
+    return status
   }
 
   /**
@@ -533,9 +539,78 @@ export class SshRouter {
     // Same order the session's own start uses: connect, then make the
     // directory. A refusal here throws with ssh's own words.
     if (remoteRoot !== null) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
+    // Third stage: where the device stands on the helper. Deploying is its own
+    // action, so this only reports — and records the answer, which is what
+    // puts the state on the card without a deployment having been run.
+    await this.surveyHelper(deviceId, ctx, device)
     return trusted === undefined
       ? line
       : `${line}\n${this.t(trustedBefore === undefined ? 'test.hostKeyFirst' : 'test.hostKeyTrusted', { fingerprint: trusted })}`
+  }
+
+  /**
+   * Ask the device about its node and its helper, and record the answer.
+   *
+   * One exec — the same home/node line the runtime's own probe uses, plus the
+   * digest of the file this build would deploy there. `test` and `install`
+   * therefore agree by construction: both compare the device's copy against
+   * this build's artifact rather than against a version string.
+   *
+   * A failed exec records nothing. The connection check above has already
+   * reported the transport failure in ssh's own words, and clearing a status
+   * we could not re-read would turn "unknown" into "absent".
+   * @param deviceId - device to survey.
+   * @param ctx - host context with the subprocess seam.
+   * @param device - the resolved connection.
+   */
+  private async surveyHelper(deviceId: string, ctx: Context, device: DeviceConnection): Promise<void> {
+    const artifact = localHelperArtifact()
+    const env = sshEnv(device)
+    const handle = ctx.subprocess.spawn({
+      argv: sshArgv(device, installProbe(artifact.hash)),
+      cwd: localCwd(),
+      ...Object.keys(env).length === 0 ? {} : { env },
+      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 }, stderr: { maxBytes: 8 * 1024 } },
+      graceMs: 10_000,
+    })
+    const outcome = await handle.done
+    if (outcome.exitCode !== 0) return
+    const [home = '', node = '', onDevice = ''] = (handle.collected.stdout?.readFrom(0).text ?? '').trimEnd().split('\n')
+    const homeDir = home.trim()
+    if (!homeDir.startsWith('/') || node.trim() === '') {
+      await this.devices.setHelper(deviceId, {
+        state: 'absent',
+        expected: artifact.hash,
+        message: this.t('install.noNode'),
+      })
+      return
+    }
+    const path = helperPathFor(homeDir, artifact.hash)
+    const digest = onDevice.trim()
+    if (digest === '') {
+      await this.devices.setHelper(deviceId, {
+        state: 'absent',
+        expected: artifact.hash,
+        path,
+        message: this.t('test.helperAbsent'),
+      })
+      return
+    }
+    await this.devices.setHelper(deviceId, digest === artifact.hash
+      ? {
+          state: 'present',
+          onDevice: digest,
+          expected: artifact.hash,
+          path,
+          message: this.t('test.helperPresent'),
+        }
+      : {
+          state: 'mismatch',
+          onDevice: digest,
+          expected: artifact.hash,
+          path,
+          message: this.t('install.mismatch'),
+        })
   }
 
   /**

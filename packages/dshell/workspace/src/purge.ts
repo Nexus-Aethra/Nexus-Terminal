@@ -18,22 +18,11 @@
 
 import { readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
+import { harnessHome } from '@nexus-aethra/dshell-ssh'
 import type { SessionTagStore } from './tags.js'
 
 /** A session id safe to interpolate into a path: one plain path segment. */
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
-
-/**
- * The harness home sibling trees are read from: dshell's own data root when one
- * is configured, else `$DSH_HOME`, else `~/.dsh`.
- *
- * Called once per purge rather than captured, so a root configured after this
- * module loaded still applies (see `DSHELL_HOME_ENV`).
- */
-export function dshHome(): string {
-  return process.env[DSHELL_HOME_ENV] ?? process.env.DSH_HOME ?? join(process.env.HOME ?? '/', '.dsh')
-}
 
 /**
  * Remove every durable artifact of one session.
@@ -43,14 +32,19 @@ export function dshHome(): string {
  * is deliberately kept: content-addressed attachments, which are shared
  * between sessions and cannot be attributed to one owner.
  *
+ * The root comes from the ssh package's {@link harnessHome}, which this
+ * package imports rather than re-derives: one owner for the resolution rule
+ * means a change to the precedence reaches the purge and the device registry
+ * together.
+ *
  * @param sessionId - the session to purge; must be a plain path segment.
- * @param home - harness home; defaults to {@link dshHome}.
+ * @param home - harness home; defaults to {@link harnessHome}.
  * @returns the absolute paths that were removed, for the caller's report.
  * @throws when the id is not a safe path segment.
  */
 export async function purgeSessionArtifacts(
   sessionId: string,
-  home: string = dshHome(),
+  home: string = harnessHome(),
 ): Promise<readonly string[]> {
   if (!SAFE_SESSION_ID.test(sessionId)) {
     throw new Error(`refusing to purge unsafe session id "${sessionId}"`)
@@ -95,12 +89,12 @@ export async function purgeSessionArtifacts(
  * kept for the next start rather than silently marking the log as removed.
  *
  * @param tags - tag store holding the scheduled ids.
- * @param home - harness home; defaults to {@link dshHome}.
+ * @param home - harness home; defaults to {@link harnessHome}.
  * @returns the ids whose artifacts were removed.
  */
 export async function drainPendingPurges(
   tags: SessionTagStore,
-  home: string = dshHome(),
+  home: string = harnessHome(),
 ): Promise<readonly string[]> {
   const done: string[] = []
   for (const sessionId of await tags.pendingPurge()) {

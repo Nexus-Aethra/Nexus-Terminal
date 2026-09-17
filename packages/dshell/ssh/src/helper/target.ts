@@ -36,6 +36,32 @@ import { localCwd, sshArgv, sshEnv } from '../runner.js'
 /** Exported so the install probe can re-run without re-asking the cache. */
 export const PROBE = 'printf "%s\\n%s\\n" "$HOME" "$(command -v node 2>/dev/null || bash -lc "command -v node" 2>/dev/null || true)"'
 
+/**
+ * The probe the connection check uses: {@link PROBE} plus the digest of the
+ * helper this build would deploy, so one round trip answers all three of the
+ * questions a reader asks a device — can I reach it, is there a node, is the
+ * helper current.
+ *
+ * A survey, not a deployment: an empty digest means the file is not there, a
+ * digest that is not `expectedHash` means the device has a different build.
+ * Both are states the connection check reports; neither is a failure, which is
+ * why every step of the line tolerates its own absence.
+ *
+ * `expectedHash` is this build's own artifact digest. It is asserted to be hex
+ * before it reaches the shell — not because a caller could pass something else
+ * today, but because a path built from a string that travels through `ssh`
+ * should not depend on that staying true.
+ * @param expectedHash - digest of the helper bundle this build ships.
+ * @returns the remote shell line.
+ */
+export function installProbe(expectedHash: string): string {
+  if (!/^[0-9a-f]{64}$/u.test(expectedHash)) {
+    throw new Error(`refusing to build a probe from a non-digest: ${JSON.stringify(expectedHash)}`)
+  }
+  const digest = `$(sha256sum -- "$HOME/${HELPER_DIRECTORY}/helper-${expectedHash}.mjs" 2>/dev/null | awk '{print $1}')`
+  return `printf "%s\\n%s\\n%s\\n" "$HOME" "$(command -v node 2>/dev/null || bash -lc "command -v node" 2>/dev/null || true)" "${digest}"`
+}
+
 /** Where a device's helper lives, and the digest it must report. */
 export interface ResolvedTarget {
   /** Absolute remote Node executable. */
@@ -128,7 +154,7 @@ export class HelperTargets {
     if (node.trim() === '' || !node.startsWith('/')) return undefined
     return {
       node: node.trim(),
-      helper: `${home.trim().replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.js`,
+      helper: `${home.trim().replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.mjs`,
       expectedHash: this.artifact().hash,
     }
   }

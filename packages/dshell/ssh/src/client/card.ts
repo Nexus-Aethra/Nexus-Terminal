@@ -14,7 +14,7 @@ import {
 } from 'react'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellSshKey } from './locales.js'
-import type { DeviceAuth, DeviceView } from '../protocol.js'
+import type { DeviceAuth, DeviceHelperStatus, DeviceView } from '../protocol.js'
 import type { SshClientService } from './service.js'
 // Type-only: pulls this namespace's key merge (`PropsLocale<'dshellSsh'>`).
 import type {} from './locales.js'
@@ -42,15 +42,34 @@ const descStyle: CSSProperties = {
 const bodyStyle: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10, padding: '0 16px 16px' }
 const rowStyle: CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+  // Wrapping is what makes the helper line below work: it carries
+  // `flexBasis: 100%`, and in a nowrap line that basis competes with the row's
+  // own children instead of starting a second line — the actions were squeezed
+  // until their labels broke one character per line.
+  flexWrap: 'wrap',
   padding: '8px 10px', borderRadius: 10, background: 'var(--dsw-alias-bg-module-platform)',
 }
-const rowTitleStyle: CSSProperties = { flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const rowTitleStyle: CSSProperties = {
+  flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+}
+/** The row's actions, kept on one line whatever the device name costs. */
+const actionGroupStyle: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+}
 const actionStyle: CSSProperties = {
   border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
+  // An action keeps its own measure: the title already ellipsizes, so there is
+  // nothing to gain by letting these shrink, and a shrunken one wraps its
+  // label instead of truncating it.
+  whiteSpace: 'nowrap', flexShrink: 0,
   fontSize: 12, opacity: 0.75, padding: '2px 6px', borderRadius: 6,
 }
 const helperStyle: CSSProperties = {
-  flexBasis: '100%', fontSize: 11, opacity: 0.65, padding: '2px 4px 0',
+  // `minWidth: 0` lets the line shrink to the row, and `anywhere` breaks the
+  // path/digest run: a helper path is one long unbreakable token, and without
+  // both it painted straight past the card's edge.
+  flexBasis: '100%', minWidth: 0, overflowWrap: 'anywhere',
+  fontSize: 11, lineHeight: '16px', opacity: 0.65, padding: '2px 4px 0',
 }
 const formStyle: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }
 const fieldStyle: CSSProperties = {
@@ -219,28 +238,39 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
             + ` · ${t('device.login', {
               method: device.auth === 'password' ? t('auth.password') : t('auth.key'),
             })}${device.hasSecret ? '' : t('device.noSecret')}`),
-          createElement('button', {
-            type: 'button', style: actionStyle, title: t('device.testTooltip'),
-            // The refusal is published on the snapshot, which this card
-            // renders; catching it here keeps a deliberate refusal from also
-            // looking like an unhandled failure in the console.
-            onClick: () => { void ssh.test(device.id).catch(() => {}) },
-          }, t('device.test')),
-          createElement('button', {
-            type: 'button', style: actionStyle, title: t('device.installTooltip'),
-            onClick: () => { void ssh.install(device.id).catch(() => {}) },
-          }, t('device.install')),
-          createElement('button', {
-            type: 'button', style: actionStyle, title: t('device.edit'),
-            onClick: () => { loadIntoForm(device) },
-          }, t('device.edit')),
-          createElement('button', {
-            type: 'button', style: actionStyle, title: t('device.remove'),
-            onClick: () => { void ssh.remove(device.id) },
-          }, t('device.remove')),
+          // The actions travel as one unit. Flex breaks lines before it
+          // shrinks anything, so four loose buttons let a long device name
+          // push the last one onto its own line; grouped and unshrinkable,
+          // they always stay together and the title does the yielding.
+          createElement('div', { style: actionGroupStyle },
+            createElement('button', {
+              type: 'button', style: actionStyle, title: t('device.testTooltip'),
+              // The refusal is published on the snapshot, which this card
+              // renders; catching it here keeps a deliberate refusal from also
+              // looking like an unhandled failure in the console.
+              onClick: () => { void ssh.test(device.id).catch(() => {}) },
+            }, t('device.test')),
+            createElement('button', {
+              type: 'button', style: actionStyle, title: t('device.installTooltip'),
+              onClick: () => { void ssh.install(device.id).catch(() => {}) },
+            }, t('device.install')),
+            createElement('button', {
+              type: 'button', style: actionStyle, title: t('device.edit'),
+              onClick: () => { loadIntoForm(device) },
+            }, t('device.edit')),
+            createElement('button', {
+              type: 'button', style: actionStyle, title: t('device.remove'),
+              onClick: () => { void ssh.remove(device.id) },
+            }, t('device.remove')),
+          ),
           device.helper !== undefined
-            ? createElement('div', { style: helperStyle },
-              `${helperLabel(t, device.helper.state)} · ${device.helper.message}`)
+            ? createElement('div', {
+              style: helperStyle,
+              // The tooltip carries the whole result — the on-device path and
+              // both digests. It is diagnostic, so it belongs where a reader
+              // goes looking for it rather than on the row.
+              title: helperDetail(device.helper),
+            }, helperLine(t, device.helper))
             : null,
         )),
         createElement('div', { style: formStyle },
@@ -309,4 +339,40 @@ function helperLabel(
   state: 'absent' | 'present' | 'mismatch',
 ): string {
   return t(`device.helperState.${state}` as DshellSshKey)
+}
+
+/**
+ * The helper line the row shows.
+ *
+ * A successful deployment shows only its label: `已部署到 <path>` restates the
+ * label and then spends the line on a path, which is what a reader needs only
+ * when something is wrong. Every other state shows its reason, because that is
+ * the part that tells the reader what to do next.
+ * @param t - this card's bound copy.
+ * @param status - the recorded deployment status.
+ * @returns the one-line summary.
+ */
+function helperLine(
+  t: (key: DshellSshKey) => string,
+  status: DeviceHelperStatus,
+): string {
+  const label = helperLabel(t, status.state)
+  return status.state === 'present' ? label : `${label} · ${status.message}`
+}
+
+/**
+ * The diagnostic behind one helper status, for the line's tooltip: the result
+ * verbatim plus the on-device path and both digests, whichever the check
+ * recorded. Composed from the fields rather than reusing `message`, so the
+ * visible line can stay short without dropping anything a reader might need.
+ * @param status - the recorded deployment status.
+ * @returns one block of text, one fact per line.
+ */
+function helperDetail(status: DeviceHelperStatus): string {
+  return [
+    status.message,
+    ...status.path === undefined ? [] : [status.path],
+    ...status.expected === undefined ? [] : [`expected ${status.expected}`],
+    ...status.onDevice === undefined ? [] : [`on device ${status.onDevice}`],
+  ].join('\n')
 }

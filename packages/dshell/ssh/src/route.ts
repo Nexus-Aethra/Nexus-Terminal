@@ -54,14 +54,20 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
       case 'delete':
         await deps.router.removeDevice(input.deviceId)
         return await state()
-      case 'test':
+      case 'test': {
+        // Run the test BEFORE reading state, for the same reason the install
+        // branch does: the test records the helper's state onto the device
+        // (see `surveyHelper`), and `state()` is what reads those records
+        // back. Evaluating it first answered with the pre-test list, so the
+        // card kept showing the previous status until something else
+        // refreshed it.
+        //
         // With a remote directory the test also creates it: the dialog runs
         // this before creating the session, so a device that answers but
         // cannot host the directory is reported here, not after.
-        return {
-          ...await state(),
-          testResult: await deps.router.test(input.deviceId, deps.ctx, input.remoteRoot ?? null),
-        }
+        const testResult = await deps.router.test(input.deviceId, deps.ctx, input.remoteRoot ?? null)
+        return { ...await state(), testResult }
+      }
       case 'mount':
         return { ...await state(), mountPath: await deps.router.mountPath(input.deviceId, input.remoteRoot ?? null) }
       case 'bind':
@@ -76,11 +82,15 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
           deps.ctx,
         )
         return await state()
-      case 'install':
-        return {
-          ...await state(),
-          helper: await deps.router.installHelper(input.deviceId, deps.ctx),
-        }
+      case 'install': {
+        // Deploy BEFORE reading state. `state()` reads the device list, and the
+        // install is what writes the status the card renders onto those
+        // records, so evaluating it first would answer with the pre-install
+        // list: the card would show nothing until some later call refreshed
+        // it, which only happens on a reload.
+        const helper = await deps.router.installHelper(input.deviceId, deps.ctx)
+        return { ...await state(), helper }
+      }
       default:
         return { ...await state(), error: deps.t('error.unknownAction') }
     }
