@@ -3384,3 +3384,40 @@ a fresh install from npm still resolves yesterday's code until that pin moves to
 `0.1.1`; the installed app currently carries this week's code through an in-place
 refresh of `dshell-mode`'s tarball into the profile. The token used here was
 pasted into a chat transcript when it was created and should be rotated.
+
+## Phase 10.33 — moving onto dsh 0.1.6 (roadmaps first)
+
+Upstream published `dsh-v0.1.6-alpha.1` (`0a15e36e`, 2026-09-15) — the first tag
+since the `0.1.5-rc.2` this repo pins 211 times. It is an alpha on the channel
+path 0.1.5 walked (alpha.1 → alpha.2 → rc.1 → rc.2), it adds eighteen packages
+(ssh + `fs-ssh`, a terminal controller with a client half, browser-use and
+computer-use provider registries, a PTC runtime, MCP resources, image offload,
+auto review, an archive settings page), and it deletes two (`e2b`,
+`code-runtime-worker-thread`).
+
+The tag is fetched into `dsh/` and **not** checked out: the repo still builds
+against `0.1.5-rc.2`. Before any code moves, the migration gets a plan —
+[`dshell-upgrade-0.1.6.md`](./dshell-upgrade-0.1.6.md) carries an adaptation
+roadmap (A1 two hosts in one manifest set, A2 the host move, A3 behavioral
+adaptation, A4 the ssh and client-terminal migrations, A5 desktop and release,
+A6 the deferred capabilities) and a testing roadmap (T1 assumptions as
+assertions, T2 compile-time host contract, T3 route integration, T4 the
+acceptance checklist scripted, T5 the zero-coverage packages).
+
+Two findings from the measurement phase set the shape of that plan, and both are
+worth more than the plan itself:
+
+- **The desktop profile gained a manifest validator it never had**
+  (`apps/desktop/src/profile-packages.ts`, absent at rc.2). It refuses a
+  first-party package declared in `dependencies` — which `mode` and `ssh` do for
+  `@deepseek-ai/schemastery` — and it range-checks every peer against the
+  runtime's version, where `^0.1.5-rc.2` does *not* satisfy `0.1.6-alpha.1`
+  (node-semver and prereleases). The fix is therefore a manifest *restructure*
+  plus a two-host range, not a version-string replace: that is A1, and it lands
+  while the host is still rc.2 so `main` never stops being publishable.
+- **The type surface barely moved.** Checking every named symbol dshell imports
+  from 25 first-party packages against the published `0.1.6-alpha.1` types found
+  zero regressions; the client contract did reorganize
+  (`contract/input` → `contract/draft-editor`, `context-provenance` →
+  `context-producer`), but dshell references none of it. The work is in behavior
+  and packaging, which is why the testing half of the document exists.

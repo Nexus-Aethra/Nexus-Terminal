@@ -9,6 +9,7 @@ making a targeted change.
 | [`dshell-architecture.md`](./dshell-architecture.md) | Writing or reviewing code: wire protocol, Cordis surface, package layout |
 | [`dshell-roadmap.md`](./dshell-roadmap.md) | Picking the next phase to implement |
 | [`dshell-packages.md`](./dshell-packages.md) | Looking up which plugin owns a feature |
+| [`dshell-upgrade-0.1.6.md`](./dshell-upgrade-0.1.6.md) | Moving the dsh version: the adaptation and testing roadmaps for one upgrade |
 
 ## Document roles
 
@@ -20,6 +21,11 @@ making a targeted change.
   an acceptance check.
 - `dshell-packages.md` is the plugin inventory, keyed by the dsh
   service each plugin depends on and the phase that introduces it.
+- `dshell-upgrade-0.1.6.md` is *one migration*, not a standing document: it
+  carries the phases for moving dshell onto a specific upstream tag, plus the
+  testing work that makes the next move cheaper. Read it when the harness
+  version changes; fold its lessons back into the four above once the target
+  version is the one `main` runs.
 
 ## Source of truth for dsh
 
