@@ -3421,3 +3421,14 @@ worth more than the plan itself:
   (`contract/input` → `contract/draft-editor`, `context-provenance` →
   `context-producer`), but dshell references none of it. The work is in behavior
   and packaging, which is why the testing half of the document exists.
+
+**A1 landed** (2026-09-17, host still at rc.2): 211 pins across nine manifests
+widened to `0.1.5-rc.2 || 0.1.6-alpha.1`, and `@deepseek-ai/schemastery` moved
+out of `dependencies` into a peer in `mode` and `ssh`. The gate was
+install/typecheck/build green, 9 spec files and 147 tests passing, a `pnpm pack`
+of `dshell-mode` showing the union (schemastery a peer, absent from
+`dependencies`), `package:linux --from=builder` still producing the `.deb`, and
+the web harness booting on rc.2 with all seven dshell client faces advertised.
+That schemastery is runtime-owned stopped being an inference here: it is one of
+the 241 entries in the desktop build's own `desktop-packages.json`. The
+per-check evidence is in the upgrade document's A1 section.

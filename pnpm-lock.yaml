@@ -351,9 +351,6 @@ importers:
 
   packages/dshell/mode:
     dependencies:
-      '@deepseek-ai/schemastery':
-        specifier: link:../../../dsh/vendor/schemastery
-        version: link:../../../dsh/vendor/schemastery
       '@nexus-aethra/dshell-std':
         specifier: workspace:^
         version: link:../std
@@ -424,6 +421,9 @@ importers:
       '@deepseek-ai/dsh-token-meter':
         specifier: link:../../../dsh/packages/llm/token-meter
         version: link:../../../dsh/packages/llm/token-meter
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../dsh/vendor/schemastery
+        version: link:../../../dsh/vendor/schemastery
       '@types/react':
         specifier: ~18.3.1
         version: 18.3.31
@@ -445,9 +445,6 @@ importers:
 
   packages/dshell/ssh:
     dependencies:
-      '@deepseek-ai/schemastery':
-        specifier: link:../../../dsh/vendor/schemastery
-        version: link:../../../dsh/vendor/schemastery
       '@nexus-aethra/dshell-std':
         specifier: workspace:^
         version: link:../std
@@ -506,6 +503,9 @@ importers:
       '@deepseek-ai/dsh-subprocess':
         specifier: link:../../../dsh/packages/subprocess/subprocess
         version: link:../../../dsh/packages/subprocess/subprocess
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../dsh/vendor/schemastery
+        version: link:../../../dsh/vendor/schemastery
       '@types/node':
         specifier: ^24
         version: 24.13.3
