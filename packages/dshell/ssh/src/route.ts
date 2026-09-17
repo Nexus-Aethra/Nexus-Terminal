@@ -76,6 +76,11 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
           deps.ctx,
         )
         return await state()
+      case 'install':
+        return {
+          ...await state(),
+          helper: await deps.router.installHelper(input.deviceId, deps.ctx),
+        }
       default:
         return { ...await state(), error: deps.t('error.unknownAction') }
     }

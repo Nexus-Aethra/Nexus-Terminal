@@ -13,6 +13,7 @@ import {
   type CSSProperties, type ChangeEvent, type ReactElement,
 } from 'react'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { DshellSshKey } from './locales.js'
 import type { DeviceAuth, DeviceView } from '../protocol.js'
 import type { SshClientService } from './service.js'
 // Type-only: pulls this namespace's key merge (`PropsLocale<'dshellSsh'>`).
@@ -47,6 +48,9 @@ const rowTitleStyle: CSSProperties = { flex: '1 1 auto', overflow: 'hidden', tex
 const actionStyle: CSSProperties = {
   border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer',
   fontSize: 12, opacity: 0.75, padding: '2px 6px', borderRadius: 6,
+}
+const helperStyle: CSSProperties = {
+  flexBasis: '100%', fontSize: 11, opacity: 0.65, padding: '2px 4px 0',
 }
 const formStyle: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }
 const fieldStyle: CSSProperties = {
@@ -223,6 +227,10 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
             onClick: () => { void ssh.test(device.id).catch(() => {}) },
           }, t('device.test')),
           createElement('button', {
+            type: 'button', style: actionStyle, title: t('device.installTooltip'),
+            onClick: () => { void ssh.install(device.id).catch(() => {}) },
+          }, t('device.install')),
+          createElement('button', {
             type: 'button', style: actionStyle, title: t('device.edit'),
             onClick: () => { loadIntoForm(device) },
           }, t('device.edit')),
@@ -230,6 +238,10 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
             type: 'button', style: actionStyle, title: t('device.remove'),
             onClick: () => { void ssh.remove(device.id) },
           }, t('device.remove')),
+          device.helper !== undefined
+            ? createElement('div', { style: helperStyle },
+              `${helperLabel(t, device.helper.state)} · ${device.helper.message}`)
+            : null,
         )),
         createElement('div', { style: formStyle },
           createElement('input', {
@@ -289,4 +301,12 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       )
       : null,
   )
+}
+
+/** Pick the right key per state, since template-literal keys are not typed. */
+function helperLabel(
+  t: (key: DshellSshKey) => string,
+  state: 'absent' | 'present' | 'mismatch',
+): string {
+  return t(`device.helperState.${state}` as DshellSshKey)
 }

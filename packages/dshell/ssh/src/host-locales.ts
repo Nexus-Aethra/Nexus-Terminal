@@ -31,6 +31,10 @@ export const zh = {
   'test.hostKeyFirst': '主机密钥 {fingerprint}（首次信任，请与服务器管理员核对）',
   'test.hostKeyTrusted': '主机密钥 {fingerprint}（已信任）',
   'shell.missingRemoteDir': 'dshell: 远端目录 {root} 不存在，已回到登录目录',
+  'install.noNode': '设备上没有可用的 node，仍可走 shell seam（RPC 不可用）',
+  'install.mismatch': 'helper 已部署但摘要不一致：本地 {expected}，设备 {onDevice}',
+  'install.probeFailed': 'helper 部署前的探测失败（{code}）',
+  'install.unknownDigest': '未知',
 } satisfies Record<string, string>
 
 /** Host dictionary key union. */
@@ -56,6 +60,10 @@ export const en = {
   'test.hostKeyFirst': 'Host key {fingerprint} (first contact; verify it with the server administrator)',
   'test.hostKeyTrusted': 'Host key {fingerprint} (already trusted)',
   'shell.missingRemoteDir': 'dshell: remote directory {root} does not exist; falling back to the login directory',
+  'install.noNode': 'No node available on the device; the shell seam still works, RPC is unavailable',
+  'install.mismatch': 'Helper deployed but the digest disagrees: local {expected}, device {onDevice}',
+  'install.probeFailed': 'Pre-install probe exited {code}',
+  'install.unknownDigest': 'unknown',
 } satisfies Record<DshellSshHostKey, string>
 
 /** The pair `ctx.dshellHostCopy.bind()` takes. */

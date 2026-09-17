@@ -9,7 +9,7 @@
 
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
-  DSHELL_SSH_PATH, type DeviceBinding, type DeviceInput, type DeviceView, type SshRequest, type SshResponse,
+  DSHELL_SSH_PATH, type DeviceBinding, type DeviceInput, type DeviceHelperStatus, type DeviceView, type SshRequest, type SshResponse,
 } from '../protocol.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -25,6 +25,8 @@ export interface SshSnapshot {
   readonly bindings: readonly DeviceBinding[]
   /** Result line of the last successful connection test. */
   readonly testResult: string | undefined
+  /** Helper deployment status from the last install, when one was requested. */
+  readonly helper: DeviceHelperStatus | undefined
   /** The last refusal or transport failure, shown until the next call. */
   readonly error: string | undefined
   /** Whether the host has answered at least once. */
@@ -32,7 +34,7 @@ export interface SshSnapshot {
 }
 
 const EMPTY: SshSnapshot = {
-  devices: [], bindings: [], testResult: undefined, error: undefined, loaded: false,
+  devices: [], bindings: [], testResult: undefined, helper: undefined, error: undefined, loaded: false,
 }
 
 /** Device registry mirror plus its mutations. */
@@ -142,6 +144,17 @@ export class SshClientService extends Service {
   }
 
   /**
+   * Deploy this build's helper to one device, content-addressed by digest.
+   *
+   * The reply carries the resulting {@link DeviceHelperStatus}, which the
+   * snapshot publishes so the device card can show the deployment's outcome
+   * (success, mismatch, no node) and the helper's on-device path.
+   */
+  async install(deviceId: string): Promise<void> {
+    await this.send({ action: 'install', deviceId }, { strict: true })
+  }
+
+  /**
    * Assign a session to a device, or pass null to run it locally.
    *
    * Throws on refusal. A session that stayed unbound while its directory is a
@@ -211,6 +224,7 @@ export class SshClientService extends Service {
       devices: body.devices,
       bindings: body.bindings,
       testResult: body.testResult,
+      helper: body.helper,
       error: body.error,
       loaded: true,
     })

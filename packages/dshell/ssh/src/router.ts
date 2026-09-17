@@ -23,6 +23,10 @@ import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
+import { localHelperArtifact } from './connection.js'
+import { deployHelper } from './helper/install.js'
+import { PROBE } from './helper/target.js'
+import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import { sshDeviceRoot } from './paths.js'
 import { isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
@@ -297,6 +301,89 @@ export class SshRouter {
     await this.devices.remove(deviceId)
     await this.refreshDevices()
     this.onDeviceChanged?.(deviceId, 'removed')
+  }
+
+  /**
+   * Deploy this build's helper to one device and report the resulting state.
+   *
+   * Three steps in order:
+   *
+   *   1. Probe — re-asks for `$HOME` and the device's Node, because a device
+   *      whose answer changed since the last probe should be re-deployed
+   *      against the new path rather than a stale one.
+   *   2. Deploy — sends the bundle base64-encoded on stdin, with `mkdir`,
+   *      `chmod 0700`, and a `sha256sum` verification on the device.
+   *   3. Verify — the deploy reports the device's own digest; a mismatch
+   *      against the artifact is a deployment failure.
+   *
+   * The result is what the device card renders verbatim, and what the next
+   * connection's `hello` reply will independently check — the two checks are
+   * the same, deliberately.
+   *
+   * @param deviceId - device to deploy to.
+   * @param ctx - host context with the subprocess seam.
+   */
+  async installHelper(deviceId: string, ctx: Context): Promise<DeviceHelperStatus> {
+    await this.refreshDevices()
+    const device = this.connections.get(deviceId)
+    if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
+    const artifact = localHelperArtifact()
+    const probe = await this.probeDevice(ctx, device)
+    if (probe.node === undefined) {
+      return {
+        state: 'absent',
+        expected: artifact.hash,
+        message: this.t('install.noNode'),
+      }
+    }
+    const outcome = await deployHelper(ctx, device, artifact.path, artifact.hash, probe.home)
+    if (outcome.onDevice !== artifact.hash) {
+      return {
+        state: 'mismatch',
+        onDevice: outcome.onDevice,
+        expected: artifact.hash,
+        path: outcome.path,
+        message: this.t('install.mismatch', {
+          expected: artifact.hash,
+          onDevice: outcome.onDevice || this.t('install.unknownDigest'),
+        }),
+      }
+    }
+    return {
+      state: 'present',
+      onDevice: outcome.onDevice,
+      expected: artifact.hash,
+      path: outcome.path,
+      message: outcome.message,
+    }
+  }
+
+  /**
+   * Re-ask the device for its home and Node executable.
+   *
+   * A thin wrapper around the probe that returns the raw answer; callers that
+   * need a {@link ResolvedTarget} use {@link HelperTargets.resolve} so the
+   * per-device cache is hit. Used by {@link installHelper} when the answer
+   * might have changed since the cache was populated.
+   */
+  private async probeDevice(ctx: Context, device: DeviceConnection): Promise<{ home: string; node: string | undefined }> {
+    const handle = ctx.subprocess.spawn({
+      argv: sshArgv(device, PROBE),
+      cwd: localCwd(),
+      ...Object.keys(sshEnv(device)).length === 0 ? {} : { env: sshEnv(device) },
+      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 }, stderr: { maxBytes: 8 * 1024 } },
+      graceMs: 10_000,
+    })
+    const outcome = await handle.done
+    if (outcome.exitCode !== 0) {
+      const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
+      throw new Error(stderr === '' ? this.t('install.probeFailed', { code: String(outcome.exitCode ?? 'on a signal') }) : stderr)
+    }
+    const [home = '', node = ''] = (handle.collected.stdout?.readFrom(0).text ?? '').trimEnd().split('\n')
+    return {
+      home: home.trim(),
+      node: node.trim() === '' || !node.trim().startsWith('/') ? undefined : node.trim(),
+    }
   }
 
   /**
