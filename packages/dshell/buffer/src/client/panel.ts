@@ -85,11 +85,15 @@ const subStyle: CSSProperties = { ...dimStyle, whiteSpace: 'pre-wrap', lineHeigh
 const fieldStyle: CSSProperties = {
   width: '100%', boxSizing: 'border-box', background: 'var(--dsw-alias-bg-layer-3)',
   border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: 8, color: 'inherit',
-  padding: '6px 8px', fontSize: 12, outline: 'none', colorScheme: 'dark',
+  padding: '6px 8px', fontSize: 12, outline: 'none',
+  // No `colorScheme` hint: a select's own widget and its OS-drawn option list
+  // follow the document's scheme, which the app sets on <html> from the theme
+  // preference. Pinning it to dark left a black control in a light panel.
 }
 const errorStyle: CSSProperties = {
   margin: '0 16px 12px', padding: '7px 10px', borderRadius: 8, fontSize: 12,
-  color: '#f87171', background: 'rgba(248,113,113,.1)',
+  color: 'var(--dsw-alias-state-error-primary, #f87171)',
+  background: 'var(--dsw-alias-interactive-bg-hover-danger, rgba(248,113,113,.1))',
   flex: '0 0 auto',
 }
 const emptyStyle: CSSProperties = { ...dimStyle, padding: '2px 0' }

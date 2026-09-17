@@ -57,15 +57,19 @@ function TargetSwitch(props: {
   return createElement('div', {
     style: {
       position: 'relative', display: 'grid', gridTemplateColumns: '1fr 1fr',
-      border: '0.5px solid #3a3a42', borderRadius: 999, padding: 2,
-      background: '#101013',
+      border: '0.5px solid var(--dsw-alias-border-l4, #3a3a42)', borderRadius: 999, padding: 2,
+      background: 'transparent',
     },
   },
     createElement('div', {
       'aria-hidden': true,
       style: {
         position: 'absolute', top: 2, bottom: 2, left: 2, width: 'calc(50% - 2px)',
-        borderRadius: 999, background: '#1f1f25', border: '0.5px solid #3a3a42',
+        borderRadius: 999,
+        // The pill is the only filled part of the control, so it is the only
+        // thing that has to stand off a surface: the ghost-button fill is the
+        // alias that reads as "selected" on either theme's dialog.
+        background: 'var(--dsw-alias-button-ghost-active-fill, #1f1f25)',
         transition: 'transform .16s ease',
         transform: props.value === 'ssh' ? 'translateX(100%)' : 'none',
       } as CSSProperties,
