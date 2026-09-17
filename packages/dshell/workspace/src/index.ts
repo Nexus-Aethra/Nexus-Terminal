@@ -10,12 +10,25 @@
  *    projection of a shell that has no workspaces. dshell session creation
  *    never passes a workspaceId (sessions are created by cwd, design 4.7),
  *    so the rejection paths stay cold in normal operation.
- * 2. The session panel's durable state: the archive tag set the sidebar's
- *    collapsed group reads, and the history purge behind its delete action.
- *    dsh's own archive lives on the disabled workspace registry, so dshell
- *    keeps its own tags (see protocol.ts). A purge that could not run yet
- *    (the session was still loaded) is drained here at load, before any
- *    session can be resumed.
+ * 2. The archive set itself, and the history purge behind the sidebar's
+ *    delete action. dsh keeps its archive set on the workspace registry —
+ *    `archivedSessionIds` plus `archiveSession`/`unarchiveSession` — so the
+ *    registry above serves that half for real while its workspace half stays
+ *    the honest projection of a shell without workspaces. The stock
+ *    `workspace-controller` row is ENABLED and drives it: it is what turns
+ *    those calls into the remote commands the client's `workspaces` service
+ *    and the stock archived-session settings page are written against. dshell
+ *    therefore owns the STORE (`$DSH_HOME/dshell/tags.json`) and nothing else
+ *    — no archive UI, no archive route.
+ *
+ *    A purge that could not run yet (the session was still loaded) is drained
+ *    here at load, before any session can be resumed.
+ *
+ * The archive set is read through `SessionTagStore`'s in-memory copy because
+ * the registry's contract is SYNCHRONOUS: `archivedSessionIds` is a getter, and
+ * `WorkspaceFeed` reads it while the controller activates. The document is
+ * therefore loaded here, before the registry is registered, rather than lazily
+ * on first use.
  */
 
 import { join } from 'node:path'
@@ -39,7 +52,7 @@ export const name = '@nexus-aethra/dshell-workspace'
 
 /** `workspaceRegistry` stand-in: every lookup misses, every mutation rejects. */
 class DshellWorkspaceRegistry extends Service {
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private readonly tags: SessionTagStore) {
     super(ctx, 'workspaceRegistry')
   }
 
@@ -51,8 +64,17 @@ class DshellWorkspaceRegistry extends Service {
     return []
   }
 
-  get archivedSessionIds(): readonly never[] {
-    return []
+  /**
+   * The registry-global archive set.
+   *
+   * Synchronous by contract — `WorkspaceFeed` reads it while the controller's
+   * plugin activates — which is why the tag document is loaded during
+   * composition (see the module doc). The brand is applied here rather than in
+   * the store: ids reach dshell's own tag document as plain strings and only
+   * cross into dsh's session identity at this boundary.
+   */
+  get archivedSessionIds(): readonly SessionId[] {
+    return this.tags.archivedIds() as readonly SessionId[]
   }
 
   async create(): Promise<never> {
@@ -67,7 +89,28 @@ class DshellWorkspaceRegistry extends Service {
     return []
   }
 
-  async archiveSession(): Promise<void> {}
+  /**
+   * Archive one session durably. Unlike the stock registry this runs no
+   * session-existence check: dshell archives through the SIDEBAR's own delete
+   * flow, which has already resolved the session against the host store.
+   * @param sessionId - the session to put away.
+   */
+  async archiveSession(sessionId: string): Promise<void> {
+    await this.tags.archive(sessionId)
+  }
+
+  /**
+   * Restore one session from the archived list. The two side effects of
+   * restoring travel with it here, where every unarchive now arrives — the
+   * sidebar's own cancel gesture and the stock settings page alike: a
+   * scheduled purge is cancelled, and the session becomes visible to the pipe
+   * UI again (see route.ts, where the same pair guards a delete).
+   * @param sessionId - the session to restore.
+   */
+  async unarchiveSession(sessionId: string): Promise<void> {
+    await this.tags.unarchive(sessionId)
+    this.ctx.get('dshellBufferCore')?.restoreSession(sessionId)
+  }
 
   async resolveByPath(): Promise<undefined> {
     return undefined
@@ -81,15 +124,14 @@ class DshellWorkspaceRegistry extends Service {
  */
 export const inject = [DSHELL_DATA_ROOT_SERVICE] as const
 
-export function apply(ctx: Context): void {
-  ctx.plugin(DshellWorkspaceRegistry)
+export function apply(ctx: Context): Promise<void> {
   // The tag document lives at dshell's data root, which is a SETTING: it is
   // settled by dshell-mode a few milliseconds after this package activates, so
   // anything here that resolves that path during composition waits for it first
-  // (see `std/data-root.ts`). Waiting costs nothing — the drain below is the
-  // only composition-time reader, and it still runs before a client can resume
-  // a session, which is the window it exists for.
-  void (async () => {
+  // (see `std/data-root.ts`). The wait is also what orders the registry: it is
+  // registered only once the archive set is in memory, and the controller —
+  // which injects `workspaceRegistry` — therefore activates after that.
+  return (async () => {
     const plan = await (ctx.get(DSHELL_DATA_ROOT_SERVICE) as DshellDataRootSeat).settled
     if (plan.source !== 'harness') {
       // Worth a line only when it is not the harness's own directory; the
@@ -97,6 +139,10 @@ export function apply(ctx: Context): void {
       console.info(`dshell-workspace: session tags are read from ${plan.root}`)
     }
     const tags = new SessionTagStore(() => join(dshHome(), 'dshell', 'tags.json'))
+    // Load before registering: the registry serves the archive set through a
+    // synchronous getter (see the module doc).
+    await tags.load()
+    ctx.plugin(DshellWorkspaceRegistry, tags)
     // Load-time drain: purges scheduled while their sessions were loaded. This
     // runs during composition, before a client can resume anything, which is
     // the only window where those log writers are guaranteed gone.
@@ -146,12 +192,6 @@ function installPanel(ctx: Context, tags: SessionTagStore): void {
       // no pipes to detach, and deletion proceeds without them.
       detach: async (sessionId) => {
         await panelCtx.get('dshellBufferCore')?.detachSession(sessionId)
-      },
-      // The mirror of `detach`: a cancelled deletion puts the session back in
-      // the pipe UI. Absent in a composition without dshell-buffer, where
-      // there was nothing to hide in the first place.
-      restore: sessionId => {
-        panelCtx.get('dshellBufferCore')?.restoreSession(sessionId)
       },
     })
     panelCtx.effect(

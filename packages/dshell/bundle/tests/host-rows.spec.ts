@@ -114,7 +114,7 @@ describe('the host row inventory', () => {
 
 describe('dshell\'s bundle patch', () => {
   it('targets only rows that exist', () => {
-    // The eight `disabled: true` rows. A rename upstream — `ui-jobs` becoming
+    // The seven `disabled: true` rows. A rename upstream — `ui-jobs` becoming
     // something else, say — leaves dshell's row in place and the stock widget
     // back on screen, with one warning at boot.
     const missing = ourTargets
@@ -142,6 +142,6 @@ describe('dshell\'s bundle patch', () => {
     // dshell-packages.md, so a row lost to a bad edit is visible here even
     // though the existence checks above would not notice.
     expect(ourInserts.length).toBeGreaterThanOrEqual(10)
-    expect(ourTargets.length).toBeGreaterThanOrEqual(8)
+    expect(ourTargets.length).toBeGreaterThanOrEqual(7)
   })
 })

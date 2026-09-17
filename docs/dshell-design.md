@@ -205,8 +205,12 @@ not part of the agent-loop spine"). Only the web-app bundle mounts it.
 dshell removes the concept through a dedicated package
 `dshell-workspace` (Phase 1.5), without forking:
 
-- The dshell bundle patch disables the four web-app rows `workspace`,
-  `workspace-controller`, `ui-workspace`, and `directory-picker`.
+- The dshell bundle patch disables three of the four web-app rows:
+  `workspace`, `ui-workspace`, and `directory-picker`.
+  `workspace-controller` stays ENABLED — it is what turns the registry's
+  archive calls into the remote commands that drive dsh's own
+  archived-session settings page, so dshell carries no archive UI of its
+  own (see the archive paragraph below).
 - Disabling alone would hang the shell: `session-controller` (host)
   and `ui-conversation` / `ui-sidebar` (client) hard-inject
   `workspaceRegistry` / `workspaces` / `uiWorkspace`, and
@@ -215,6 +219,12 @@ dshell removes the concept through a dedicated package
   replacement services (Cordis service keys are plain strings): a
   minimal host registry stub covering the consumed surface, and client
   stubs plus the root hook.
+- The archive set is upstream's, and the registry's archive half is the
+  one part of the stub that is real: archiving writes
+  `$DSH_HOME/dshell/tags.json`, and restoring is the stock `已归档会话`
+  settings page. The sidebar keeps the 归档 row action and the `待删除`
+  group and nothing else — a second list of archived sessions would be a
+  second place for the same set to drift.
 - The hero picker and sidebar workspace grouping disappear with the
   `ui-workspace` row; the composer's inert gate
   (`sessionId === undefined || (hero && chipTitle === undefined)`)

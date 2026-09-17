@@ -241,22 +241,33 @@ when it contributes to model-visible state.
   (design 4.7). Two-faced Cordis package:
   - **Host face** provides a `workspaceRegistry`-keyed stub covering
     the surface `session-controller` consumes, so the stock row
-    `workspace` can be disabled without hanging the host boot.
-  - **Browser face** provides `workspaces`- and `uiWorkspace`-keyed
-    stubs plus the root `workspaces` hook, so the stock row
-    `ui-workspace` can be disabled without hanging ui-conversation /
-    ui-sidebar or crashing ConversationRoot. It also occupies
-    `sidebar.workspaces` with a flat session list grouped into the active
-    list, a collapsible `已归档` group, and a collapsible `待删除` group for
-    sessions whose log removal is already committed and runs at the next
-    start; adds the
+    `workspace` can be disabled without hanging the host boot. Its
+    *archive* half is real: `archivedSessionIds` plus
+    `archiveSession`/`unarchiveSession`, served from
+    `$DSH_HOME/dshell/tags.json`. That is what the stock
+    `workspace-controller` row — which this profile ENABLES — turns into
+    the remote commands the client's `workspaces` service is written
+    against, and so what makes dsh's own archived-session settings page
+    show and restore a real set.
+  - **Browser face** provides the `uiWorkspace`-keyed stub plus the root
+    `workspaces` hook, so the stock row `ui-workspace` can be disabled
+    without hanging ui-conversation / ui-sidebar or crashing
+    ConversationRoot. The `workspaces` service itself is upstream's now —
+    claiming that key was what used to take the whole client down, since
+    two providers for one service is a cordis error. The face also
+    occupies `sidebar.workspaces` with a flat session list (the active
+    list plus a collapsible `待删除` group for sessions whose log removal
+    is already committed and runs at the next start), adds the
     new-session dialog (optional name + starting directory, design
     4.7 naming paragraph), and hides the stock hero workspace chip
     with an interim stylesheet until the Phase 4 scaffold takeover
     (design 4.8) removes the whole hero.
-- dsh services depended on: none beyond the replaced keys; it
-  *provides* `workspaceRegistry` (host), `workspaces` + `uiWorkspace`
-  (client).
+- There is no dshell archive UI. The list's 归档 row action is the only
+  writer (through upstream's command); restoring lives on the stock
+  `已归档会话` settings page. The package's own `/api/dshell/sessions`
+  route carries only the delete flow and the scheduled-purge set.
+- dsh services depended on: `workspaces` (client, upstream's). It
+  *provides* `workspaceRegistry` (host), `uiWorkspace` (client).
 - Introduced in: Phase 1.5; dialog in Phase 1.6.
 - Touches decisions: 4.7 (workspace removal) and indirectly 4.5 —
   `/new` creates sessions via `sessions.create({ cwd })` with no

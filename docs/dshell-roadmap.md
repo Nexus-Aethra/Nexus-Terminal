@@ -4258,3 +4258,95 @@ the shell lane remaining available is what makes no-Node still work.
 All three gates green; rig 49/49; helper-lane subprocess attempts = 0;
 expected-fallback property recorded (`link-to-file` reads as `file` on the
 helper lane, `other` on the shell lane).
+
+## Phase 10.43 — the archive set becomes upstream's
+
+dsh 0.1.6 ships an archive set, a settings page that lists it, and a
+round trip around it. dshell had its own: a `tags.json` document, an
+`/api/dshell/sessions` route with `archive`/`unarchive` actions, and a
+collapsible `已归档` group in the sidebar. Two implementations of one
+concept, and they disagreed the moment both were visible — archiving
+through the sidebar left dsh's page printing `暂无已归档会话。`.
+
+The migration is not a deletion; it is a change of ownership.
+
+### What upstream owns now
+
+`workspaceRegistry.archivedSessionIds` plus
+`archiveSession`/`unarchiveSession`, reached through the stock
+`workspace-controller` row, which this profile now ENABLES. Its client
+half is the `workspaces` service the sidebar reads and the settings page
+is written against. dshell keeps the STORE (`$DSH_HOME/dshell/tags.json`)
+and nothing else.
+
+The registry that backs it is the stand-in dshell already had. Only its
+archive half is real; its workspace half stays the honest projection of a
+shell without workspaces. Hosting upstream's real `WorkspaceRegistry`
+instead would run its one-time `bootstrap()`, which groups stored session
+headers by cwd and rebuilds the accounting design 4.7 removed — on a
+fresh profile, where nothing has seeded the initialized marker. Upstream's
+`archiveSession` does not require that accounting: it checks that the
+session EXISTS, never that it belongs to a workspace.
+
+Because the registry's `archivedSessionIds` is a synchronous getter and
+`WorkspaceFeed` reads it while the controller activates, the tag document
+is loaded during composition (`SessionTagStore.load()`), before the
+registry is registered.
+
+### Why the row used to take the client down
+
+"Failed to load plugins" — and the cause was ours. `WorkspaceController`
+does `super(ctx, 'workspaces')`, and dshell-workspace registered a
+`workspaces` stand-in of its own. Two providers for one service key is a
+cordis error, and it surfaces only as a fiber in state `failed`.
+
+The probe that found it: a temporary hook in dshell's own client entry
+(never in dsh's read-only `boot-client.ts`) that exposed the loader and
+printed every non-active entry's `fiber._error`. The message was
+`service "workspaces" has been registered at
+<@nexus-aethra/dshell-workspace/client>`.
+
+The earlier suspicion — that the row's manifest inject
+`['@deepseek-ai/dsh-api-gateway', '@deepseek-ai/dsh-client-connection']`
+disagreed with its code inject `['remote', 'remote.workspace']` — was
+wrong. That split is stock throughout; `terminal-controller` has it too.
+The probe was removed once it had answered.
+
+### What the sidebar keeps
+
+The 归档 row action (the only writer), the 待删除 group with its cancel,
+and the delete flow behind a confirmation — and nothing else. The `已归档`
+group is gone: restoring is the settings page's job now, and a second list
+of archived sessions is a second place for the same set to drift.
+
+Removing it orphaned 删除, which had lived on the archived rows, so the
+active row now carries both actions. The row markers moved with it: the
+`已归档` multi-select is gone, `mutedRowStyle` replaces `archivedRowStyle`,
+and the compact rail's label walker now anchors on `pending-header` plus an
+`empty` marker instead of `archive-header`.
+
+### Two owners, one hidden set
+
+A row leaves the active list for either of two reasons, and the two facts
+arrive from different owners: the archive set is the registry's live
+snapshot, the scheduled-purge qualifier is dshell's own route. The sidebar
+filters on their union.
+
+That split has one visible consequence, and it is where the bug was: the
+delete path marks a loaded session pending by writing the tag document
+directly, so the registry's snapshot never changes and the client model
+never notifies. Cancelling from `待删除` therefore re-reads the qualifier
+itself (`cancelPending`), because the restore command cannot update it.
+dsh's own `/api` responses carry no cache headers either, so an early read
+is a stale read.
+
+### Acceptance
+
+- Archiving in the sidebar, then opening Settings → 已归档会话, lists the
+  session (`未分组 · 3天`) — the page that always printed the empty state.
+- 取消归档 there returns the session to the sidebar with no reload, and
+  the store is empty afterwards.
+- Deleting a loaded session moves it to `待删除` and steps the stage off
+  it; cancelling there restores it in place.
+- Boot is clean — no `did not activate` warning, no `Failed to load
+  plugins`; `pnpm build`, `pnpm typecheck`, `pnpm test` (275) all green.
