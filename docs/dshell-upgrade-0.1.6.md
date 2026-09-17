@@ -18,7 +18,7 @@ its evidence in place; A2 is next.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); A2–A6 and T1–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2–A6 and T2–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -338,7 +338,7 @@ Three gaps matter for an upgrade:
    overrides, the `neverBundle` platform modules, the bundle-patch row ids and the
    five seed-omission names are all checked by nothing. The one incompatibility
    found in the rc.1 → rc.2 move (a `single` slot at default priority) surfaced in
-   a browser.
+   a browser. *(T1 closed the first four; see the phase below.)*
 2. **Whole packages have no spec at all**: `storage` (the history engine), `ssh`,
    `buffer`, `workspace`, `commands`, `conversation`, `bundle`, most of `mode`'s
    client, and `files`' transfer suite. The oldest of these — the storage engine's
@@ -346,7 +346,8 @@ Three gaps matter for an upgrade:
    not in the repo or its history.
 3. **One suite sits outside `pnpm test`**: `terminal-bridge/scripts/
    check-commands.ts` holds 13 assertions over the command splitter and lives
-   beside `src/`, so the vitest glob (`tests/**`) never sees it.
+   beside `src/`, so the vitest glob (`tests/**`) never sees it. *(Moved into
+   `tests/commands.spec.ts` by T1.)*
 
 ### 3.2 T1 — Turn the assumptions into assertions (before the bump)
 
@@ -369,6 +370,31 @@ The cheapest phase, and the one that would have caught the desktop validator:
 **Acceptance:** each new spec is proven to bite by breaking one of the things it
 watches (rename a row id, drop a name from the overrides, move a pin back) and
 seeing red.
+
+**Done** (2026-09-17). Three spec files, 25 cases, all four red-light proofs run:
+
+| Spec | Watches | Proof it bites |
+| --- | --- | --- |
+| `packages/dshell/bundle/tests/host-rows.spec.ts` | every row id our patch names, against the ids the two `web`-profile bundle patches introduce (read from `dsh/`, `!!js` tags accepted by an extended YAML schema); that the composition still is those two bundles, and that our inserts collide with nothing | renamed a targeted id — the existence case went red with `['ui-jobs-renamed']` |
+| `scripts/tests/manifest-contract.spec.ts` | peer/dev agreement per package; every declared name's `link:` override and the name its target manifest answers to; ranges satisfied by `dsh/package.json`'s version; no `@deepseek-ai/*` name in `dependencies`; `neverBundle` ⊆ dsh's `PLATFORM_MODULES`; the install recipe covers every package | dropped `@deepseek-ai/dsh-shell` from the overrides → the ownership case red; pointed one pin at `0.1.6-alpha.1` alone → the version case red; added a name the loader does not serve to `neverBundle` → the module-table case red |
+| `packages/dshell/terminal-bridge/tests/commands.spec.ts` | the 13 splitter and window assertions, moved out of `scripts/check-commands.ts` (deleted) | the same 13 cases; two of them are the truncation caps, which fail if the caps move |
+
+The fourth proof came free, twice over:
+
+- **the peer/dev check found a real defect on its first run**: `buffer`'s client
+  bundle requires `@deepseek-ai/dsh-client-ui-primitives` from the module table,
+  and the manifest declared it in `devDependencies` only. It worked because the
+  install recipe places that package by hand; nothing else would have noticed.
+- **the bundle-parity bullet changed shape.** The plan was to assert that the five
+  seed-omission names match in the three places the docs list them. There is no
+  stable list to assert against: the desktop package set is *generated* from the
+  packed tarball closure (`apps/desktop/scripts/prepare-package-set.ts`), so the
+  five names are a fact about a build, not a file. What replaced it is the
+  stronger, place-independent rule the validator actually enforces — no
+  `@deepseek-ai/*` name in `dependencies`, ever — plus the override check that
+  every name we declare is owned by the checkout.
+
+Suite: 12 files, 172 cases (was 9 files, 147).
 
 ### T2 — Compile-time host contract
 
