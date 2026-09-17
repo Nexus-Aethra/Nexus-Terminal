@@ -99,6 +99,9 @@ function modeSwitchSource(deps: {
     const next = canonicalOf(name) as SessionMode
     return {
       claim: {
+        // 0.1.6 made this required: the catalog name without its slash, which is
+        // the key the composer's per-command copy (`hint.*`) is looked up under.
+        name: next,
         token: `/${next}`,
         hint: t('mode.switch.hint'),
         submit: async (args) => {

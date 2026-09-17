@@ -42,6 +42,9 @@ export function dshellFilesDefinition(t: TranslateNS<'dshellFiles'>): SidebarRig
     priority: 'extension',
     title: () => t('type.label'),
     guide: [{
+      // 0.1.6 requires a stable entry identity within the provider; it is
+      // validated for uniqueness only, and names the page this capsule opens.
+      id: 'files',
       order: 10,
       title: () => t('guide.title'),
       description: () => t('guide.description'),

@@ -103,6 +103,16 @@ class DshellWorkspaces extends Service implements IWorkspaces {
     await this.panel.archive(String(sessionId))
   }
 
+  /**
+   * The stock client unarchive entry, added to `IWorkspaces` in 0.1.6 and
+   * pointed at the same tag store. The stock `unarchive-sessions` settings row
+   * reaches this through `uiWorkspace`, so leaving it out breaks the build as
+   * well as the affordance.
+   */
+  async unarchiveSession(sessionId: SessionId): Promise<void> {
+    await this.panel.unarchive(String(sessionId))
+  }
+
   async insertSessionBefore(): Promise<WorkspaceView> {
     throw new Error('dshell: workspace management is removed (dshell design 4.7)')
   }
@@ -159,6 +169,11 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
   /** The stock archive entry, pointed at dshell's own tag store. */
   async archiveSession(sessionId: SessionId): Promise<void> {
     await this.panel.archive(String(sessionId))
+  }
+
+  /** Its 0.1.6 counterpart; see `DshellWorkspaces.unarchiveSession`. */
+  async unarchiveSession(sessionId: SessionId): Promise<void> {
+    await this.panel.unarchive(String(sessionId))
   }
 
   async pickDirectory(): Promise<string | null> {
