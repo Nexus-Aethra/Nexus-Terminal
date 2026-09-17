@@ -909,3 +909,63 @@ export interface DshellDirsResponse {
   /** A refusal the card shows verbatim. */
   readonly error?: string
 }
+
+/**
+ * Byte-level filesystem ops on a device, for callers that need them outside
+ * the policy fence that `ctx.fs` draws.
+ *
+ * Two things use it today: the chunked transfer relay in `dshell-files` and
+ * the chunked buffer relay in `dshell-buffer`. Both want the operations
+ * `ctx.fs` deliberately does not expose — `mkdir`, `remove`, `rename`,
+ * `sha256`, `copy` — because the seam's contract is "you read / write text
+ * through `ctx.fs`", and the two relays transfer arbitrary bytes.
+ *
+ * The interface is shaped so a transfer engine does not have to learn anything
+ * about the device registry or the routing table. The provider resolves the
+ * device from the ambient call's session, and the engine asks for an ops
+ * object once, at the top of its function.
+ *
+ * The shape mirrors `RemoteFileSystem` (which is what the `dshell-ssh`
+ * implementation packages): the engine can pass the same paths and read the
+ * same replies regardless of which backend answered. A backend that has not
+ * pre-deployed a helper rejects with `FsError('FS_NOT_OBSERVED', …)`; an
+ * unbound session produces `undefined` from `forInitiator`, the same shape
+ * `RemoteFileSystem`'s internal callers expect.
+ */
+export interface DeviceFsOps {
+  /** Publish one file's whole contents on the device, byte for byte. */
+  writeBytes(remote: string, bytes: Uint8Array, signal?: AbortSignal): Promise<void>
+  /** Create one or more directories, optionally recursive. */
+  mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void>
+  /** Remove one path, recursively and tolerating absence when forced. */
+  remove(path: string, force: boolean, signal?: AbortSignal): Promise<void>
+  /** Rename one path to another, optionally overwriting an existing one. */
+  rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<void>
+  /** The whole-file SHA-256 of one path, computed on the device. */
+  sha256(path: string, signal?: AbortSignal): Promise<string>
+  /** Copy one file on the device, end-to-end. */
+  copy(
+    source: string,
+    destination: string,
+    overwrite: boolean,
+    expectedSha256: string | undefined,
+    onProgress: (written: number, totalBytes: number) => void,
+    signal: AbortSignal,
+  ): Promise<{ destination: string; sourceSha256: string; bytes: number }>
+}
+
+/**
+ * The byte-level device ops seat.
+ *
+ * `forInitiator` answers the device for the ambient call's session, or
+ * `undefined` when the session is local / unbound / has no helper. The
+ * transfer engine reads it once at the top of its function, and passes the
+ * resulting ops object down to every chunk — so the routing decision is
+ * made exactly once per copy, not once per chunk.
+ */
+export interface DeviceFsSeat {
+  readonly forInitiator: () => DeviceFsOps | undefined
+}
+
+/** The cordis service name `DshellFileSystem` publishes under. */
+export const DEVICE_FS_SERVICE = 'dshellDeviceFs'

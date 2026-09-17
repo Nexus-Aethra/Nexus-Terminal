@@ -37,6 +37,7 @@ import { isUnder, toMountPath, type MountMapping } from './mount.js'
 import { hostCopy, type DshellSshTranslate } from './host-locales.js'
 import { RemoteFileSystem } from './remote-fs.js'
 import { SSH_ROUTING_SERVICE } from './router.js'
+import { installDeviceFs } from './device-fs-provider.js'
 
 /** Remote temp areas a `workspace-write` session may also write, mirroring the local backend's temp allowance. */
 const REMOTE_TEMP_ROOTS = ['/tmp', '/var/tmp'] as const
@@ -259,7 +260,12 @@ export function apply(ctx: Context, config: ConstructorParameters<typeof DshellF
   // (dshell-mode), which this package's tsc program does not include. The
   // `inject` above is what guarantees the service is there.
   const copy = ctx.get('dshellHostCopy') as HostCopy
-  new DshellFileSystem(ctx, config, copy.bind(hostCopy))
+  const t = copy.bind(hostCopy)
+  new DshellFileSystem(ctx, config, t)
+  // The byte-level ops seat is published alongside `ctx.fs` because both
+  // share the same routing table and the same host-copy binding; the
+  // transfer and buffer relays read it as `ctx.deviceFs`.
+  installDeviceFs(ctx, config, t)
 }
 
 export default { name: 'dshell-fs', inject, Config, apply }
