@@ -1,88 +1,74 @@
 /**
  * The device's filesystem, as `ctx.fs` sees it.
  *
- * Every operation is one `ssh` invocation running a small POSIX command
- * remotely; the results are parsed back into the seam's vocabulary. Nothing is
- * cached: the harness's staleness guards compare opaque version tokens, so a
- * cache could only ever report a version the device no longer has.
+ * This class is the *policy* half of the remote backend: which path a caller
+ * meant, whether a write's guard still holds, what a literal edit means, and
+ * how line endings survive it. None of that depends on how bytes travel, and
+ * all of it must give the same answer here as it does for a local session, so
+ * it is written once and both lanes run it.
+ *
+ * The *transport* half is one of two lanes, chosen per call:
+ *
+ *  - the helper, when the device has one verified right now — a request per
+ *    primitive over the connection it is already serving; or
+ *  - the assembled-command path, one `ssh` invocation per primitive — which is
+ *    also the only lane a device without Node has.
  *
  * Two things are deliberately borrowed from the local backend instead of being
- * re-implemented here, because they are the semantics a wrong copy would
- * silently drift from:
+ * re-implemented on either side, because they are the semantics a second copy
+ * would silently drift from:
  *
  *  - the literal-edit rules (empty match, ambiguity, replace-all) and the
  *    line-ending discipline (detect, normalize for the diff basis, restore on
  *    write) — mirrored in `./literal-edit.ts` from the local backend, with the
  *    reasoning for the copy recorded there.
  *
- * The device is assumed to have a GNU userland (`stat`, `realpath`, `find`,
- * `mktemp`, `chmod --reference`), which is what a Linux server gives.
+ * Nothing is cached. The harness's staleness guards compare opaque version
+ * tokens, so a cache could only ever report a version the device no longer has.
+ *
+ * A mutation of one target is serialized per target by the provider that owns
+ * this class, which is what makes the read-check-write sequences here — the
+ * write guard, the edit guard — count for anything within this host.
  */
-
 import { isAbsolute, join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
 import { FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
 import type {
   FsDirEntry, FsEditOutcome, FsEditRequest, FsInfo, FsPathInfo,
   FsTarget, FsWriteIntent, FsWriteOutcome,
 } from '@deepseek-ai/dsh-fs'
-import type { DeviceConnection } from './devices.js'
-import type { DshellSshTranslate } from './host-locales.js'
+import type { MountMapping } from './mount.js'
+import { toRemotePath } from './mount.js'
 import {
   applyLiteralEdit, detectLineEndings, normalizeLineEndings, restoreLineEndings,
 } from './literal-edit.js'
-import { type MountMapping, remoteDirFor, toRemotePath } from './mount.js'
-import { localCwd, quote, sshArgv, sshEnv } from './runner.js'
+import type { RemoteFsDeps, RemoteFsTransport } from './remote-fs-transport.js'
+import { HelperFsTransport } from './remote-fs-helper.js'
+import { ShellFsTransport } from './remote-fs-shell.js'
 
-/** What the remote backend needs to reach one device tree. */
-export interface RemoteFsDeps {
-  /** Host context, for the subprocess seam. */
-  readonly ctx: Context
-  /** Device the session runs on. */
-  readonly device: DeviceConnection
+/** Everything the remote backend needs, including how it reaches the device. */
+export interface RemoteFsOptions extends RemoteFsDeps {
   /** The session's remote root and the local directory mirroring it. */
   readonly mapping: MountMapping
   /** Overwrite-diff basis limit, matching the local backend's knob. */
   readonly diffBasisMaxBytes: number
-  /** This package's bound host copy, for the Chinese-locale error text. */
-  readonly t: DshellSshTranslate
 }
-
-/** One finished remote command. */
-interface RemoteRun {
-  readonly stdout: string
-  readonly stderr: string
-  readonly exitCode: number
-  readonly truncated: boolean
-}
-
-/** Filesystem type as `stat`/`find` spell it, mapped to the seam's vocabulary. */
-type RemoteKind = 'file' | 'directory' | 'other' | 'symlink'
-
-/** One `stat` record. */
-interface RemoteStat {
-  readonly kind: RemoteKind
-  readonly size: number
-  readonly version: FsVersion
-}
-
-const STAT_FORMAT = '%F|%s|%d|%i|%y|%z'
-// The separators are spelled `\0` (backslash, zero) rather than embedded NUL
-// bytes on purpose: this string travels as one argv element of the local `ssh`
-// process, and a real NUL cannot cross that boundary at all — Node refuses the
-// spawn. The remote login shell passes the two characters through its single
-// quotes untouched, and GNU `find -printf` turns `\0` into the NUL it emits.
-const FIND_FORMAT = '%f\\0%y\\0%s\\0%d\\0%i\\0%T@\\0'
 
 /**
  * One device's filesystem.
  *
  * Not a Service: it is a value the routing backend constructs per call for the
  * session that call belongs to, so nothing here is shared across sessions and
- * there is no per-device state to invalidate.
+ * there is no per-device state to invalidate. That is also what keeps the lane
+ * choice fresh per call: a device whose helper comes up — or goes away — is
+ * answered by the lane that fits, from the next operation on.
  */
 export class RemoteFileSystem {
-  constructor(private readonly deps: RemoteFsDeps) {}
+  private readonly transport: RemoteFsTransport
+
+  constructor(private readonly deps: RemoteFsOptions) {
+    const { connection } = deps
+    this.transport = connection === undefined ? new ShellFsTransport(deps) : new HelperFsTransport(connection)
+  }
 
   /** The device's absolute path for a path in this machine's namespace. */
   private remote(path: string): string {
@@ -96,108 +82,22 @@ export class RemoteFileSystem {
     return this.remote(local)
   }
 
-  /** Run one command on the device and collect its output. */
-  private async run(
-    command: string,
-    options: { signal?: AbortSignal | undefined; stdin?: string | undefined; maxBytes?: number | undefined } = {},
-  ): Promise<RemoteRun> {
-    const maxBytes = options.maxBytes ?? 8 * 1024 * 1024
-    const handle = this.deps.ctx.subprocess.spawn({
-      argv: sshArgv(this.deps.device, command),
-      cwd: localCwd(),
-      stdio: {
-        stdin: options.stdin === undefined ? 'ignore' : { data: options.stdin },
-        stdout: { maxBytes },
-        stderr: { maxBytes: 64 * 1024 },
-      },
-      graceMs: 5_000,
-      env: sshEnv(this.deps.device),
-      ...options.signal === undefined ? {} : { signal: options.signal },
-    })
-    const outcome = await handle.done
-    const stdout = handle.collected.stdout?.readFrom(0)
-    const stderr = handle.collected.stderr?.readFrom(0)
-    if (outcome.exitCode === null) {
-      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(outcome.signal ?? 'unknown') }), 'FS_ABORTED')
-    }
-    return {
-      stdout: stdout?.text ?? '',
-      stderr: stderr?.text ?? '',
-      exitCode: outcome.exitCode,
-      truncated: stdout?.lossy === true,
-    }
-  }
-
-  /**
-   * Run one command and collect its stdout as raw bytes.
-   *
-   * Text collection decodes and would corrupt binary output, so image and
-   * byte-range reads go through a raw pipe instead.
-   */
-  private async runBinary(command: string, signal?: AbortSignal): Promise<Buffer> {
-    const handle = this.deps.ctx.subprocess.spawn({
-      argv: sshArgv(this.deps.device, command),
-      cwd: localCwd(),
-      stdio: { stdin: 'ignore', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
-      graceMs: 5_000,
-      env: sshEnv(this.deps.device),
-      ...signal === undefined ? {} : { signal },
-    })
-    const chunks: Buffer[] = []
-    if (handle.stdout !== undefined) {
-      for await (const chunk of handle.stdout as AsyncIterable<Buffer>) chunks.push(chunk)
-    }
-    const outcome = await handle.done
-    if (outcome.exitCode === null) {
-      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(outcome.signal ?? 'unknown') }), 'FS_ABORTED')
-    }
-    if (outcome.exitCode !== 0) {
-      throw classifyRemoteFailure({ stdout: '', stderr: '', exitCode: outcome.exitCode, truncated: false }, command, this.deps.t)
-    }
-    return Buffer.concat(chunks)
-  }
-
-  /** Run one command that must succeed, mapping its failure onto the seam's codes. */
-  private async runOrThrow(
-    command: string,
-    displayPath: string,
-    options: { signal?: AbortSignal | undefined; stdin?: string | undefined; maxBytes?: number | undefined } = {},
-  ): Promise<RemoteRun> {
-    const result = await this.run(command, options)
-    if (result.exitCode === 0) return result
-    throw classifyRemoteFailure(result, displayPath, this.deps.t)
-  }
-
-  /** `stat` one device path, following symlinks when asked. */
-  private async statRemote(remotePath: string, follow: boolean, signal?: AbortSignal): Promise<RemoteStat | undefined> {
-    const flag = follow ? '-Lc' : '-c'
-    const result = await this.run(`LC_ALL=C stat ${flag} ${quote(STAT_FORMAT)} -- ${quote(remotePath)}`, { signal })
-    if (result.exitCode !== 0) {
-      if (isMissing(result)) return undefined
-      throw classifyRemoteFailure(result, remotePath, this.deps.t)
-    }
-    const [kind, size, device, inode, mtime, ctime] = result.stdout.trimEnd().split('|')
-    return {
-      kind: kindFromStat(kind ?? ''),
-      size: Number(size ?? '0'),
-      version: FsVersion(`${device ?? ''}:${inode ?? ''}:${mtime ?? ''}:${ctime ?? ''}`),
-    }
-  }
-
   /** Resolve a caller path into a target identity on the device. */
   async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     if (opts?.signal?.aborted === true) throw new FsError('resolve aborted', 'FS_ABORTED')
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
     const remote = this.remoteFrom(opts?.cwd, path)
-    // `-m` canonicalizes a path that does not exist yet, the way the local
-    // backend resolves a missing file through its nearest existing ancestor.
-    const result = await this.runOrThrow(`realpath -m -- ${quote(remote)}`, remote, { signal: opts?.signal })
-    return { targetKey: FsTargetKey(result.stdout.trim()), displayPath: remote }
+    // The device canonicalizes, because only it knows how its own symlinks
+    // resolve — and it does so for a path that does not exist yet, the way the
+    // local backend resolves a missing file through its nearest existing
+    // ancestor.
+    const target = await this.transport.resolve(remote, opts?.signal)
+    return { targetKey: FsTargetKey(target), displayPath: remote }
   }
 
   /** Metadata for a resolved target; `undefined` when the device has no such file. */
   async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
-    const info = await this.statRemote(String(target.targetKey), true, signal)
+    const info = await this.transport.stat(String(target.targetKey), true, signal)
     if (info === undefined) return undefined
     return { version: info.version, type: info.kind === 'file' || info.kind === 'directory' ? info.kind : 'other', size: info.size }
   }
@@ -206,7 +106,7 @@ export class RemoteFileSystem {
   async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
     const remote = this.remoteFrom(opts?.cwd, path)
-    const info = await this.statRemote(remote, false, signal)
+    const info = await this.transport.stat(remote, false, signal)
     if (info === undefined) return undefined
     return { version: info.version, type: info.kind, size: info.size }
   }
@@ -218,41 +118,31 @@ export class RemoteFileSystem {
   }
 
   /** Stream one file's text. */
-  streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
-    const remote = String(target.targetKey)
+  async streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
     const displayPath = target.displayPath
-    const deps = this.deps
-    const generator = async function* stream(): AsyncIterable<string> {
-      const handle = deps.ctx.subprocess.spawn({
-        argv: sshArgv(deps.device, `cat -- ${quote(remote)}`),
-        cwd: localCwd(),
-        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
-        graceMs: 5_000,
-        env: sshEnv(deps.device),
-        ...signal === undefined ? {} : { signal },
-      })
-      if (handle.stdout === undefined) throw new FsError(`cannot read "${displayPath}"`, 'FS_IO_ERROR')
+    const chunks = await this.transport.stream(String(target.targetKey), signal)
+    return (async function* stream(): AsyncIterable<string> {
       const decoder = new TextDecoder('utf-8', { fatal: true })
       try {
-        for await (const chunk of handle.stdout as AsyncIterable<Buffer>) {
-          yield decoder.decode(chunk, { stream: true })
-        }
+        for await (const chunk of chunks) yield decoder.decode(chunk, { stream: true })
         const tail = decoder.decode()
         if (tail.length > 0) yield tail
       } catch (error) {
         if (signal?.aborted === true) throw new FsError('read aborted', 'FS_ABORTED', { cause: error })
+        // A failure the transport already named is not a decoding failure:
+        // calling a broken connection "not valid UTF-8" would send a caller
+        // looking for the wrong problem.
+        if (error instanceof FsError) throw error
         throw new FsError(`cannot read "${displayPath}": not valid UTF-8 text`, 'FS_NOT_TEXT', { cause: error })
       }
-      const outcome = await handle.done
-      if (outcome.exitCode !== 0) throw classifyRemoteFailure({ stdout: '', stderr: '', exitCode: outcome.exitCode ?? 1, truncated: false }, displayPath, deps.t)
-    }
-    return Promise.resolve(generator())
+    })()
   }
 
   /** Read at most `maxBytes` bytes of one file. */
   async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number, displayPath = target.displayPath): Promise<Uint8Array> {
-    const remote = String(target.targetKey)
-    const bytes = await this.runBinary(`head -c ${String(maxBytes + 1)} -- ${quote(remote)}`, signal)
+    // One byte more than allowed, so "exactly at the limit" and "over it" stay
+    // distinguishable without asking the device how large the file is.
+    const bytes = await this.transport.read(String(target.targetKey), 0, maxBytes + 1, signal)
     if (bytes.byteLength > maxBytes) {
       throw new FsError(`cannot read "${displayPath}": file exceeds the ${String(maxBytes)} byte limit`, 'FS_TOO_LARGE')
     }
@@ -261,42 +151,29 @@ export class RemoteFileSystem {
 
   /** Read one byte window of a file. */
   async readByteRange(target: FsTarget, range: { offset: number; length: number }, signal?: AbortSignal): Promise<Uint8Array> {
-    const remote = String(target.targetKey)
-    const skip = range.offset + 1
-    return await this.runBinary(
-      `tail -c +${String(skip)} -- ${quote(remote)} | head -c ${String(range.length)}`,
-      signal,
-    )
+    return await this.transport.read(String(target.targetKey), range.offset, range.length, signal)
   }
 
-  /** Direct children of a directory. */
+  /** Direct children of a directory, ordered by name. */
   async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
     const remote = String(target.targetKey)
-    const result = await this.runOrThrow(
-      `LC_ALL=C find -- ${quote(remote)} -mindepth 1 -maxdepth 1 -printf ${quote(FIND_FORMAT)}`,
-      target.displayPath,
-      { signal },
-    )
-    const fields = result.stdout.split('\0')
-    const entries: FsDirEntry[] = []
-    for (let index = 0; index + 5 < fields.length; index += 6) {
-      const name = fields[index] ?? ''
-      if (name === '') continue
-      const kind = kindFromFind(fields[index + 1] ?? '')
-      const size = Number(fields[index + 2] ?? '0')
-      const device = fields[index + 3] ?? ''
-      const inode = fields[index + 4] ?? ''
-      const mtime = fields[index + 5] ?? ''
-      const child = join(remote, name)
-      entries.push({
-        name,
-        type: kind === 'symlink' ? 'other' : kind,
-        target: { targetKey: FsTargetKey(child), displayPath: join(target.displayPath, name) },
-        version: FsVersion(`${device}:${inode}:${mtime}`),
-        size,
-      })
-    }
+    const entries = await this.transport.list(remote, signal)
+    // Ordered here rather than on the device, because the order is part of what
+    // a caller sees and exactly one place should decide it: a device's own
+    // enumeration order is a filesystem detail, and the locale it runs under is
+    // a configuration nobody chose for this listing. A fixed collation also
+    // means the same directory reads the same way on either lane and from
+    // either machine — English collation being the order the local backend
+    // produces for the ASCII names a source tree is made of.
     return entries
+      .sort((left, right) => left.name.localeCompare(right.name, 'en'))
+      .map(entry => ({
+        name: entry.name,
+        type: entry.kind === 'symlink' ? 'other' : entry.kind,
+        target: { targetKey: FsTargetKey(join(remote, entry.name)), displayPath: join(target.displayPath, entry.name) },
+        ...entry.version === undefined ? {} : { version: entry.version },
+        ...entry.size === undefined ? {} : { size: entry.size },
+      }))
   }
 
   /** Write one file, honouring the caller's guard. */
@@ -307,7 +184,7 @@ export class RemoteFileSystem {
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome> {
     const remote = String(target.targetKey)
-    const existing = await this.statRemote(remote, true, signal)
+    const existing = await this.transport.stat(remote, true, signal)
     if (existing !== undefined && existing.kind !== 'file') {
       throw new FsError(`cannot write "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
     }
@@ -322,8 +199,7 @@ export class RemoteFileSystem {
     const diffable = existing !== undefined
       && Buffer.byteLength(content, 'utf8') < this.deps.diffBasisMaxBytes
     const before = diffable ? await this.readText(target, signal).catch(() => null) : null
-    await this.publish(remote, content, signal)
-    const after = await this.statRemote(remote, true, signal)
+    const after = await this.publish(remote, content, signal)
     return {
       operation: existing === undefined ? 'create' : 'update',
       version: after?.version ?? FsVersion(`missing:${remote}`),
@@ -340,7 +216,7 @@ export class RemoteFileSystem {
     signal?: AbortSignal,
   ): Promise<FsEditOutcome> {
     const remote = String(target.targetKey)
-    const existing = await this.statRemote(remote, true, signal)
+    const existing = await this.transport.stat(remote, true, signal)
     if (existing === undefined) throw new FsError(`cannot edit "${target.displayPath}": file changed since it was read`, 'FS_STALE_VERSION')
     if (existing.kind !== 'file') throw new FsError(`cannot edit "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
     if (expected !== undefined && existing.version !== expected.version) {
@@ -350,8 +226,7 @@ export class RemoteFileSystem {
     const lineEndings = detectLineEndings(raw)
     const original = normalizeLineEndings(raw)
     const edited = applyLiteralEdit(original, edit.oldString, edit.newString, edit.replaceAll, target.displayPath)
-    await this.publish(remote, restoreLineEndings(edited.content, lineEndings), signal)
-    const after = await this.statRemote(remote, true, signal)
+    const after = await this.publish(remote, restoreLineEndings(edited.content, lineEndings), signal)
     return {
       version: after?.version ?? FsVersion(`missing:${remote}`),
       before: original,
@@ -362,47 +237,27 @@ export class RemoteFileSystem {
   /**
    * Replace a file's contents atomically.
    *
-   * The staging file is created in the destination directory by `mktemp`, so
-   * the final `mv` is a same-filesystem rename, and an existing file's mode is
-   * carried over before the rename — the same two properties the local
-   * backend's atomic write provides.
+   * The lane decides how, and both of its answers have the two properties the
+   * local backend's atomic write provides: the replacement is a rename inside
+   * the destination's directory, and an existing file's mode is carried over.
+   * The helper, which performs the rename on the device, reports the new
+   * metadata in the same reply; the assembled lane has to be asked afterwards,
+   * one round trip of its own.
+   *
+   * @param remote - absolute device path to publish.
+   * @param content - the file's whole contents.
+   * @param signal - cancellation; a published file is not rolled back.
+   * @returns the published file's metadata, or undefined if the device reports
+   *   nothing and the follow-up probe finds nothing either.
    */
-  private async publish(remote: string, content: string, signal?: AbortSignal): Promise<void> {
-    const script = [
-      'd=$(dirname -- "$1")',
-      'mkdir -p -- "$d"',
-      't=$(mktemp --tmpdir="$d" .dshell-XXXXXX)',
-      'cat > "$t"',
-      'if [ -e "$1" ]; then chmod --reference="$1" "$t" 2>/dev/null || true; fi',
-      'mv -f -- "$t" "$1"',
-    ].join(' && ')
-    const result = await this.run(`sh -c ${quote(script)} sh ${quote(remote)}`, { signal, stdin: content })
-    if (result.exitCode !== 0) throw classifyRemoteFailure(result, remote, this.deps.t)
+  private async publish(
+    remote: string,
+    content: string,
+    signal?: AbortSignal,
+  ): Promise<{ version: FsVersion } | undefined> {
+    return await this.transport.write(remote, content, signal)
+      ?? await this.transport.stat(remote, true, signal)
   }
-
-  /**
-   * The directory a device-bound call runs in, given the local directory the
-   * caller resolved. Used by the subprocess seam for routed searches.
-   */
-  remoteDir(localDir: string | undefined): string {
-    return remoteDirFor(this.deps.mapping, localDir)
-  }
-}
-
-/** Map a `stat -c %F` word onto the seam's type vocabulary. */
-function kindFromStat(word: string): RemoteStat['kind'] {
-  if (word === 'regular file' || word === 'regular empty file') return 'file'
-  if (word === 'directory') return 'directory'
-  if (word === 'symbolic link') return 'symlink'
-  return 'other'
-}
-
-/** Map a `find -printf %y` code onto the seam's type vocabulary. */
-function kindFromFind(code: string): 'file' | 'directory' | 'other' | 'symlink' {
-  if (code === 'f') return 'file'
-  if (code === 'd') return 'directory'
-  if (code === 'l') return 'symlink'
-  return 'other'
 }
 
 /** Decode UTF-8 bytes, reporting the seam's not-text code for binary content. */
@@ -413,24 +268,4 @@ function decodeText(bytes: Uint8Array, displayPath: string): string {
   } catch (error) {
     throw new FsError(`cannot read "${displayPath}": not valid UTF-8 text`, 'FS_NOT_TEXT', { cause: error })
   }
-}
-
-/** Whether a failed command means "no such path" rather than a real fault. */
-function isMissing(result: RemoteRun): boolean {
-  return /No such file or directory|cannot statx? .*No such/i.test(result.stderr)
-}
-
-/** Turn a failed remote command into the seam's error vocabulary. */
-function classifyRemoteFailure(result: RemoteRun, displayPath: string, t: DshellSshTranslate): FsError {
-  const message = result.stderr.trim() === '' ? t('error.remoteFailed', { code: result.exitCode }) : result.stderr.trim()
-  const code = /Permission denied/i.test(message)
-    ? 'FS_PERMISSION_DENIED'
-    : /No such file or directory/i.test(message)
-      ? 'FS_NOT_FOUND'
-      : /Not a directory/i.test(message)
-        ? 'FS_NOT_DIRECTORY'
-        : /Is a directory/i.test(message)
-          ? 'FS_NOT_REGULAR_FILE'
-          : 'FS_IO_ERROR'
-  return new FsError(`${displayPath}: ${message}`, code)
 }

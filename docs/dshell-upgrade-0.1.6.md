@@ -428,6 +428,11 @@ upstream model, and the in-conversation block rendering is unchanged.
 
 **Rollback:** A4.2 keeps its own switch; A4.1 needs none.
 
+**Status:** M0 and M1 are shipped (10.40, 10.41, PRs #38 and #39). M2 (10.42) is
+the next milestone: the device filesystem moves to the same RPC, replacing the
+`stat -c`/`find -printf`/`LC_ALL=C` shell text with structured fields and
+typed errors.
+
 ### A5 — Desktop and release
 
 Re-derive the seed-omission list against the new runtime (the closure moved; the

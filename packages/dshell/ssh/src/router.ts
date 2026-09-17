@@ -19,6 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { ShellExecRequest, ShellExecSpec } from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-subprocess'
+import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
@@ -173,6 +174,19 @@ export class SshRouter {
    * absent in tests, where nothing needs invalidating.
    */
   onDeviceChanged: ((deviceId: string, event: 'saved' | 'removed' | 'bound') => void) | undefined
+
+  /**
+   * The device's verified helper connection, when one is up right now.
+   *
+   * Assigned by the subprocess seam along with the hook above, because that is
+   * what owns the pool and its lifetime. The filesystem provider reads it to
+   * decide which lane answers a call, and an absent answer is a decision, not a
+   * failure: this device has no helper *at this moment*, so the assembled path
+   * answers instead. Deliberately synchronous for the same reason — a caller
+   * that waited for a connection that may never come would turn "no Node on
+   * this device" into a hang.
+   */
+  helperConnection: ((deviceId: string) => DshellSshConnection | undefined) | undefined
 
   /**
    * @param root - resolves the device directory (`<data root>/dshell/ssh`).
