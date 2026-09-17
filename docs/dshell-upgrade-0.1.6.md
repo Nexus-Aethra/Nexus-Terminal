@@ -5,9 +5,10 @@ upstream `0.1.6-alpha.1`, and the **testing** work that makes an upgrade of this
 kind verifiable instead of remembered. Read it when the harness is about to move
 a version; read the testing half whenever a new phase needs a gate.
 
-Nothing here has been executed. The tag is fetched, the surfaces are measured,
-and this document is the plan — the phases below are the sequence, and each one
-ends with the check that says it is done.
+Nothing here has been executed except A1. The tag is fetched, the surfaces are
+measured, and this document is the plan — the phases below are the sequence, and
+each one ends with the check that says it is done. A1 landed on 2026-09-17 with
+its evidence in place; A2 is next.
 
 ## 0. Where this stands
 
@@ -17,6 +18,7 @@ ends with the check that says it is done.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
+| Progress | A1 done (both hosts accepted by one manifest set); A2–A6 and T1–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -215,6 +217,29 @@ unambiguously about behavior.
 
 **Rollback:** revert the manifest commit; the host never moved.
 
+**Evidence** (2026-09-17, host still pinned at `0.1.5-rc.2`). 211 peer lines
+across nine manifests now read `0.1.5-rc.2 || 0.1.6-alpha.1`; `schemastery`
+moved in `mode` and `ssh` only.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Install | `pnpm install` | up to date; the lockfile diff is the `schemastery` move alone (6 lines, both importers) |
+| Types | `pnpm typecheck` | clean, both programs |
+| Build | `pnpm build` | all faces emit |
+| Pure specs | `pnpm test` | 9 files, 147 tests pass |
+| Range semantics | `semver.satisfies(host, range)` per host | `0.1.5-rc.2` **and** `0.1.6-alpha.1` both true; the trap is real — `^0.1.5-rc.2` rejects `0.1.6-alpha.1` |
+| Published shape | `pnpm pack` in `packages/dshell/mode` | 19 dsh peers, every one the union; `schemastery` in peers and absent from `dependencies`; workspace edges rewritten to `^0.1.1` |
+| Packaging | `pnpm package:linux -- --from=builder` | fresh `deepseek-harness-0.1.5-rc.2-linux-amd64.deb` (186 MB) |
+| Host regression | `pnpm dsh web --no-open --port 3080` from `dsh/` | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200 (`dirs`/`files` are POST-only, so their GET form is a 404 by design). The boot payload names all seven dshell client faces, the served `mode` bundle carries the current palette code, and each client bundle's only module-table imports are `react`, `dsh-client-store` and `dsh-client-ui-primitives` — the three `neverBundle` names |
+
+Two facts behind "the `dependencies` rule is cleared", both read from the tag
+rather than inferred: `@deepseek-ai/schemastery` is one of the 241 entries in
+the desktop runtime's own `desktop-packages.json` (its tarball is staged in the
+build's `seed/desktop-packages/`), and
+`apps/desktop/src/profile-packages.ts:244` rejects every runtime-owned name a
+plugin declares as a dependency. The old manifests would therefore have failed
+the desktop profile outright rather than warned.
+
 ### A2 — Move the host
 
 Check out `dsh-v0.1.6-alpha.1` in `dsh/` (the tag is already fetched; a plain
@@ -405,8 +430,12 @@ been shown to fail when its rule is broken.
   step is what makes that second run cheap. Do not delete the old range until the
   new channel is the one we ship.
 - **The desktop validator is read, not executed.** §1.2 quotes it from the tag's
-  source; A1 and A5 prove it by running the app. Until then, treat the exact
-  failure text as likely rather than observed.
+  source, and A1 confirmed its two inputs rather than the running app: the name
+  it checks (`@deepseek-ai/schemastery` is in the runtime's own
+  `desktop-packages.json`) and the rule itself (a runtime-owned name declared as
+  a dependency is rejected, unconditionally). What is still unobserved is the
+  failure *text* and the ordering with the rest of profile preparation — A5 runs
+  the app for that.
 - **Best-effort startup removes an alarm.** Our implicit smoke test — "it did not
   boot" — is gone for optional rows. T1's row check and T4's boot assertion are
   the replacements, which is why they are in the first phase rather than the last.

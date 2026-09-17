@@ -427,21 +427,34 @@ root, and why each manifest now carries:
   named only `lib/index.js` and `lib/client.js`, so **every host module the
   entry imports** — `route.js`, `stream.js`, `pty.js`, … — was missing from the
   tarball: it installed, then failed at import time;
-- first-party dsh packages as **peerDependencies pinned to the exact
-  `0.1.5-rc.2`** (plus the same list in `devDependencies`, which is what the
-  local build resolves), never as plain dependencies. A plugin must share the
-  host's single instance of a first-party package: a second copy breaks
-  `instanceof` across `FsError`/`TerminalError`, gives a second `Service` base
-  class, and splits the client module table. Exact rather than `^` because a
-  floating prerelease range let pnpm satisfy the peers from the registry
-  (`0.1.5-rc.2`) instead of the checkout, silently mixing two dsh builds in one
-  tree;
+- first-party dsh packages as **peerDependencies carrying the host range we
+  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.1` today — plus the
+  same list in `devDependencies`, which is what the local build resolves; never
+  as plain dependencies. A plugin must share the host's single instance of a
+  first-party package: a second copy breaks `instanceof` across
+  `FsError`/`TerminalError`, gives a second `Service` base class, and splits the
+  client module table. A union rather than `^` because a prerelease range is not
+  an interval that spans channels: `^0.1.5-rc.2` does **not** satisfy
+  `0.1.6-alpha.1` (semver excludes a prerelease whose `major.minor.patch`
+  differs), and each channel's own range excludes the other. Floating the range
+  is wrong for the original reason too — it lets pnpm satisfy the peers from the
+  registry instead of the checkout, silently mixing two dsh builds in one tree.
+  The desktop app enforces this shape itself: `apps/desktop/src/profile-packages.ts`
+  fails profile preparation when an installed bundle's peer range does not
+  `satisfies()` the running host, or when it declares a runtime-owned package as
+  a dependency at all;
 - `@deepseek-ai/cordis` as a peer (`^4.0.2`), matching how dsh publishes its own
   packages;
 - dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.1` on
   pack;
+- `@deepseek-ai/schemastery` as a peer for the same reason as the rest of the
+  list: despite the vendor-library look, it is one of the 241 runtime-owned
+  packages in the desktop build's `desktop-packages.json`, so a plugin that
+  calls it a dependency is exactly what the rule above rejects. The range
+  `^3.18.2` satisfies the inventory's 3.18.2 either way, so only the block
+  moves;
 - third-party libraries that are genuinely the plugin's own (`ws`, `node-pty`,
-  `@xterm/xterm`, `@xyflow/react`, `schemastery`) as dependencies.
+  `@xterm/xterm`, `@xyflow/react`) as dependencies.
 
 Development still runs against the local `dsh/` checkout: the root
 `package.json` maps every first-party name to its checkout path under
