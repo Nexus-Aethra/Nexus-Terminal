@@ -7,22 +7,47 @@
  * imports them.
  */
 
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
 
 /**
  * The harness home these paths live under.
  *
  * Three sources, in the order a reader would expect: dshell's own data root
- * (which the host half exports under the variable below before anything here
- * asks), then the harness's home, then `~/.dsh`. The first is not an alias for
- * the second — see `DSHELL_HOME_ENV`: moving dsh's home takes sessions and
- * settings with it, and a reader who only wants dshell's files on another disk
- * has to be able to say so.
+ * (which the host half exports under `DSHELL_HOME` before anything here asks),
+ * then the harness's home, then `~/.dsh`. The first is not an alias for the
+ * second: moving dsh's home takes sessions and settings with it, and a reader
+ * who only wants dshell's files on another disk has to be able to say so.
+ *
+ * dshell's half of the precedence is read and blank-checked in
+ * {@link dshellDataRoot}; everything after it — the harness's own variable, the
+ * home fallback, tilde expansion, normalization — is the harness's
+ * `resolveDshHome`. `workspace/src/purge.ts` imports this function rather than
+ * re-deriving the root, so the resolution rule has one owner;
+ * `tests/harness-home.spec.ts` pins the precedence it implements.
  */
 export function harnessHome(): string {
-  return process.env[DSHELL_HOME_ENV] ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
+  return resolveDshHome(dshellDataRoot())
+}
+
+/**
+ * dshell's own data root from the environment the mode package exports, blank
+ * treated as unset.
+ *
+ * The blank check cannot be left to `resolveDshHome`: its unset guard covers
+ * only the harness's own `$DSH_HOME` lookup, and an explicit empty string is
+ * trusted as a `configured` override, which would resolve the root to the
+ * process's working directory and make every path built under it relative.
+ * This package's own registry and the workspace package's purge both build
+ * paths under the result, so the guard is theirs to share.
+ *
+ * It cannot live in the standard layer instead: that layer is bundled into the
+ * client and carries no `node` types by design, and `process.env` needs both.
+ */
+export function dshellDataRoot(): string | undefined {
+  const configured = process.env[DSHELL_HOME_ENV]
+  return configured !== undefined && configured.trim().length > 0 ? configured : undefined
 }
 
 /** Device directory: registry, secrets, askpass helper, bindings, control sockets. */

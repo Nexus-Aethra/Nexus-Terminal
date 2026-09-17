@@ -87,6 +87,40 @@ if [[ ${#LINK_ARGS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+# Prune first: a `link:` whose target has no manifest is residue.
+#
+# dsh drops packages between releases, and a dropped package leaves its
+# `link:` spec behind — the directory keeps only its gitignored `lib/` and
+# `node_modules/`, so a ref change does not remove it and `git status` still
+# reports a clean tree. Left alone, the profile keeps pointing at a
+# pre-release build, and this script (which only ever adds) would never
+# notice: the package is no longer in the web-app closure, so the walk above
+# simply skips it. Anything still referenced by a row fails at boot long
+# before this runs, so absence of a manifest is the safe test.
+echo "Pruning dead link: specs from profile '$PROFILE'..."
+DEAD=()
+while IFS= read -r name; do
+  [[ -n "$name" ]] && DEAD+=("$name")
+done < <(node -e '
+  const fs = require("fs"), path = require("path");
+  const [manifestPath, profileDir] = process.argv.slice(1);
+  const m = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const all = { ...(m.dependencies || {}), ...(m.devDependencies || {}) };
+  for (const [name, spec] of Object.entries(all)) {
+    if (!name.startsWith("@deepseek-ai/")) continue;
+    if (!String(spec).startsWith("link:")) continue;
+    const target = path.resolve(profileDir, String(spec).slice("link:".length));
+    if (!fs.existsSync(path.join(target, "package.json"))) console.log(name);
+  }
+' "$PROFILE_DIR/package.json" "$PROFILE_DIR")
+
+if [[ ${#DEAD[@]} -gt 0 ]]; then
+  for name in "${DEAD[@]}"; do echo "  - $name"; done
+  ( cd "$PROFILE_DIR" && pnpm remove -w "${DEAD[@]}" 2>&1 | tail -4 )
+else
+  echo "  (none)"
+fi
+
 echo "Linking ${#LINK_ARGS[@]} dsh packages into profile '$PROFILE'..."
 ( cd "$PROFILE_DIR" && pnpm add -w "${LINK_ARGS[@]}" 2>&1 | tail -8 )
 

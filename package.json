@@ -57,6 +57,7 @@
       "@deepseek-ai/dsh-fs": "link:./dsh/packages/fs/fs",
       "@deepseek-ai/dsh-fs-local": "link:./dsh/packages/fs/fs-local",
       "@deepseek-ai/dsh-fs-sandbox": "link:./dsh/packages/fs/fs-sandbox",
+      "@deepseek-ai/dsh-home-paths": "link:./dsh/packages/util/home-paths",
       "@deepseek-ai/dsh-host-webserver": "link:./dsh/packages/host/webserver",
       "@deepseek-ai/dsh-llm": "link:./dsh/packages/llm/llm",
       "@deepseek-ai/dsh-sandbox": "link:./dsh/packages/sandbox/sandbox",

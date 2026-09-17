@@ -31,8 +31,9 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 // detach a session's pipes.
 import type {} from '@nexus-aethra/dshell-buffer'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { harnessHome } from '@nexus-aethra/dshell-ssh'
 import { createSessionsRoute } from './route.js'
-import { dshHome, drainPendingPurges } from './purge.js'
+import { drainPendingPurges } from './purge.js'
 import { SessionTagStore } from './tags.js'
 
 export const name = '@nexus-aethra/dshell-workspace'
@@ -96,7 +97,7 @@ export function apply(ctx: Context): void {
       // default deployment stays quiet (dshell-mode reports the choice).
       console.info(`dshell-workspace: session tags are read from ${plan.root}`)
     }
-    const tags = new SessionTagStore(() => join(dshHome(), 'dshell', 'tags.json'))
+    const tags = new SessionTagStore(() => join(harnessHome(), 'dshell', 'tags.json'))
     // Load-time drain: purges scheduled while their sessions were loaded. This
     // runs during composition, before a client can resume anything, which is
     // the only window where those log writers are guaranteed gone.
