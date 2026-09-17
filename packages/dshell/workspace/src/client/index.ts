@@ -1,22 +1,25 @@
 /**
  * dshell-workspace browser face — design decision 4.7.
  *
- * Provides the same-key stand-ins that let the stock web-app rows
- * `workspace-controller` and `ui-workspace` be disabled:
+ * Provides the same-key stand-ins that let the stock web-app rows `workspace`
+ * and `ui-workspace` be disabled:
  *
- * - `workspaces`: an IWorkspaces whose snapshot is a permanent empty
- *   'pending' list. ConversationRoot's chip-title resolution then falls
- *   through to the session cwd label (its step-4 branch), so the composer
- *   stays live without any workspace; no consumer ever sees a workspace row.
  * - `uiWorkspace`: startSession/connectWorkspace create sessions by cwd
  *   (`sessions.create({ cwd })`, never workspaceId), and boot navigation
  *   opens the most recent ordinary session instead of the most recent
  *   workspace's.
  * - the root `workspaces` standard hook that ConversationRoot requires.
  * - the `sidebar.workspaces` slot: a flat session list replaces the
- *   workspace-grouped browser, keeping multi-session navigation intact. Its
- *   archive group and destructive delete ride the package's own
- *   `/api/dshell/sessions` route (session-list.tsx / archive.ts).
+ *   workspace-grouped browser, keeping multi-session navigation intact.
+ *
+ * The `workspaces` service itself is NOT provided here any more. It was a
+ * stand-in with a permanently empty snapshot; upstream's `workspace-controller`
+ * owns that key, and this profile now ENABLES that row, so the archive half of
+ * the service is upstream's — the sidebar reads the archive set from its
+ * snapshot, archiving goes through its command, and the stock archived-session
+ * settings page is the restore surface. Claiming the key here as well is what
+ * used to take the whole client down: two providers for one service is a
+ * cordis error, and it surfaced only as "Failed to load plugins".
  *
  * React reaches the component through the shell's frozen module table
  * (PLATFORM_MODULES), which is why 'react' is an external in the dshell
@@ -32,13 +35,9 @@ import type { DirectoryListing } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Session Controller service merges.
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
-import type {
-  IWorkspaces,
-  WorkspaceId,
-  WorkspaceSnapshot,
-  WorkspaceSource,
-  WorkspaceView,
-} from '@deepseek-ai/dsh-api-workspace-controller/client'
+// Type-only: pulls the `workspaces` service merge and its snapshot shape. The
+// service is upstream's; this package only reads it.
+import type { IWorkspaces, WorkspaceId, WorkspaceSource } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { UiWorkspace } from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Type-only: pulls ui-sidebar's SlotMap merge ('sidebar.workspaces' hole).
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
@@ -49,7 +48,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 // Type-only: pulls the `dshellBuffer` service merge the pipe entry toggles.
 import type {} from '@nexus-aethra/dshell-buffer/client'
 import type { SshSnapshot } from '@nexus-aethra/dshell-ssh/client'
-import { SessionPanelClient } from './archive.js'
+import { SessionPanelClient } from './panel.js'
 import { newSessionDialog } from './dialog-store.js'
 import { en, zh } from './locales.js'
 import { activeRows, directoryName, presetChoices, type PresetChoice, type SessionRow } from './rows.js'
@@ -57,73 +56,18 @@ import { FlatSessionList, type DeviceSeat, type FlatSessionListProps } from './s
 
 export const name = '@nexus-aethra/dshell-workspace/client'
 
-export const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.agentPresets'] as const
+export const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.agentPresets', 'workspaces'] as const
 
 /** This package's copy namespace. */
 const NS = 'dshellWorkspace'
-
-/** The permanent projection of a shell without workspaces. */
-const EMPTY_WORKSPACES: WorkspaceSnapshot = {
-  items: [],
-  archivedSessionIds: [],
-  state: 'idle',
-  phase: 'pending',
-  error: null,
-}
-
-/** `workspaces` stand-in: observable empty state, every mutation rejects. */
-class DshellWorkspaces extends Service implements IWorkspaces {
-  readonly list: WorkspaceSource = {
-    getSnapshot: () => EMPTY_WORKSPACES,
-    subscribe: () => () => {},
-  }
-
-  constructor(ctx: Context, private readonly panel: SessionPanelClient) {
-    super(ctx, 'workspaces')
-  }
-
-  async create(): Promise<WorkspaceView> {
-    throw new Error('dshell: workspace management is removed (dshell design 4.7)')
-  }
-
-  async rename(): Promise<WorkspaceView> {
-    throw new Error('dshell: workspace management is removed (dshell design 4.7)')
-  }
-
-  async delete(): Promise<void> {
-    throw new Error('dshell: workspace management is removed (dshell design 4.7)')
-  }
-
-  async insertBefore(): Promise<void> {
-    throw new Error('dshell: workspace management is removed (dshell design 4.7)')
-  }
-
-  /** The stock client archive entry, pointed at dshell's own tag store. */
-  async archiveSession(sessionId: SessionId): Promise<void> {
-    await this.panel.archive(String(sessionId))
-  }
-
-  /**
-   * The stock client unarchive entry, added to `IWorkspaces` in 0.1.6 and
-   * pointed at the same tag store. The stock `unarchive-sessions` settings row
-   * reaches this through `uiWorkspace`, so leaving it out breaks the build as
-   * well as the affordance.
-   */
-  async unarchiveSession(sessionId: SessionId): Promise<void> {
-    await this.panel.unarchive(String(sessionId))
-  }
-
-  async insertSessionBefore(): Promise<WorkspaceView> {
-    throw new Error('dshell: workspace management is removed (dshell design 4.7)')
-  }
-}
 
 /** `uiWorkspace` stand-in: cwd-based session flows and boot navigation. */
 class DshellUiWorkspace extends Service implements UiWorkspace {
   constructor(
     ctx: Context,
     private readonly sessions: ISessions,
-    private readonly panel: SessionPanelClient,
+    /** Upstream's workspace service: the archive set and its two commands. */
+    private readonly workspaces: IWorkspaces,
     /** This package's copy, read at call time so a language switch is picked up. */
     private readonly t: TranslateNS<'dshellWorkspace'>,
   ) {
@@ -166,14 +110,22 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
     newSessionDialog.set(true)
   }
 
-  /** The stock archive entry, pointed at dshell's own tag store. */
+  /**
+   * The stock archive entry, on upstream's command. The sidebar's 归档 button
+   * is the only writer dshell adds: it goes through the same service the stock
+   * archived-session settings page reads, which is what keeps the two in step.
+   */
   async archiveSession(sessionId: SessionId): Promise<void> {
-    await this.panel.archive(String(sessionId))
+    await this.workspaces.archiveSession(sessionId)
   }
 
-  /** Its 0.1.6 counterpart; see `DshellWorkspaces.unarchiveSession`. */
+  /**
+   * The stock restore entry, on the same command. The settings page reaches
+   * this through `uiWorkspace`; the sidebar's 待删除 cancel reaches it too,
+   * because restoring is what cancels a scheduled purge.
+   */
   async unarchiveSession(sessionId: SessionId): Promise<void> {
-    await this.panel.unarchive(String(sessionId))
+    await this.workspaces.unarchiveSession(sessionId)
   }
 
   async pickDirectory(): Promise<string | null> {
@@ -193,7 +145,12 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
    * they are not what "the last session I used" means to the reader.
    */
   private visibleRows(): SessionRow[] {
-    return activeRows(this.sessions.list.getSnapshot(), this.panel.getSnapshot().archived)
+    return activeRows(this.sessions.list.getSnapshot(), this.archivedIds())
+  }
+
+  /** The archive set as the workspace registry last reported it. */
+  private archivedIds(): readonly string[] {
+    return this.workspaces.list.getSnapshot().archivedSessionIds.map(String)
   }
 
   /** The cwd a new session lands in: the requested one, else the most recent session's. */
@@ -274,13 +231,14 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
       const state = this.sessions.list.getSnapshot()
       if (state.phase !== 'ready') return
       // The archive set decides which sessions are on stage; opening the most
-      // recent one before it arrives would resurrect an archived session.
-      if (!this.panel.getSnapshot().loaded) return
+      // recent one before it arrives would resurrect an archived session. The
+      // registry reports 'ready' once its first baseline is in.
+      if (this.workspaces.list.getSnapshot().phase !== 'ready') return
       armed = false
-      const archived = this.panel.getSnapshot().archived
+      const archived = this.archivedIds()
       // dsh restores the last selection from browser storage, so a reload can
       // land on a session that has since been archived — an archived session
-      // belongs to the collapsed group, not to the main area.
+      // belongs to the settings page's list, not to the main area.
       const current = state.current
       if (current !== undefined && !archived.includes(String(current))) return
       const latest = activeRows(state, archived).at(0)
@@ -288,21 +246,23 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
       else if (current !== undefined) this.sessions.clear()
     }
     const dispose = this.sessions.list.subscribe(reconcile)
-    // The boot target depends on the archive set, so the tag load is a trigger
-    // too: whichever of the two facts arrives last decides.
-    const disposePanel = this.panel.subscribe(reconcile)
+    // The boot target depends on the archive set, so the registry's stream is a
+    // trigger too: whichever of the two facts arrives last decides.
+    const disposeArchive = this.workspaces.list.subscribe(reconcile)
     reconcile()
     return () => {
       armed = false
       dispose()
-      disposePanel()
+      disposeArchive()
     }
   }
 }
 
 /**
- * Mount the workspace removal: stub services, the root hook, and the flat
- * session list. Nothing from the stock workspace UI survives.
+ * Mount the workspace removal: the `uiWorkspace` stand-in, the root hook, and
+ * the flat session list. Nothing from the stock workspace UI survives, but the
+ * stock `workspaces` service does — it is upstream's, and the archive set rides
+ * on it.
  * @param ctx - client root context.
  */
 export function apply(ctx: Context): void {
@@ -335,8 +295,17 @@ export function apply(ctx: Context): void {
       isMountPath: (path) => ssh.isMountPath(path),
     }
   })
-  const workspaces = new DshellWorkspaces(ctx, panel)
-  const uiWorkspace = new DshellUiWorkspace(ctx, sessions, panel, t)
+  const workspaces = ctx.workspaces
+  // `useSyncExternalStore` takes the two methods DETACHED from their source, so
+  // they must not touch `this`. Upstream's model implements them as ordinary
+  // class methods (dshell's own panel client uses bound arrows), so the
+  // sidebar gets an adapter rather than the model itself — passing it directly
+  // throws inside React's render and leaves the list blank.
+  const archiveSource: WorkspaceSource = {
+    getSnapshot: () => workspaces.list.getSnapshot(),
+    subscribe: listener => workspaces.list.subscribe(listener),
+  }
+  const uiWorkspace = new DshellUiWorkspace(ctx, sessions, workspaces, t)
   void panel.load()
 
   // The cross-session pipe entry, filled by injection like the device seat:
@@ -347,8 +316,9 @@ export function apply(ctx: Context): void {
     pipe = { toggle: () => { bufferCtx.dshellBuffer.toggle() } }
   })
 
-  // ConversationRoot resolves its chip via the global useWorkspaces hook;
-  // the empty 'pending' snapshot routes it to the cwd-label branch.
+  // ConversationRoot resolves its chip via the global useWorkspaces hook. The
+  // registry's own snapshot is what it reads: with no workspaces registered the
+  // list is empty, which routes the chip to its cwd-label branch.
   ctx.slots.provideRoot({ hooks: { workspaces: workspaces.list } })
 
   // dshell is terminal-first: the blank-session hero banner ("探索未至之境")
@@ -451,6 +421,9 @@ export function apply(ctx: Context): void {
       inject: (): FlatSessionListProps => ({
         sessions: sessions.list,
         panel,
+        workspaces: archiveSource,
+        archiveSession: (sessionId) => workspaces.archiveSession(sessionId as SessionId),
+        unarchiveSession: (sessionId) => workspaces.unarchiveSession(sessionId as SessionId),
         device: deviceSeat,
         pipe,
         refresh: () => sessions.refresh(),

@@ -3,10 +3,15 @@
  * existing trust and authentication fence (the physical carrier rejects an
  * unauthenticated or cross-site request before this handler runs).
  *
- * Every response echoes the archive set, so the sidebar's snapshot stays
- * current with one round trip; business refusals travel as `error` on a 200
- * rather than as an HTTP failure — "this session is still running" is an
- * answer, not a transport fault. Only a missing or malformed request is a 4xx.
+ * This route carries ONLY what is dshell's own about a session's life: the
+ * delete flow, and the ids a deferred delete is still waiting on. The archive
+ * set is not here — it belongs to the workspace registry, so the stock
+ * `workspace-controller` serves it to the sidebar and to the archived-session
+ * settings page over one path (see ../index.ts).
+ *
+ * Business refusals travel as `error` on a 200 rather than as an HTTP failure —
+ * "this session is still running" is an answer, not a transport fault. Only a
+ * missing or malformed request is a 4xx.
  *
  * The delete branch has three outcomes because dsh owns the session
  * lifecycle: a running session is refused outright, a loaded-but-idle one is
@@ -32,7 +37,7 @@ export interface SessionPanelDeps {
    * it. See `host-locales.ts`.
    */
   readonly t: (key: DshellWorkspaceHostKey, params?: HostCopyParams) => string
-  /** The durable archive tag set. */
+  /** The durable archive tag set, whose scheduled-purge half this route owns. */
   readonly tags: SessionTagStore
   /** Whether a session is still loaded in this harness process. */
   readonly live: (sessionId: string) => boolean
@@ -52,12 +57,6 @@ export interface SessionPanelDeps {
    * composition without dshell-buffer simply has nothing to detach.
    */
   readonly detach: ((sessionId: string) => Promise<void>) | undefined
-  /**
-   * Undo {@link detach} when a scheduled deletion is cancelled: the session
-   * stays in dsh's list and its log is intact, so the pipe UI must offer it
-   * again. Optional for the same reason as `detach`.
-   */
-  readonly restore: ((sessionId: string) => void) | undefined
 }
 
 /** JSON response in the shape the sidebar parses. */
@@ -71,19 +70,17 @@ function respond(body: SessionResponse, status = 200): Response {
 /** Bind the route to its owning plugin's tag store and session view. */
 export function createSessionsRoute(deps: SessionPanelDeps): ConnectionFetchRoute {
   /**
-   * The archive set plus its scheduled qualifier: every response's payload.
+   * The scheduled-purge set: every response's payload, so one round trip
+   * leaves the sidebar's 待删除 group current.
    *
-   * The two reads are separate awaits, so a concurrent `markPending` can land
-   * between them and report a pending id the archive half does not carry. The
-   * sidebar's row split cannot represent that pair — the session would appear
-   * in the active list and in `待删除` at once — so the response repairs the
-   * `pendingPurge ⊆ archived` invariant the client relies on.
+   * This is the QUALIFIER half of the archive set, not the archive set itself.
+   * A pending id is always archived too, but the sidebar learns the archive
+   * half from the workspace registry's snapshot, so the two do not need
+   * repairing against each other here.
    */
-  const state = async (): Promise<Pick<SessionResponse, 'archived' | 'pendingPurge'>> => {
-    const archived = await deps.tags.list()
-    const pendingPurge = (await deps.tags.pendingPurge()).filter(id => archived.includes(id))
-    return { archived, pendingPurge }
-  }
+  const state = async (): Promise<SessionResponse> => ({
+    pendingPurge: [...await deps.tags.pendingPurge()],
+  })
 
   const handle = async (request: Request): Promise<SessionResponse> => {
     const input = request.method === 'GET'
@@ -91,15 +88,6 @@ export function createSessionsRoute(deps: SessionPanelDeps): ConnectionFetchRout
       : await request.json() as SessionRequest
     switch (input.action) {
       case 'list':
-        return await state()
-      case 'archive':
-        await deps.tags.archive(input.sessionId)
-        return await state()
-      case 'unarchive':
-        await deps.tags.unarchive(input.sessionId)
-        // Cancelling a scheduled deletion also un-hides the session in the pipe
-        // UI: dsh still lists it and the log survives, so it is live again.
-        deps.restore?.(input.sessionId)
         return await state()
       case 'delete': {
         const { sessionId } = input

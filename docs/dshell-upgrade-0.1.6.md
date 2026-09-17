@@ -129,11 +129,13 @@ argument.
   `workflow-ptc`, `code-runtime` removed; new `image-offload`, `mcp-resources`,
   `ptc-runtime`, `terminal-controller`, `ui-sidebar-terminal`,
   `ui-settings-unarchive-sessions`). Every id our patch targets
-  (`fs-sandbox`, `workspace`, `workspace-controller`, `directory-picker`,
+  (`fs-sandbox`, `workspace`, `directory-picker`,
   `ui-workspace`, `ui-chat`, `ui-jobs`, `client-hmr` in
   `packages/dshell/bundle/cordis.patch.yml`) survived, and an unmatched id only
   warns (`vendor/include/src/index.ts`), which is the failure mode to test for
-  rather than discover.
+  rather than discover. `workspace-controller` was on that list and has since
+  been RE-ENABLED on purpose — it is what serves the archive set (Phase 10.43),
+  so the patch no longer targets it.
 - **`fs-local` path display changed**: a new `localDisplayPath` preserves the
   physical spelling for `..`-containing paths, and parent traversal across a
   missing directory now throws `FS_NOT_FOUND`. dshell extends this stack

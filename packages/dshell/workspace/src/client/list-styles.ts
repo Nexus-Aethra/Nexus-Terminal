@@ -119,7 +119,8 @@ export const groupNoteStyle: CSSProperties = {
   fontSize: 11,
   opacity: 0.6,
 }
-export const archivedRowStyle: CSSProperties = {
+/** A session that has left the active list but is still on its way out. */
+export const mutedRowStyle: CSSProperties = {
   ...rowStyle,
   opacity: 0.6,
 }

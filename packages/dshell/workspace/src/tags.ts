@@ -42,6 +42,24 @@ export class SessionTagStore {
    */
   constructor(private readonly path: () => string) {}
 
+  /**
+   * Load the document. Called once during composition rather than lazily,
+   * because {@link archivedIds} is synchronous: the workspace registry serves
+   * the archive set through a getter, and dsh reads it while the workspace
+   * controller activates. Idempotent.
+   */
+  async load(): Promise<void> {
+    await this.ensure()
+  }
+
+  /**
+   * The archive set as last loaded or written. Valid from {@link load} on;
+   * every mutation below keeps it current, so a reader never needs to await.
+   */
+  archivedIds(): readonly string[] {
+    return this.archived
+  }
+
   /** The archived session ids, in archive order. */
   async list(): Promise<readonly string[]> {
     await this.ensure()

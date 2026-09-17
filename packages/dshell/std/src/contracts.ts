@@ -738,31 +738,32 @@ export interface SshResponse {
   readonly error?: string | undefined
 }
 
-// ─── workspace — the session archive routes ───
+// ─── workspace — the session delete route ───
 // moved from packages/dshell/workspace/src/protocol.ts
 
 /**
  * dshell session-panel wire — design 4.7 follow-up.
  *
- * The sidebar's session rows carry an archive tag and a history purge. Their
- * standing in dsh has split since this was written:
+ * This route carries ONE dshell-only concern now: the history purge. Its
+ * companion, the archive tag, has moved to upstream and left this contract:
  *
- * - The **archive tag is no longer dshell-only.** dsh 0.1.6 ships one:
- *   `workspaceRegistry.archiveSession` / `unarchiveSession` persist
- *   `archivedSessionIds` in the workspace state, `workspace-controller`
- *   exposes both as remote commands and pushes a `{ type: 'archived' }`
- *   increment, and `ui-workspace` and `ui-settings-unarchive-sessions`
- *   surface them. Read the upstream set, do not re-declare it.
+ * - The **archive set is upstream's.** `workspaceRegistry.archiveSession` /
+ *   `unarchiveSession` own it, the stock `workspace-controller` row (enabled in
+ *   this profile) exposes both as remote commands and pushes a
+ *   `{ type: 'archived' }` increment, and `ui-settings-unarchive-sessions` —
+ *   the settings page this profile renders — is its restore surface. dshell
+ *   supplies the registry's storage half and nothing else; there is no dshell
+ *   archive UI and no dshell archive route. See packages/dshell/workspace/
+ *   src/index.ts.
  * - The **history purge still has no upstream.** `SessionPersistence` is
  *   append-only — create/open/stat/list and no delete — `session-controller`
  *   has no delete command, and the jsonl lease documents "Release never
  *   removes". `api-session/removed` is a `session/disposed` relay that
  *   upstream's own client turns into a snapshot flag, deleting nothing.
  *
- * Both halves still travel over dshell's own exact route on the shared `/api`
- * channel rather than through the Typert Remote table (whose client artifacts
- * are generated from dsh's own packages); the archive actions are the
- * migration target once the flat list reads the upstream set.
+ * The purge travels over dshell's own exact route on the shared `/api` channel
+ * rather than through the Typert Remote table (whose client artifacts are
+ * generated from dsh's own packages).
  *
  * The path sits below the shared channel exactly like file-upload's: the
  * physical carrier applies dsh's trust and authentication policy before the
@@ -778,22 +779,24 @@ export const DSHELL_SESSIONS_PATH = '/api/dshell/sessions'
 /** One request body the route accepts; `list` is also the GET shape. */
 export type SessionRequest =
   | { readonly action: 'list' }
-  | { readonly action: 'archive'; readonly sessionId: string }
-  | { readonly action: 'unarchive'; readonly sessionId: string }
   | { readonly action: 'delete'; readonly sessionId: string }
 
 /**
- * One response body. `archived` rides on every response — the tag set after
- * the request, so one round trip leaves the caller's snapshot current.
+ * One response body. `pendingPurge` rides on every response — the scheduled
+ * set after the request, so one round trip leaves the caller's snapshot
+ * current.
+ *
+ * It is only the QUALIFIER half of the archive set: a pending id is always
+ * archived too, but the archive half is not dshell's to report any more (see
+ * above), and the sidebar reads it from the workspace registry's snapshot.
  * `error` is a refusal the sidebar shows verbatim; it is not a transport
  * failure, so the response still carries a 2xx status.
  */
 export interface SessionResponse {
-  readonly archived: readonly string[]
   /**
    * Archived ids whose log is scheduled for removal at the next start (the
    * session was still loaded in this process, so its writer would have
-   * recreated the directory). Always a subset of `archived`.
+   * recreated the directory).
    */
   readonly pendingPurge?: readonly string[]
   readonly error?: string

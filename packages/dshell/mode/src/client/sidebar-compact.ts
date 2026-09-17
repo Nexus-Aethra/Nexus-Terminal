@@ -14,11 +14,11 @@
  * dictionary, so an English switch changed `会话 (6)`/`已归档` into
  * `Sessions (6)`/`Archived` and the old matcher stopped firing. It instead
  * anchors on the stable `data-dshell-row` attributes dshell-workspace already
- * emits for the group headers (`archive-header`, `pending-header`; the latter
- * was never covered by the old text list, so `待删除` showed in the rail) and,
- * for the main `Sessions (N)` header — which carries no attribute — on the
- * list's structural shape: it is the plain sibling immediately above the
- * element that holds the `data-dshell-row` rows.
+ * emits for a group header (`pending-header`; it was never covered by the old
+ * text list, so `待删除` showed in the rail) and, for the main `Sessions (N)`
+ * header — which carries no attribute — on the list's structural shape: it is
+ * the plain sibling immediately above the element that holds the
+ * `data-dshell-row` rows.
  */
 
 const STYLE_ID = 'dshell-sidebar-compact-css'
@@ -33,22 +33,22 @@ const LABEL_ATTR = 'data-dshell-rail-label'
 /** The row marker dshell-workspace puts on every session-list row/header. */
 const ROW_ATTR = 'data-dshell-row'
 
-/** The row markers of the two section headers. Locale-independent by construction. */
-const GROUP_HEADER_ROWS = ['archive-header', 'pending-header'] as const
+/** The row marker of the section header. Locale-independent by construction. */
+const GROUP_HEADER_ROWS = ['pending-header'] as const
 
 /**
  * The element that directly holds the `data-dshell-row` rows.
  *
- * The session rows are direct children of it; the archive/pending group
- * headers are one level deeper (inside their own group wrapper). Any of the
- * three is enough to recover the same container, so the walk still works when
- * a group is empty or every session has been archived.
+ * The session rows and the empty-list placeholder are direct children of it;
+ * the `待删除` group header is one level deeper, inside its own wrapper. Any of
+ * the three is enough to recover the same container, so the walk works whether
+ * the list is full, empty, or showing only scheduled removals.
  */
 function rowsContainer(root: ParentNode): Element | null {
   const session = root.querySelector(`[${ROW_ATTR}="session"]`)
   if (session !== null) return session.parentElement
-  const archive = root.querySelector(`[${ROW_ATTR}="archive-header"]`)
-  if (archive !== null) return archive.parentElement?.parentElement ?? null
+  const empty = root.querySelector(`[${ROW_ATTR}="empty"]`)
+  if (empty !== null) return empty.parentElement
   const pending = root.querySelector(`[${ROW_ATTR}="pending-header"]`)
   return pending?.parentElement?.parentElement ?? null
 }

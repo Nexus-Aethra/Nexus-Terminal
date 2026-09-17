@@ -73,11 +73,42 @@
 
 # ── workspace removal (design 4.7) ────────────────────────────────────
 # dshell has no use for dsh's directory-workspace grouping: a terminal's
-# workspace is its current directory. The four stock web-app rows are
-# disabled here and dshell-workspace provides same-key stand-ins
-# (host `workspaceRegistry`, client `workspaces` + `uiWorkspace` + root
-# hook) so session-controller and ui-conversation/ui-sidebar still resolve.
-# Sessions are created by cwd instead; see docs/dshell-design.md § 4.7.
+# workspace is its current directory. Two of the four stock web-app rows are
+# disabled here — `workspace` (the registry) and `ui-workspace` (the grouped
+# browser) — and dshell-workspace provides same-key stand-ins (host
+# `workspaceRegistry`, client `uiWorkspace` + root hook) so session-controller
+# and ui-conversation/ui-sidebar still resolve. Sessions are created by cwd
+# instead; see docs/dshell-design.md § 4.7.
+#
+# `workspace-controller` is ENABLED. It is the row that turns
+# `workspaceRegistry.archiveSession` / `unarchiveSession` into the remote
+# commands the client's `workspaces` service is written against, and it is what
+# makes dsh's own `ui-settings-unarchive-sessions` page — which this profile
+# renders — show and restore a real set. dshell therefore keeps no archive UI of
+# its own: the sidebar's 归档 button is the only writer, and the settings page
+# is the reader and the restore surface.
+#
+# This row used to take the whole client down ("Failed to load plugins"), and
+# the cause was OURS, not upstream's: dshell-workspace registered a
+# `workspaces` stand-in, and `WorkspaceController` does `super(ctx, 'workspaces')`
+# — two providers for one service key is a cordis error, and it surfaced only
+# as a failed fiber. The stand-in is gone (see
+# packages/dshell/workspace/src/client/index.ts); the registry's archive half is
+# real now, so nothing needs standing in for. An earlier suspicion — that the
+# row's manifest inject (`['@deepseek-ai/dsh-api-gateway',
+# '@deepseek-ai/dsh-client-connection']`) disagreed with its code inject
+# (`['remote', 'remote.workspace']`) — was wrong: that split is stock
+# throughout and `terminal-controller` has it too.
+#
+# The registry stand-in serves only the ARCHIVE half for real. Its workspace
+# half stays the honest projection of a shell without workspaces, which is also
+# why upstream's `WorkspaceRegistry` is not hosted here: its one-time
+# `bootstrap()` groups stored session headers by cwd and would rebuild exactly
+# the accounting design 4.7 removed — on a fresh profile, where nothing has
+# seeded the initialized marker. dshell sessions belong to no workspace, and
+# upstream's archive set does not require them to: `archiveSession` checks that
+# a session EXISTS, never that it is accounted for.
+#
 # The filesystem provider is dshell's own. `ctx.fs` has exactly one provider,
 # and dshell's takes the stock backend's place (extending it) so a session
 # bound to a device has its file operations — read, write, edit, list — run on
@@ -87,8 +118,6 @@
   disabled: true
 
 - id: workspace
-  disabled: true
-- id: workspace-controller
   disabled: true
 - id: directory-picker
   disabled: true
