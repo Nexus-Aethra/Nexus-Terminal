@@ -39,6 +39,7 @@
     "@nexus-aethra/dshell-commands": "workspace:^",
     "@nexus-aethra/dshell-conversation": "workspace:^",
     "@nexus-aethra/dshell-files": "workspace:^",
+    "@nexus-aethra/dshell-host-tools": "workspace:^",
     "@nexus-aethra/dshell-mode": "workspace:^",
     "@nexus-aethra/dshell-ssh": "workspace:^",
     "@nexus-aethra/dshell-std": "workspace:^",

@@ -51,7 +51,7 @@ Everything the user sees in dshell is either an existing dsh event projected
 through a registered target or a PTY byte stream surfaced through a ws
 upgrade route owned by `dshell-terminal-bridge`.
 
-## 4. Seven decisions
+## 4. Eleven decisions
 
 ### 4.1 Session isolation
 
@@ -347,6 +347,50 @@ The model-facing tool is `dshell_get_agent_terminal`; it returns the id
 of this shell, and only after the init handshake settled, because the
 agent's next act is a send and the backend rejects one that overlaps
 another.
+
+### 4.11 Host capabilities belong to local sessions
+
+Two dsh capabilities act on the machine the harness runs on rather than
+on the session: the browser (its engine is a process there) and the
+computer-use provider (it drives that desktop). Both arrive as
+registries with providers behind them, and dsh's stock rows hand them to
+every session. A device session is the case that breaks: its shell,
+files and working directory are the device's, so a browser or a desktop
+reaching back across that boundary is the opposite of what the session
+exists for.
+
+`dshell-host-tools` fills the browser registry's exclusive slot with
+dshell's own provider, and its rule is about the session, not the
+deployment:
+
+- **A local session gets the browser.** The provider drives the same
+  pinned Playwright MCP server the stock row does, with two differences:
+  the engine's output — page snapshots, console logs — is redirected
+  under dshell's data root (`$DSH_HOME/dshell/browser`) instead of the
+  session's working directory, where the stock provider leaves a
+  `.playwright-mcp/` directory behind; and a browser that cannot start is
+  logged rather than raised, because dsh rejects agent creation when an
+  `agent/created` listener rejects, so an upstream failure there costs
+  the SESSION and not the browser.
+- **A device session gets none.** The browser tools are mounted into the
+  agent's own scope, and a scope cannot mask its own registrations, so a
+  deny list cannot take them away again. Not mounting is the only way.
+- **The desktop tools are denied instead.** The computer-use provider
+  registers its catalog globally, which is exactly what `tools.restrict()`
+  is for: a device session gets a deny list naming the tools that exist
+  at that moment, plus a re-run on `tools/change` for a catalog that
+  finished discovering after the session was created. The restriction
+  goes through a scope minted with `createScope`, never `agent.ctx`: only
+  a context that injects `tools` may register one.
+
+Whether a session is local is asked twice, and the second question is not
+redundant. A session bound to a device is answered by the SSH router by
+session identity. A session that is *mid-bind* — the dialog creates it
+with the mount as its cwd and records the assignment one round trip later
+— looks local at `agent/created`, so a cwd under the mount base is read
+as a device session too. That is the router's own rule for the visible
+terminal, and it is the safe direction: a mount is an empty local
+stand-in, so "local" would be a wrong answer that stays wrong.
 
 ## 5. Wire protocol
 

@@ -4350,3 +4350,122 @@ is a stale read.
   it; cancelling there restores it in place.
 - Boot is clean — no `did not activate` warning, no `Failed to load
   plugins`; `pnpm build`, `pnpm typecheck`, `pnpm test` (275) all green.
+## Phase 10.44 — host capabilities belong to local sessions
+
+dsh 0.1.6 ships browser use and computer use as two registries with
+providers behind them, and the stock rows hand both to every session.
+That is wrong here for one reason, and the reason is the session's own
+shape: dshell's device sessions run their shell, files and cwd on a
+remote machine through `ssh`, so a browser or a desktop that lives on
+THIS machine is the wrong side of the boundary the session exists to
+cross. "Browser tools" in a device session would silently be operating
+the local machine.
+
+The user's rule for this round was: local sessions get them, a remote
+session tries and turns off if it does not work. That rule cannot be
+implemented inside upstream's runtime, and the two capabilities cannot
+even be gated the same way:
+
+- The browser is mounted PER AGENT into the agent's own scope
+  (`McpClient` in the provider's `agent/created` listener). A scope
+  cannot mask its own registrations — `tools.restrict()` filters what a
+  scope INHERITS, not what it owns — so a deny list cannot take the
+  browser away again. Not mounting is the only way to say no.
+- The desktop is the opposite: the native provider discovers its catalog
+  once and registers it GLOBALLY, so every session sees it and
+  `tools.restrict({ deny })` is exactly the mechanism for taking it away
+  from one.
+
+### The provider — `packages/dshell/host-tools`
+
+A new host package fills `ctx.browserUse` with dshell's own provider
+(the stock Playwright row is disabled, since the slot admits one). It
+mounts the same pinned `@playwright/mcp` per live local agent and differs
+from upstream's in three ways:
+
+- **locality is part of the decision.** `runsOnThisMachine(agent, bound,
+  isMount)` asks the SSH router by session id, then asks whether the
+  session's cwd is under the mount base. The second question is not
+  redundant: the new-session dialog creates the session with the mount as
+  its cwd and records the device assignment one round trip LATER, so at
+  `agent/created` a brand-new device session looks exactly like a local
+  one. The router resolves the same race the same way for the visible
+  terminal. Refusing early is also the safe direction — a mount is an
+  empty local stand-in, so "local" would be a wrong answer that stays
+  wrong.
+- **the engine's output goes to dshell's data root**
+  (`$DSH_HOME/dshell/browser`), not the session's working directory, which
+  is where the stock provider leaves a `.playwright-mcp/` directory.
+- **failure is contained.** dsh rejects agent creation when a serial
+  `agent/created` listener rejects, and upstream's provider awaits MCP
+  startup inside that listener — so a broken install there costs the
+  SESSION, not the browser. Here the mount is wrapped: a browser that
+  cannot start is logged and that session simply has no browser tools.
+
+For a device session the package mounts nothing and instead denies the
+currently registered `cua_driver_native__*` names for that agent, re-run
+on `tools/change` for a catalog that finished discovering after the
+session was created. Names already denied are remembered, because each
+call appends a layer.
+
+### Two hazards this phase actually hit
+
+Both were found by running it, and both are the kind that a spec would
+not have caught:
+
+- **`ctx.tools` on a context that did not declare it THROWS.** The first
+  build of the mask read `ctx.tools` from the plugin's own context, whose
+  `inject` named only `browserUse`. The throw happened inside the
+  `agent/created` listener, which is the one place a throw is fatal:
+  every device session failed to open, and the client showed its
+  "选择一个工作区开始" hero with the session gone from the sidebar. The
+  cause is invisible from the browser — the gateway answers
+  `{"code":"gateway/internal","message":"resume failed for session …:
+  Error: cannot get property \"tools\" without inject"}` and the host log
+  is silent — so it was found by wrapping `window.fetch` in the page and
+  reading the RPC response back. `inject` now names `tools`, and the
+  scope is minted with `createScope` rather than borrowed from
+  `agent.ctx`, because a restriction may only be registered through a
+  context that injects `tools`.
+- **A repeated `agent/created` for one activation would mount twice.**
+  Upstream's provider is idempotent per agent (`SessionResources` keys by
+  agent); ours is not, so the mount records the agent before awaiting the
+  handshake and clears it on the agent's disposal.
+
+### Wiring
+
+- Patch rows: `dshell-browser-use-registry` (`@deepseek-ai/dsh-browser-use`),
+  `dshell-host-tools` (`@nexus-aethra/dshell-host-tools`),
+  `dshell-computer-use-registry` (`@deepseek-ai/dsh-computer-use`), and
+  `dshell-computer-use-cua-native`
+  (`@deepseek-ai/dsh-experimental-computer-use-cua-driver-native`). The
+  stock `browser-use-playwright-mcp` row stays off: one provider per slot.
+- `scripts/install-into-dsh-profile.sh` installs dshell's package plus the
+  three upstream ones the stock profile does not ship. Row names resolve
+  from the PROFILE's own dependencies, so a missing install is a failed
+  import at boot with nothing pointing at the script.
+- Root overrides gain `dsh-browser-use`, `dsh-computer-use`, `dsh-mcp-client`
+  and `dsh-scope` (`dsh-scope` is new to this package's peer set, which the
+  manifest contract checks in both directions).
+
+### Verification
+
+`pnpm build`, `pnpm typecheck` and `pnpm test` are green (274 cases; the
+new `host-tools.spec.ts` carries 8 — Chromium discovery, the server's
+argv, and the four locality rules).
+
+In the browser, against a live harness and the local sshd rig:
+
+- a local session's agent opened `https://example.com` and answered
+  "页面标题是：Example Domain";
+- a fresh device session opens normally — no hero state, still ten rows in
+  the sidebar — and stays open;
+- **no browser is mounted for a device session**: opening two of them left
+  the child-process count unchanged, and every `@playwright/mcp` child's
+  cwd is a local session's directory, never a mount;
+- **the desktop mask takes effect**, read from the model's own surface:
+  asked to count its `cua_driver_native__*` tools, the device session's
+  agent answers "0 个" while the local session's agent answers 88. The
+  catalog itself was confirmed out of band by driving
+  `@trycua/cua-driver` directly (59 tools, all `cua_driver_native__`);
+- the harness log stays clean: no warn from either containment path.
