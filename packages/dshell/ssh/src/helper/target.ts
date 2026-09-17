@@ -128,7 +128,7 @@ export class HelperTargets {
     if (node.trim() === '' || !node.startsWith('/')) return undefined
     return {
       node: node.trim(),
-      helper: `${home.trim().replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.js`,
+      helper: `${home.trim().replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.mjs`,
       expectedHash: this.artifact().hash,
     }
   }

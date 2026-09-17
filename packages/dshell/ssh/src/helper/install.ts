@@ -6,7 +6,7 @@
  *
  *   1. `mkdir -p ~/.dshell/helper`
  *   2. decode the bundle, which the harness ships base64 on stdin, into
- *      `~/.dshell/helper/helper-<hash>.js`
+ *      `~/.dshell/helper/helper-<hash>.mjs`
  *   3. `chmod 0700` that path (so another user on the device cannot read or
  *      replace it; the directory is `0700` too, by the same chmod)
  *   4. emit the helper's hash so the harness can compare it with the artifact
@@ -49,12 +49,18 @@ export function encodeHelperBody(artifactPath: string): string {
 
 /**
  * The expected on-device hash, from the bundle the host just sent.
+ *
+ * The bundle is ESM, but the device's home directory is not inside a package
+ * that declares `"type": "module"`, so Node only treats it as ESM when the
+ * file ends in `.mjs`. The local artifact keeps `.js` because this package is
+ * ESM itself; only the on-device path needs the different suffix.
+ *
  * @param expectedHash - digest of the artifact.
  * @returns the absolute path the device's helper lives at, given `$HOME`.
  */
 export function helperPathFor(home: string, expectedHash: string): string {
   const trimmed = home.replace(/\/+$/u, '')
-  return `${trimmed}/${HELPER_DIRECTORY}/helper-${expectedHash}.js`
+  return `${trimmed}/${HELPER_DIRECTORY}/helper-${expectedHash}.mjs`
 }
 
 /**

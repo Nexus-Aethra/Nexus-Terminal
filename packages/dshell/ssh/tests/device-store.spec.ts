@@ -41,7 +41,7 @@ describe('DeviceStore helper status', () => {
       state: 'present' as const,
       onDevice: 'abcd',
       expected: 'abcd',
-      path: '/home/pi/.dshell/helper/helper-abcd.js',
+      path: '/home/pi/.dshell/helper/helper-abcd.mjs',
       message: 'verified',
     }
     await writeFile(join(root, 'devices.json'), JSON.stringify({
@@ -71,7 +71,7 @@ describe('DeviceStore helper status', () => {
             state: 'present',
             onDevice: 'abcd',
             expected: 'abcd',
-            path: '/home/pi/.dshell/helper/helper-abcd.js',
+            path: '/home/pi/.dshell/helper/helper-abcd.mjs',
             message: 'verified',
           },
         },
