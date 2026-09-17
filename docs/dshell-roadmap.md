@@ -3811,3 +3811,76 @@ back without a rebuild.
 
 **Rollback:** per-device, and the existing exec path is not deleted until S1 is
 green on the rig.
+
+### Provisioning: probe, then deploy
+
+Requiring the user to prepare the machine by hand is what makes upstream's ssh
+family unusable for dshell's "add a device in a dialog" flow, so provisioning has
+to be dshell's job. The probe rides the dialog's existing **Test** action
+(`packages/dshell/ssh/src/router.ts:379`), which today answers reachability,
+identity and the trusted fingerprint; it grows two more questions, and the install
+action is offered from its answer.
+
+**Probe, in order:** reachability and auth (as today); then whether `node` exists
+and what version; then whether the helper artifact is present at its
+content-addressed path and whether its hash equals the one this build produced.
+
+**Verify by bytes, not by a version number.** The helper already self-reports:
+`hello` answers with `hash: sha256(readFileSync(entryPath))`
+(`dsh/packages/ssh/ssh/src/helper.ts:105`). Compare that against the hash of the
+helper this dshell build ships. A version *string* would accept a
+rebuilt-but-mislabelled artifact; a hash cannot.
+
+**Transmit; never compile on the device.** The helper is a build output of
+dshell's own build — the 139,283-byte single file measured above — so runtime work
+is only "put bytes there". Compiling on the device would need a toolchain and
+network access on someone else's server, would make the deployed artifact
+non-reproducible (a different build is different bytes, so there is nothing to
+pin), and would turn a user's machine into a package-fetch target.
+
+**The bootstrap needs nothing but `ssh`.** One exec with the bytes on stdin
+(base64), plus `mkdir -p` and `chmod`. On-device verification deliberately does
+*not* need `sha256sum`: the helper hashes itself during `hello` and a mismatch
+refuses the connection, so the bootstrap depends on no hashing tool on the device.
+
+**Content-addressed path:** `~/.dshell/helper/helper-<sha256>.js`, a 0600 file in a
+0700 directory, outside the session workspace — upstream's "keep Node, helper,
+bootstrap and their dependencies outside the workspace and writable temporary
+roots" applies to us for the same reason. The filename carries the expected hash,
+so a new version never lands on top of a running one.
+
+**No attach to a live helper — rejected deliberately.** Detecting an *active*
+helper and reusing it sounds free, but it is a daemon model: it needs a rendezvous
+(socket path plus authentication, because the helper holds unrestricted
+filesystem and process powers) and a reap story for a process that outlives its
+client, and it buys back roughly 150 ms — the measured handshake was 144–186 ms
+*including* the ssh connection setup. Helper lifetime stays bound to the
+connection, as upstream has it: `ControlPersist=no`, one authority per connection,
+and a lease plus heartbeat (`ServerAliveInterval=10`, `CountMax=3`, `leaseMs`
+30000) so a lost link starts remote cleanup instead of leaving an orphan with
+those powers.
+
+**Node is the one thing we cannot provision.** Installing a runtime on a user's
+machine is out of scope, and doing it silently is dangerous. A device without Node
+therefore keeps the assembled-command path — which changes that path's role from
+"rollback" to **the no-Node compatibility tier**, a better reason to keep it alive
+than a rollback that is expected to expire.
+
+**Mismatch policy differs from upstream on purpose.** They refuse the connection.
+dshell should redeploy with a log line, because in our model the device is ours to
+manage and the artifact is one we authored; refusing would turn every helper
+release into a manual visit to every device. Whether that becomes a per-device
+choice is open.
+
+**The development loop and provisioning are the same mechanism.** The helper's
+source lives in our repo, `tsdown` bundles it at build time, and the bundle's hash
+is the contract. So a helper change produces a new hash, which makes the device
+redeploy on the next connect — "improve the helper" and "keep devices current" are
+one loop rather than two. Keep one escape hatch: a local-path override, so the rig
+can point at a freshly built helper without a deploy.
+
+Acceptance for provisioning, on the rig: with `~/.dshell/helper` removed, Test
+reports "no helper" and offers install; install then Test reports a hash match;
+rebuild the helper and the next connect detects the mismatch and redeploys. The
+"no node" path must report itself clearly and route to the compatibility tier
+rather than attempting an install.
