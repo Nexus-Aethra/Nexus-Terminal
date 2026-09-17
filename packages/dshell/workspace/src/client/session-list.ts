@@ -101,7 +101,7 @@ export type FlatSessionListBodyProps = FlatSessionListProps & PropsLocale<'dshel
 
 /** Empty device snapshot, so the list renders before the SSH plugin answers. */
 const NO_DEVICES: SshSnapshot = {
-  devices: [], bindings: [], testResult: undefined, error: undefined, loaded: false,
+  devices: [], bindings: [], testResult: undefined, error: undefined, helper: undefined, loaded: false,
 }
 
 /** Stable no-op subscription for a composition without the SSH plugin. */

@@ -33,7 +33,8 @@ import { localCwd, sshArgv, sshEnv } from '../runner.js'
  * The string is a fixed literal with the newline escaped for the remote
  * `printf`, so no caller-supplied text passes through a shell here.
  */
-const PROBE = 'printf "%s\\n%s\\n" "$HOME" "$(command -v node 2>/dev/null || bash -lc "command -v node" 2>/dev/null || true)"'
+/** Exported so the install probe can re-run without re-asking the cache. */
+export const PROBE = 'printf "%s\\n%s\\n" "$HOME" "$(command -v node 2>/dev/null || bash -lc "command -v node" 2>/dev/null || true)"'
 
 /** Where a device's helper lives, and the digest it must report. */
 export interface ResolvedTarget {
