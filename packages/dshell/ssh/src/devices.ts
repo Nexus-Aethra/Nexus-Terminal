@@ -14,6 +14,7 @@ import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/pro
 import { join } from 'node:path'
 import type { DshellSshTranslate } from './host-locales.js'
 import type { DeviceAuth, DeviceInput, DeviceView } from './protocol.js'
+import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 
 /** A stored device record; the secret path is absent when none is stored. */
 interface DeviceRecord {
@@ -27,6 +28,8 @@ interface DeviceRecord {
   auth: DeviceAuth
   /** Absolute path of the stored key or password file. */
   secretFile?: string
+  /** Last observed helper deployment on this device, when checks have run. */
+  helper?: DeviceHelperStatus
 }
 
 /** A device id safe to interpolate into a path. */
@@ -66,6 +69,7 @@ function asRecord(value: unknown): DeviceRecord | undefined {
   const port = typeof raw.port === 'number' && Number.isInteger(raw.port) && raw.port > 0 && raw.port < 65_536
     ? raw.port
     : 22
+  const helper = readHelperStatus(raw.helper)
   return {
     id: raw.id,
     name: typeof raw.name === 'string' && raw.name.length > 0 ? raw.name : raw.host,
@@ -78,7 +82,25 @@ function asRecord(value: unknown): DeviceRecord | undefined {
     // login-method split carry it, and dropping it would silently detach an
     // already-stored key from its device.
     ...readSecretPath(raw),
+    ...(helper === undefined ? {} : { helper }),
   }
+}
+
+function connectionKey(record: { host: string; port: number; user: string; remoteRoot: string }): string {
+  return `${record.host}:${record.port}:${record.user}:${record.remoteRoot}`
+}
+
+function readHelperStatus(raw: unknown): DeviceHelperStatus | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const helper = raw as Record<string, unknown>
+  const state = helper.state
+  if (state !== 'absent' && state !== 'present' && state !== 'mismatch') return undefined
+  const message = typeof helper.message === 'string' ? helper.message : ''
+  const status: Record<string, unknown> = { state, message }
+  if (typeof helper.onDevice === 'string') status.onDevice = helper.onDevice
+  if (typeof helper.expected === 'string') status.expected = helper.expected
+  if (typeof helper.path === 'string') status.path = helper.path
+  return status as unknown as DeviceHelperStatus
 }
 
 /** Derive a stable, path-safe id from a device name. */
@@ -154,7 +176,7 @@ export class DeviceStore {
     const existing = this.records.find(record => record.id === id)
     if (input.id !== undefined && existing === undefined) throw new Error(t('error.unknownDevice', { id: input.id }))
     const auth: DeviceAuth = input.auth ?? existing?.auth ?? 'key'
-    const record: DeviceRecord = {
+    const baseRecord: DeviceRecord = {
       id,
       name: input.name.trim() !== '' ? input.name.trim() : (existing?.name ?? input.host),
       host: input.host.trim(),
@@ -165,6 +187,12 @@ export class DeviceStore {
         : (existing?.remoteRoot ?? '~'),
       auth,
       ...existing?.secretFile === undefined ? {} : { secretFile: existing.secretFile },
+    }
+    const record: DeviceRecord = {
+      ...baseRecord,
+      ...(existing === undefined || connectionKey(existing) === connectionKey(baseRecord)
+        ? (existing?.helper === undefined ? {} : { helper: existing.helper })
+        : {}),
     }
     if (record.host === '' || record.user === '') throw new Error(t('error.hostUserRequired'))
     // Switching the login method retires the other secret: a stored password
@@ -208,6 +236,7 @@ export class DeviceStore {
       remoteRoot: record.remoteRoot,
       auth: record.auth,
       hasSecret: record.secretFile !== undefined,
+      helper: record.helper,
     }
   }
 

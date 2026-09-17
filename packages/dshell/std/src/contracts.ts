@@ -587,6 +587,35 @@ export const SSH_SETTINGS_NAMESPACE = 'dshell-ssh'
 /** How a device authenticates. */
 export type DeviceAuth = 'key' | 'password'
 
+/**
+ * What dshell knows about the helper on a device.
+ *
+ * Three states the device card surfaces differently:
+ *
+ *  - `absent` — no helper has ever been deployed to this device. A device
+ *    session's RPC lane is unavailable; the assembled-command lane still
+ *    works. The Test button reports the absence and offers to install.
+ *  - `present` — a helper is deployed whose digest matches the artifact this
+ *    build ships. RPC is ready.
+ *  - `mismatch` — a helper is deployed but its digest disagrees with this
+ *    build's. The next connection will redploy automatically; the card
+ *    surfaces the disagreement so the user can decide whether to wait.
+ */
+export type DeviceHelperState = 'absent' | 'present' | 'mismatch'
+
+/** What the helper deployment looks like right now, when known. */
+export interface DeviceHelperStatus {
+  readonly state: DeviceHelperState
+  /** Digest of the file on the device, when the last check could read it. */
+  readonly onDevice?: string
+  /** Digest of the artifact this build ships; absent means the build is unbundled. */
+  readonly expected?: string
+  /** Absolute path the helper lives at, when known. */
+  readonly path?: string
+  /** Last check's verbatim result; empty on `absent` with no attempt. */
+  readonly message: string
+}
+
 /** One configured device as the UI sees it — never includes secret material. */
 export interface DeviceView {
   readonly id: string
@@ -604,6 +633,8 @@ export interface DeviceView {
   readonly auth: DeviceAuth
   /** Whether the secret for {@link auth} (key or password) is stored. */
   readonly hasSecret: boolean
+  /** Helper deployment state, when known. Absent for compositions that have not checked. */
+  readonly helper?: DeviceHelperStatus | undefined
 }
 
 /** One device as submitted by the UI; `key` is write-only. */
@@ -679,6 +710,17 @@ export type SshRequest =
     readonly deviceId: string
     readonly remoteRoot?: string | null
   }
+  | {
+    /**
+     * Deploy this build's helper to the device, content-addressed by digest.
+     *
+     * The route runs `mkdir -p ~/.dshell/helper` and `base64 -d > ~/.dshell/helper/helper-<sha256>.js`,
+     * then `chmod 0700`. The reply carries the resulting {@link DeviceHelperStatus},
+     * which the card renders to confirm the deployment.
+     */
+    readonly action: 'install'
+    readonly deviceId: string
+  }
 
 /** One response body; `error` is a refusal the UI shows verbatim. */
 export interface SshResponse {
@@ -688,6 +730,11 @@ export interface SshResponse {
   readonly testResult?: string | undefined
   /** Local mount directory, answering the `mount` action. */
   readonly mountPath?: string | undefined
+  /**
+   * Helper deployment status from the last check, set when one was requested
+   * (`install` action or the eventual three-phase `test` extension).
+   */
+  readonly helper?: DeviceHelperStatus | undefined
   readonly error?: string | undefined
 }
 
