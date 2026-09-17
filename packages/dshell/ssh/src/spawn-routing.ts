@@ -98,6 +98,10 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
   if (subprocess === undefined) return () => {}
   const connections = new DshellSshConnections()
   const targets = new HelperTargets(ctx, localHelperArtifact)
+  // The filesystem provider reaches the helper through the router, because the
+  // pool's lifetime belongs to this seam: a second pool would mean a second
+  // helper process on the device.
+  router.helperConnection = deviceId => connections.peek(deviceId)
   // A device that changed, or one a session was just bound to. Saving or
   // deleting drops both cached answers and any live connection, because that
   // connection was verified against a target which no longer applies.
@@ -164,6 +168,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
   return () => {
     target.spawn = original
     router.onDeviceChanged = undefined
+    router.helperConnection = undefined
     void connections.disposeAll()
   }
 }

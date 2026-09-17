@@ -42,11 +42,22 @@ const PACKAGE_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
 const ARTIFACT = `${PACKAGE_ROOT}/lib/helper.js`
 
-/** Every module specifier the bundle would resolve at runtime. */
+/**
+ * Every module specifier the bundle would resolve at runtime.
+ *
+ * Only text that can *be* an import statement is read, because the bundle keeps
+ * its comments: a doc comment containing the words `from "not there"` is prose
+ * about a missing file, not a module this artifact would ask for. The bundler
+ * hoists every import onto a line of its own, so anchoring to the start of a
+ * line separates the two without parsing anything.
+ */
 function importSpecifiers(source: string): string[] {
-  const staticImports = [...source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)]
-  const bareImports = [...source.matchAll(/\bimport\s+['"]([^'"]+)['"]/g)]
-  return [...staticImports, ...bareImports].map((match) => match[1] as string)
+  const statements = [...source.matchAll(/^[ \t]*import\b[^\n]*/gm)].map((match) => match[0])
+  const specifiers = statements.flatMap(statement => [
+    ...statement.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g),
+    ...statement.matchAll(/\bimport\s+['"]([^'"]+)['"]/g),
+  ])
+  return specifiers.map((match) => match[1] as string)
 }
 
 /** The version a package resolves to inside one directory's `node_modules`. */

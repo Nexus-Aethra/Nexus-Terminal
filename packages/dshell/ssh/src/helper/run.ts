@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
 import { SshRpcPeer } from '@deepseek-ai/dsh-ssh/protocol'
+import { DeviceFileSystem } from './fs.js'
 import { RemoteProcesses } from './processes.js'
 import {
   DSHELL_HELPER_LEASE_MS,
@@ -32,6 +33,14 @@ import {
   echoReply,
   echoRequest,
   emptyRequest,
+  fsListReply,
+  fsPathRequest,
+  fsReadRangeReply,
+  fsReadRangeRequest,
+  fsResolveReply,
+  fsStatReply,
+  fsWriteReply,
+  fsWriteRequest,
   helloReply,
   helloRequest,
   HELPER_OPS,
@@ -83,6 +92,7 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
   // place a caller is told about beyond the files it asks for.
   const root = await mkdtemp(join(tmpdir(), 'dshell-helper-'))
   const processes = new RemoteProcesses(() => root, DSHELL_HELPER_MAX_PROCESSES)
+  const files = new DeviceFileSystem()
 
   /**
    * Release the lease and stop the peer. Idempotent because several paths race
@@ -192,6 +202,30 @@ export async function runDshellHelper(transport: HelperTransport): Promise<void>
       }
       if (method === HELPER_OPS.processWait) {
         return processWaitReply.parse(await processes.wait(processIdRequest.parse(raw).id))
+      }
+      if (method === HELPER_OPS.fsResolve) {
+        return fsResolveReply.parse({ path: await files.resolve(fsPathRequest.parse(raw).path) })
+      }
+      if (method === HELPER_OPS.fsStat || method === HELPER_OPS.fsLstat) {
+        const { path } = fsPathRequest.parse(raw)
+        const info = await files.stat(path, method === HELPER_OPS.fsStat)
+        // The mode is the write path's business and stays here: it is not part
+        // of what the seam reports, so it never travels.
+        return fsStatReply.parse(info === null ? null : { kind: info.kind, size: info.size, version: info.version })
+      }
+      if (method === HELPER_OPS.fsList) {
+        const { path } = fsPathRequest.parse(raw)
+        return fsListReply.parse({ entries: await files.list(path) })
+      }
+      if (method === HELPER_OPS.fsReadRange) {
+        const input = fsReadRangeRequest.parse(raw)
+        const bytes = await files.read(input.path, input.offset, input.length)
+        return fsReadRangeReply.parse({ data: bytes.toString('base64') })
+      }
+      if (method === HELPER_OPS.fsWrite) {
+        const input = fsWriteRequest.parse(raw)
+        const written = await files.write(input.path, Buffer.from(input.data, 'base64'))
+        return fsWriteReply.parse({ kind: written.kind, size: written.size, version: written.version })
       }
       // Deliberately the same boundary upstream drew: an unrecognised method is
       // a hard failure, never a guess. A helper that answered optimistically

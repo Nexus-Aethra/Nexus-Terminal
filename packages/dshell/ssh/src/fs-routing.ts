@@ -73,11 +73,19 @@ export class DshellFileSystem extends SandboxedFileSystem {
    * A binding without a mount (written before mount directories existed, or
    * created by hand) routes only the shell path, so file operations stay local
    * rather than guessing at a mapping that was never recorded.
+   *
+   * The helper connection is looked up per call and never awaited. Looking one
+   * up asks whether a helper is verified *now*, and a device with none — no
+   * Node, no helper installed yet, a handshake still in flight — is answered by
+   * the assembled-command lane instead. Waiting here would turn the absence of
+   * a helper into a stall on every read, and a device that will never have one
+   * into a hang.
    */
   private remote(): RemoteFileSystem | undefined {
     const agent = this.ctx.agents.currentInitiator()
     if (agent === undefined) return undefined
-    const target = this.ctx[SSH_ROUTING_SERVICE].targetForSession(String(agent.id))
+    const routing = this.ctx[SSH_ROUTING_SERVICE]
+    const target = routing.targetForSession(String(agent.id))
     if (target === undefined || target.mount === undefined) return undefined
     const mapping: MountMapping = { mount: target.mount, remoteRoot: target.remoteRoot }
     return new RemoteFileSystem({
@@ -86,6 +94,7 @@ export class DshellFileSystem extends SandboxedFileSystem {
       mapping,
       diffBasisMaxBytes: this.config.diffBasisMaxBytes,
       t: this.t,
+      connection: routing.helperConnection?.(target.device.id),
     })
   }
 
@@ -234,9 +243,10 @@ export class DshellFileSystem extends SandboxedFileSystem {
 /**
  * Services this provider needs before it may start.
  *
- * `subprocess` is not incidental: the device half of every operation is an
- * `ssh` invocation, and reaching for a service a context did not inject throws
- * in cordis rather than resolving lazily.
+ * `subprocess` is not incidental: it is how the assembled-command lane runs an
+ * `ssh` invocation on the device, which is the lane every call falls back to
+ * when no helper is verified, and reaching for a service a context did not
+ * inject throws in cordis rather than resolving lazily.
  */
 export const inject = ['agents', 'sandboxPolicy', 'subprocess', SSH_ROUTING_SERVICE, 'dshellHostCopy'] as const
 

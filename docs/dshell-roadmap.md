@@ -4118,3 +4118,143 @@ and the empty output is the tell that nothing was invented to fill the gap.
 - `remote-fs` still uses the assembled hop; moving it onto fs operations is M2.
 - There is still no confinement *on* the device: the command runs under the
   device's own policy, which the seam says so explicitly.
+
+## Phase 10.42 — M2: the filesystem seam moves to RPC
+
+The device fs (`ctx.fs` for a bound session) ran one `ssh` invocation per
+operation since A4, with two hard habits pinned into the design:
+
+- `LC_ALL=C` everywhere, because `stat -c %F` prints a *localized* "regular
+  file" string and `find -printf` only emits a NUL separator when its format
+  itself is a NUL — which Node refuses to send across argv. `find` answers in
+  English if asked to.
+- a stderr classifier that turned English error text into `FsError` codes,
+  because there was no other signal on the assembled lane.
+
+Both disappear on the helper lane. The wire speaks for itself, and what the
+helper *does* say about a failure is a code derived from an errno, not a
+phrase.
+
+### Wire contract — `packages/dshell/ssh/src/helper/protocol.ts`
+
+Six new operations under the existing `HELPER_OPS` constant; nothing else
+changes:
+
+| op               | request                                  | reply                                  |
+| ---------------- | ---------------------------------------- | -------------------------------------- |
+| `fs.resolve`     | `{ path: absolute }`                     | `{ path: absolute }`                   |
+| `fs.stat`        | `{ path: absolute }`                     | `{ kind, size, version } \| null`      |
+| `fs.lstat`       | `{ path: absolute }`                     | `{ kind, size, version } \| null`      |
+| `fs.list`        | `{ path: absolute }`                     | `{ entries: [{name, kind, size?, version?}] }` |
+| `fs.readRange`   | `{ path, offset, length ≤ 8 MiB }`       | `{ data: base64 }` (short = EOF)       |
+| `fs.write`       | `{ path, data: base64 ≤ 32 MiB }`        | `{ kind, size, version }`              |
+
+A reply's `kind` is one of `file | directory | symlink | other`; `version` is
+the same five-field token the local backend derives, opaque on the wire. A
+failure carries the seam's `FsErrorCode` (`FS_NOT_FOUND`, `FS_NOT_DIRECTORY`,
+`FS_NOT_REGULAR_FILE`, `FS_PERMISSION_DENIED`, `FS_TOO_LARGE`, `FS_IO_ERROR`)
+in the existing `RemoteOperationError.code`, decided from the platform
+errno. The helper's own framing and pending-request ceiling are unchanged.
+
+### Device implementation — `packages/dshell/ssh/src/helper/fs.ts`
+
+The piece that runs on the other machine. `DeviceFileSystem` exposes the
+six primitives and is the answer to why every fs op used to be a `ssh
+argv` line:
+
+- `realpath` is per-component because `realpath -m` recurses on the longest
+  existing prefix, which collapses `link/..` into the link's parent and
+  gives the wrong answer when an intermediate component does not exist.
+  Per-component realpath followed by a missing-tail append covers both
+  `link/` and `link/absent/x.txt`.
+- `versionOf` is the same five-field token (`dev:ino:size:mtimeNs:ctimeNs`)
+  the local backend derives, nanosecond timestamps rather than milliseconds
+  so a guard that could not tell a rewrite from the state it already read
+  would still permit the overwrite it exists to refuse.
+- a `mode` field travels back from the device for the write path's mode
+  preservation, and is stripped before the reply crosses the seam — it is
+  the write's business and nothing else's.
+- `list` does not sort: order is the seam's decision (see below).
+
+### Host seam — `packages/dshell/ssh/src/remote-fs*.ts`
+
+The original `remote-fs.ts` was rewritten around one interface
+(`RemoteFsTransport`) that two implementations both satisfy:
+
+- `HelperFsTransport` — the device is reachable through the verified
+  connection; every call is one request, fields named on both ends.
+- `ShellFsTransport` — the no-Node tier; one `ssh` invocation per
+  operation, parsed back as before.
+
+`RemoteFileSystem` owns the policy half — guards, edit rules, line endings,
+diff basis — and is unaware which transport is in use; which one it picks
+is decided by `connection === undefined`, which `DshellFileSystem` reads
+from the router's `helperConnection` accessor without awaiting. Awaiting
+here would turn "no helper verified right now" into a stall on every read.
+
+The list order is the seam's, not the device's: `DeviceFileSystem.list`
+returns the kernel's order, `find -printf` returns whatever `find` chose,
+and neither is sorted. `RemoteFileSystem.listDir` sorts once with English
+collation — the order the local backend produces — so the same directory
+reads the same way on either lane and from either machine. The known lane
+difference: a symlink to a file is reported as `file` (followed probe)
+on the helper lane, `other` (the entry itself) on the shell lane. The
+verify-script asserts it; it is the last thing the shell lane exists to
+preserve, and the M2 verify-script records it rather than papers over it.
+
+### Verification
+
+- `pnpm typecheck` and `pnpm build` are GREEN.
+- `pnpm test`: 230 passed (was 176); new files:
+  - `tests/device-fs.spec.ts` — 21 rules, one fs truth per test, against a
+    real local filesystem. The permission mapping and the staging-file
+    cleanup on failure are both proven by reverting in place and
+    re-running.
+  - `tests/remote-fs.spec.ts` — 20 rules over the policy layer, exercised
+    through a fake transport. The guarded-write guards are proven by
+    deleting the if-branches and re-running.
+  - `tests/remote-fs-helper.spec.ts` — 13 rules over the helper lane's
+    wire shape and error mapping. The "unknown code falls back to
+    `FS_IO_ERROR`" rule is proven by replacing the fallback with the
+    device's code verbatim.
+- **Rig verification** — `/tmp/dshell-m2-verify.mjs` (49 checks, all pass)
+  drives the real connection against the throwaway sshd at
+  127.0.0.1:2222 and exercises:
+  - relative-path resolution, read, write, and version-guarded write;
+  - typed errors (`FS_NOT_FOUND`, `FS_NOT_DIRECTORY`, `FS_NOT_REGULAR_FILE`,
+    `FS_PERMISSION_DENIED`) for absent files, non-directories, and a file
+    with mode `0000` / a directory with no read bit;
+  - mode preservation (an existing file's mode is carried over; a new
+    file gets `0o600`);
+  - a literal edit (including CRLF detection-and-restore);
+  - a 9 MiB read that spans the 8 MiB frame ceiling, with a multi-byte
+    character straddling the boundary;
+  - a stream that is abandoned after one chunk, with the connection
+    answering afterwards.
+  The helper-lane runs with a `ctx.subprocess.spawn` that throws on every
+  call, so any observation that passes is evidence no `ssh` invocation
+  ran for it: the `find -printf` path is gone from the helper lane, the
+  `stat -c`/`LC_ALL=C` path is gone, the `mktemp` publish script is gone,
+  the `head -c`/`tail -c` reads are gone. The same operations then run
+  against a real spawn shim to prove the shell lane still works.
+
+### What the shell lane keeps
+
+It is the no-Node tier. Every constant the assembled path needed stays
+where it was — `STAT_FORMAT`, `FIND_FORMAT`, the `LC_ALL=C` prefix, the
+`realpath -m` resolve, the `head -c`/`tail -c` reads, the `mktemp` +
+`chmod --reference` + `mv` publish script, the two stderr classifiers.
+The helper lane retiring them is what makes the helper lane *the* lane;
+the shell lane remaining available is what makes no-Node still work.
+
+### Deferred
+
+- `files/src/transfer.ts` and `buffer/src/service.ts` still assemble — M3.
+- Provisioning — the device-card probe, the install route, the
+  `~/.dshell/helper/helper-<sha256>.js` install action — is M4.
+
+### Acceptance
+
+All three gates green; rig 49/49; helper-lane subprocess attempts = 0;
+expected-fallback property recorded (`link-to-file` reads as `file` on the
+helper lane, `other` on the shell lane).

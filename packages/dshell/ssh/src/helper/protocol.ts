@@ -65,6 +65,18 @@ export const HELPER_OPS = {
   processTerminate: 'process.terminate',
   /** Wait until nothing of that range is left. */
   processWait: 'process.wait',
+  /** Canonical device path for a path that need not exist yet. */
+  fsResolve: 'fs.resolve',
+  /** Metadata, following a final symlink. */
+  fsStat: 'fs.stat',
+  /** Metadata without following a final symlink. */
+  fsLstat: 'fs.lstat',
+  /** Direct children of a directory. */
+  fsList: 'fs.list',
+  /** One byte window of a file. */
+  fsReadRange: 'fs.readRange',
+  /** Replace a file's contents atomically. */
+  fsWrite: 'fs.write',
 } as const
 
 /**
@@ -78,6 +90,26 @@ export const DSHELL_HELPER_MAX_PROCESSES = 64
 
 /** Per-stream ceiling a caller may ask to collect, in bytes. */
 export const DSHELL_HELPER_MAX_COLLECT_BYTES = 64 * 1024 * 1024
+
+/**
+ * Largest byte window one `fs.readRange` may carry, before encoding.
+ *
+ * The frame ceiling bounds every message, and base64 inflates what it carries by
+ * a third, so a window has to leave room for both. A caller that wants more
+ * reads in windows — the client's own reader does exactly that — because a
+ * larger single reply would be a frame the peer must refuse.
+ */
+export const DSHELL_HELPER_MAX_READ_BYTES = 8 * 1024 * 1024
+
+/**
+ * Largest file one `fs.write` may publish, before encoding.
+ *
+ * Larger than a read window because a write travels once: the whole content is
+ * one JSON string, so the ceiling is what still fits a frame with base64
+ * headroom. A bulk transfer does not come through here — it writes its own
+ * windows.
+ */
+export const DSHELL_HELPER_MAX_WRITE_BYTES = 32 * 1024 * 1024
 
 /** An absolute path as the device spells it. */
 export const remoteAbsolutePath = z.string().startsWith('/')
@@ -241,3 +273,112 @@ export const processIdRequest = z.object({ id: z.string() }).strict()
 
 /** Whether the process's managed range is empty. */
 export const processWaitReply = z.boolean()
+
+/**
+ * What a device may find at a path, in the seam's vocabulary.
+ *
+ * `symlink` can only be reported by `fs.lstat`: a followed stat describes what
+ * the link points at, which is the same distinction the local backend draws
+ * between its `pathType` and `pathLinkType`.
+ */
+export const remoteFsKind = z.enum(['file', 'directory', 'symlink', 'other'])
+
+/**
+ * Metadata for one device path.
+ *
+ * `version` is an opaque change token, compared for equality and never parsed:
+ * a caller uses it to say "the file I read is still the file I am writing".
+ * Its spelling is the device's business, and a token is only ever compared with
+ * a token from the same transport.
+ */
+export const remoteFsStat = z.object({
+  kind: remoteFsKind,
+  /** Bytes for a file, and for a symlink the length of its target; otherwise the device's own answer. */
+  size: z.number().int().nonnegative(),
+  version: z.string().min(1),
+}).strict()
+
+/**
+ * The filesystem failures a device can originate, named exactly as the seam
+ * names them.
+ *
+ * Deliberately codes and not text: classifying a failure by reading an error
+ * message is a bet on the device's language and on `stat`'s wording, and both
+ * change without notice. The message still travels — it names the path and the
+ * errno, which is what a log wants — but nothing decides anything from it.
+ */
+export const remoteFsCode = z.enum([
+  'FS_NOT_FOUND',
+  'FS_NOT_DIRECTORY',
+  'FS_NOT_REGULAR_FILE',
+  'FS_PERMISSION_DENIED',
+  'FS_TOO_LARGE',
+  'FS_IO_ERROR',
+])
+
+/** Address one device path. Always absolute: the caller translates, the device does not guess. */
+export const fsPathRequest = z.object({ path: remoteAbsolutePath }).strict()
+
+/**
+ * The canonical form of a path, whether or not it exists.
+ *
+ * The reply carries a path rather than a stat record because the caller already
+ * holds a display path of its own; what it cannot compute here is how the
+ * device's symlinks resolve, and that is the whole content of this answer.
+ */
+export const fsResolveReply = z.object({ path: remoteAbsolutePath }).strict()
+
+/** A stat whose subject does not exist is `null`, not an error. */
+export const fsStatReply = remoteFsStat.nullable()
+
+/** One directory child as the device reports it. */
+export const fsListEntry = z.object({
+  name: z.string().min(1),
+  kind: remoteFsKind,
+  /** Present for a file. */
+  size: z.number().int().nonnegative().optional(),
+  /** Absent when the child could not be inspected at all — a dangling symlink, typically. */
+  version: z.string().min(1).optional(),
+}).strict()
+
+/** @see fsListEntry */
+export const fsListReply = z.object({ entries: z.array(fsListEntry) }).strict()
+
+/** One byte window: `offset` is where the window starts, `length` how many bytes may be read. */
+export const fsReadRangeRequest = z.object({
+  path: remoteAbsolutePath,
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().positive().max(DSHELL_HELPER_MAX_READ_BYTES),
+}).strict()
+
+/**
+ * The bytes read, base64 as every binary field on this wire is.
+ *
+ * A short window is how a reader learns it reached the end of the file, so the
+ * reply carries no end flag: the length of the answer *is* the answer.
+ */
+export const fsReadRangeReply = z.object({ data: z.string() }).strict()
+
+/**
+ * Publish a whole file's bytes.
+ *
+ * `data` is base64 where upstream's `fs.write` carries text, because this
+ * provider writes bytes and the seam's own text entry point encodes on the host
+ * side. The device keeps an existing file's mode and gives a new one the
+ * owner-only mode the local backend gives a new file.
+ */
+export const fsWriteRequest = z.object({
+  path: remoteAbsolutePath,
+  data: z.string().max(Math.ceil(DSHELL_HELPER_MAX_WRITE_BYTES / 3) * 4),
+}).strict()
+
+/**
+ * The written file, as it stands after publication.
+ *
+ * Taken after the rename rather than from the staging file's descriptor: a
+ * rename updates the inode's change time, so a version read before it would
+ * name a state that no longer exists and every later guard would call the file
+ * changed.
+ */
+export const fsWriteReply = remoteFsStat
+
