@@ -27,6 +27,7 @@ PLUGINS=(
   terminal-bridge
   mode
   commands
+  host-tools
   workspace
   ssh
   buffer
@@ -47,6 +48,20 @@ done
 
 echo "  + dshell-bundle (as patch layer)"
 ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/packages/dshell/bundle" )
+
+# Row names are resolved from the profile's own dependencies, so the three
+# upstream packages the patch names have to be installed there. They come from
+# the checkout like every other @deepseek-ai package in this profile, not from
+# npm: the profile pins one version of the tree, and a package resolved from the
+# registry would be the second.
+for upstream in \
+  packages/browser-use/browser-use \
+  packages/computer-use/computer-use \
+  packages/experimental/computer-use-cua-driver-native
+do
+  echo "  + @deepseek-ai/$(basename "$upstream") (upstream)"
+  ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/dsh/$upstream" )
+done
 
 # dshell is not a preset: the terminal unification is a host-side backend
 # takeover (the bridge registers the `shell` PTY type), so no preset is

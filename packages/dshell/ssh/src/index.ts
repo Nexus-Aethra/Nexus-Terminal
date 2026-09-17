@@ -38,7 +38,8 @@ export const name = '@nexus-aethra/dshell-ssh'
 
 export { DSHELL_SSH_PATH, type DeviceView, type SshResponse } from './protocol.js'
 export { harnessHome, mountBase, sshDeviceRoot } from './paths.js'
-export { mountFor, toMountPath, toRemotePath, type MountMapping } from './mount.js'
+export { SSH_ROUTING_SERVICE } from './router.js'
+export { isUnder, mountFor, toMountPath, toRemotePath, type MountMapping } from './mount.js'
 export type { SshSettings } from './ssh-settings.js'
 
 /**

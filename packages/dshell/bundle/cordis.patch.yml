@@ -71,6 +71,25 @@
     - id: dshell-files
       name: '@nexus-aethra/dshell-files'
 
+    # Browser use. dsh ships the registry and the providers separately; dshell
+    # fills the registry's exclusive slot with its own provider instead of the
+    # stock Playwright one, because a session bound to an SSH device must get no
+    # browser at all and a browser that cannot start must cost the session
+    # nothing. Both reasons are in that package's module doc.
+    - id: dshell-browser-use-registry
+      name: '@deepseek-ai/dsh-browser-use'
+    - id: dshell-host-tools
+      name: '@nexus-aethra/dshell-host-tools'
+
+    # Computer use: the desktop this harness runs on, driven by the agent. The
+    # registry and the provider are upstream's unchanged — the provider
+    # registers its catalog globally, so dshell takes it away from device
+    # sessions with a per-agent deny list instead of a mount it can skip.
+    - id: dshell-computer-use-registry
+      name: '@deepseek-ai/dsh-computer-use'
+    - id: dshell-computer-use-cua-native
+      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native'
+
 # ── workspace removal (design 4.7) ────────────────────────────────────
 # dshell has no use for dsh's directory-workspace grouping: a terminal's
 # workspace is its current directory. The four stock web-app rows are

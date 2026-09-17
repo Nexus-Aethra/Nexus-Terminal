@@ -403,6 +403,42 @@ when it contributes to model-visible state.
   props (`ctx.sessions` for the session id and cwd).
 - Introduced in: Phase 9.9.
 
+### `dshell-host-tools`
+
+- Role: the gate that decides which sessions get the machine's own
+  capabilities — the browser (an engine process here) and the desktop
+  (upstream's computer-use provider drives it). Both are upstream's
+  registries with providers behind them; what this package owns is the
+  question "does THIS session get them?".
+  - It fills `ctx.browserUse` (one provider per composition, so the stock
+    Playwright row is off) and mounts one Playwright MCP server per live
+    LOCAL agent through `agent.ctx.plugin`. The server is the pinned
+    `@playwright/mcp`; the arguments differ from upstream's in the
+    engine's output directory — `$DSH_HOME/dshell/browser`, not the
+    session's cwd, which is where the stock provider leaves a
+    `.playwright-mcp/` directory behind. The Chromium executable comes
+    from `src/chromium.ts`'s discovery (Chrome, Chromium, the snap and
+    flatpak paths, the macOS bundle) unless the row names one.
+  - A device session — the SSH router answers for it by session id, or
+    its cwd is under the mount base, which is how a session still
+    mid-bind is caught — is mounted nothing, and is given a per-agent
+    deny list instead naming the currently registered
+    `cua_driver_native__*` tools, re-applied on `tools/change` as the
+    catalog finishes discovering. The browser tools cannot be handled
+    this way: they are mounted into the agent's own scope, and a scope
+    cannot mask its own registrations. The deny list is registered
+    through a scope minted with `createScope`, because only a context
+    that injects `tools` may restrict, and it is disposed with the agent.
+  - Both halves are contained: a browser that cannot start and a deny
+    list that cannot be registered are logged and cost the session
+    nothing. dsh rejects agent creation when an `agent/created` listener
+    rejects, so an uncontained failure here would cost the SESSION.
+- dsh services depended on: `ctx.browserUse`, `ctx.tools` (read for the
+  catalog, restricted per device agent) and the `agent/created` /
+  `tools/change` events. Reads `ctx.dshellSshRouting` structurally when
+  present; a composition without dshell-ssh has no device sessions.
+- Introduced in: Phase 10.44.
+
 ## Publishing, and installing from a registry
 
 The desktop shell installs a plugin through its plugin window, which is a plain
@@ -522,8 +558,21 @@ so the inventory is complete; do not introduce wrappers for them.
   dshell never touches this; the session log stays where dsh puts it.
 - `dsh-compaction` and `dsh-session-title-*` — used unchanged by
   `/compact` and by session naming. dshell does not override them.
+- `dsh-browser-use` — the registry half of browser use: it owns
+  `ctx.browserUse` and the tool namespace, and is enabled as its own
+  patch row. `dshell-host-tools` fills the slot it guards; the registry
+  itself is untouched.
+- `dsh-computer-use` — the same registry shape for the desktop. Its
+  provider rows are upstream's too: `dsh-experimental-computer-use-cua-driver-native`
+  registers its catalog globally and drives this desktop through
+  `@trycua/cua-driver`. dshell neither wraps nor replaces it — it takes
+  the tools away from device agents with a deny list, which is a client
+  of the tools service, not a provider of it.
 - `xterm.js` — third-party browser dependency. Imported from
   `dshell-conversation`'s browser face; not a Cordis package.
+- `@playwright/mcp` — the MCP server dshell's browser provider drives.
+  Pinned (`0.0.80`) and started through the current Node executable; it
+  is a program, not a Cordis package.
 
 ## Dependency graph
 
@@ -550,6 +599,10 @@ dshell-bundle
         ├── dshell-terminal-bridge  (optional: the pane's shell jump)
         └── dshell-ssh              (optional: the device side of a transfer,
                                      read as a structural seat)
+  └── dshell-host-tools       (fills the browser provider slot; denies the
+        │                       desktop tools in device sessions)
+        └── dshell-ssh              (optional: which sessions are device
+                                     sessions, read as a structural seat)
   └── dshell-storage          (library, not a row: the SQLite medium behind
                                 dshell-std's storage contract, consumed by
                                 dshell-terminal-bridge)
@@ -558,9 +611,11 @@ dshell-bundle
 There are no cycles. `dshell-std` has no dependency at all: it is the
   layer that keeps a dsh change from landing once per package.
   `dshell-bundle` is the install root; the others are leaves or
-  single-level consumers of the bridge. The two optional edges exist only
+  single-level consumers of the bridge. The optional edges exist only
   when both rows are composed — each side reads the other through a
-  structural seat, never an import.
+  structural seat, never an import. `dshell-host-tools` is the one
+  consumer of `dshell-ssh` that also depends on it at build time, for
+  the mount base a mid-bind session is recognized by.
 
 ## Cordis `ctx` keys dshell publishes or subscribes to
 
@@ -612,6 +667,17 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
 - `ctx.dshellTerminalBridge` — `feed` moves a session's shell into a
   directory for the pane's jump button; optional, and its absence is
   what the pane reports as `canCd: false` (in `dshell-files`, host face).
+- `ctx.tools` — reads the visible catalog for the `cua_driver_native__*`
+  names and restricts them away from each device agent (in
+  `dshell-host-tools`, host face). A restriction is registered through a
+  `createScope` scope, not through the plugin's own context, since only a
+  context that injects `tools` may register one.
+- `ctx.browserUse` — the exclusive provider slot, filled by
+  `dshell-host-tools`, whose `<provider>.sessions` registration is what
+  mounts one Playwright MCP server per live local agent.
+- `ctx.dshellSshRouting` — which sessions run on a device, which is what
+  decides whether a session gets a browser at all; optional, read
+  structurally (in `dshell-host-tools`, host face).
 
 ### Publishes
 
@@ -636,5 +702,9 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
   stubbed by `dshell-workspace` so ui-conversation / ui-sidebar
   resolve and ConversationRoot mounts after the stock `ui-workspace`
   row is disabled.
+- `ctx.browserUse`'s provider (host) — the stock Playwright MCP row is
+  off and `dshell-host-tools` fills the slot instead, because the
+  decision this package makes (a device session gets no browser) is not
+  one a provider can express from inside upstream's runtime.
 
 No new public `ctx` key is added to dsh itself.

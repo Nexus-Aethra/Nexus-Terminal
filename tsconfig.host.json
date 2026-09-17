@@ -12,6 +12,7 @@
     { "path": "./packages/dshell/terminal-bridge" },
     { "path": "./packages/dshell/mode" },
     { "path": "./packages/dshell/commands" },
+    { "path": "./packages/dshell/host-tools" },
     { "path": "./packages/dshell/ssh" },
     { "path": "./packages/dshell/buffer" },
     { "path": "./packages/dshell/files" },

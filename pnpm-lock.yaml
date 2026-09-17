@@ -9,6 +9,8 @@ overrides:
   '@deepseek-ai/dsh-agent': link:./dsh/packages/core/agent
   '@deepseek-ai/dsh-agent-presets': link:./dsh/packages/preset/agent-presets
   '@deepseek-ai/dsh-api-remotes': link:./dsh/packages/api/remotes
+  '@deepseek-ai/dsh-browser-use': link:./dsh/packages/browser-use/browser-use
+  '@deepseek-ai/dsh-computer-use': link:./dsh/packages/computer-use/computer-use
   '@deepseek-ai/dsh-api-session-controller': link:./dsh/packages/api/session-controller
   '@deepseek-ai/dsh-api-workspace-controller': link:./dsh/packages/api/workspace-controller
   '@deepseek-ai/dsh-client-connection': link:./dsh/packages/client/connection
@@ -34,9 +36,11 @@ overrides:
   '@deepseek-ai/dsh-fs-sandbox': link:./dsh/packages/fs/fs-sandbox
   '@deepseek-ai/dsh-host-webserver': link:./dsh/packages/host/webserver
   '@deepseek-ai/dsh-llm': link:./dsh/packages/llm/llm
+  '@deepseek-ai/dsh-mcp-client': link:./dsh/packages/mcp/mcp-client
   '@deepseek-ai/dsh-sandbox': link:./dsh/packages/sandbox/sandbox
   '@deepseek-ai/dsh-sandbox-local': link:./dsh/packages/sandbox/sandbox-local
   '@deepseek-ai/dsh-sandbox-policy': link:./dsh/packages/sandbox/sandbox-policy
+  '@deepseek-ai/dsh-scope': link:./dsh/packages/core/scope
   '@deepseek-ai/dsh-session': link:./dsh/packages/core/session
   '@deepseek-ai/dsh-session-stats': link:./dsh/packages/session/session-stats
   '@deepseek-ai/dsh-settings': link:./dsh/packages/settings/settings
@@ -157,6 +161,9 @@ importers:
       '@nexus-aethra/dshell-files':
         specifier: workspace:^
         version: link:../files
+      '@nexus-aethra/dshell-host-tools':
+        specifier: workspace:^
+        version: link:../host-tools
       '@nexus-aethra/dshell-mode':
         specifier: workspace:^
         version: link:../mode
@@ -346,6 +353,43 @@ importers:
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(tsx@4.23.13)(typescript@6.0.3)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
+  packages/dshell/host-tools:
+    dependencies:
+      '@nexus-aethra/dshell-ssh':
+        specifier: workspace:^
+        version: link:../ssh
+      '@playwright/mcp':
+        specifier: 0.0.80
+        version: 0.0.80
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: link:../../../dsh/vendor/cordis
+        version: link:../../../dsh/vendor/cordis
+      '@deepseek-ai/dsh-agent':
+        specifier: link:../../../dsh/packages/core/agent
+        version: link:../../../dsh/packages/core/agent
+      '@deepseek-ai/dsh-browser-use':
+        specifier: link:../../../dsh/packages/browser-use/browser-use
+        version: link:../../../dsh/packages/browser-use/browser-use
+      '@deepseek-ai/dsh-mcp-client':
+        specifier: link:../../../dsh/packages/mcp/mcp-client
+        version: link:../../../dsh/packages/mcp/mcp-client
+      '@deepseek-ai/dsh-scope':
+        specifier: link:../../../dsh/packages/core/scope
+        version: link:../../../dsh/packages/core/scope
+      '@deepseek-ai/dsh-tools':
+        specifier: link:../../../dsh/packages/core/tools
+        version: link:../../../dsh/packages/core/tools
+      '@deepseek-ai/schemastery':
+        specifier: link:../../../dsh/vendor/schemastery
+        version: link:../../../dsh/vendor/schemastery
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -858,6 +902,11 @@ packages:
 
   '@oxc-project/types@0.149.0':
     resolution: {integrity: sha512-Efcc+iF0j3Bf67YjEqIqWXbX5XddXoK/Mw4K1/JuXwRCZ8N16VR7iT23nlCc9XrveFVh/E5Rqs2StT0V8v9LdA==}
+
+  '@playwright/mcp@0.0.80':
+    resolution: {integrity: sha512-FOPXHm2SvFhAQylm10jMZ35B/SR2TaMLVkavAlwoG4N2qCb5RqbvhQYcu3zmXNyxR2DW0Ooxe+9XPVt5UjKRCQ==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
@@ -1393,6 +1442,16 @@ packages:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
 
+  playwright-core@1.63.0-alpha-2026-08-31:
+    resolution: {integrity: sha512-1ek0Lyr12h6jcs/WTcNoVtzZkQp7D/90PsMuBW/Rm6h3AsWAbzpqj0geMv8+8Tzzr9CSUYvg9kznrVZINQMXXw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.63.0-alpha-2026-08-31:
+    resolution: {integrity: sha512-3XAsuznfu8jBVJ4QxdGvBkt0+b8ZFwuwJYyOfiIw5ZjUOrNLNRhKxzLzLuydou3gJ9c6eMwVqgzdiOwhy54Kzw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1749,6 +1808,11 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   '@oxc-project/types@0.149.0': {}
+
+  '@playwright/mcp@0.0.80':
+    dependencies:
+      playwright: 1.63.0-alpha-2026-08-31
+      playwright-core: 1.63.0-alpha-2026-08-31
 
   '@quansync/fs@1.0.0':
     dependencies:
@@ -2136,6 +2200,12 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.7: {}
+
+  playwright-core@1.63.0-alpha-2026-08-31: {}
+
+  playwright@1.63.0-alpha-2026-08-31:
+    dependencies:
+      playwright-core: 1.63.0-alpha-2026-08-31
 
   postcss@8.5.28:
     dependencies:
