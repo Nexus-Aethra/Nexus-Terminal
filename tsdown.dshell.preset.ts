@@ -113,3 +113,80 @@ export function dshellClientBundle(
     },
   }
 }
+
+interface DshellNodeBundleConfig {
+  entry: Record<string, string>
+  outDir: string
+  format: 'esm'
+  platform: 'node'
+  target: string
+  dts: false
+  sourcemap: boolean
+  clean: false
+  deps: {
+    /** Force-inline these, even though our manifest declares them. */
+    alwaysBundle: RegExp[]
+    /**
+     * `false` silences the bundled-dependency hints — not a waiver.
+     * {@link DshellNodeBundleConfig.deps.onlyImport} is the gate that matters,
+     * and it is sound in both directions; `onlyBundle` tracked only some of what
+     * got inlined here (it reported our dsh-ssh entry as unused while the
+     * output plainly contained it), so a per-dependency list built on it would
+     * have carried a hole plus a warning.
+     */
+    onlyBundle: false
+    /** The self-containment gate: what may still be an `import` in the output. */
+    onlyImport: RegExp[]
+  }
+  outputOptions: { entryFileNames: string }
+}
+
+/**
+ * Build the bundle config for an artifact that runs on a **device**, not on the
+ * host and not in a browser.
+ *
+ * The deployment contract is one file plus Node: a device has no package
+ * manager, no `node_modules`, and no reason to trust that we would not add one.
+ * So unlike the client preset — which must leave dsh's platform modules for the
+ * browser loader to serve — this one allows *nothing* package-shaped to remain
+ * external.
+ *
+ * Two options make that a build-time guarantee rather than a hope, and the split
+ * between them is the point:
+ *
+ * - `alwaysBundle` forces our runtime dependencies in. Their patterns are
+ *   written as `^pkg(/|$)` because a matcher on the bare name misses a subpath
+ *   import like `@deepseek-ai/dsh-ssh/protocol`, which then silently stays
+ *   external — the exact failure this list exists to prevent.
+ * - `onlyImport`, given an empty list, means nothing but node's built-in modules
+ *   may remain an import (`platform: 'node'` always allows those). A new
+ *   dependency that stays external therefore fails the build here, instead of
+ *   producing a file that only works on a machine that happens to have it.
+ *
+ * `onlyBundle` is set to `false` rather than to the same list: it tracked only
+ * part of what got inlined, and an incomplete allowlist is worse than none when
+ * the real guarantee comes from `onlyImport`.
+ *
+ * @param entry - TypeScript entry for the device artifact. Taken as `.ts`
+ *   rather than tsc-emitted JS because this side has no JSX and no browser API
+ *   to mirror; `tsc -p` still type-checks the same file.
+ * @param artifact - output file stem, emitted as `lib/<artifact>.js`.
+ * @returns tsdown config for a self-contained ESM bundle.
+ */
+export function dshellNodeBundle(entry: string, artifact: string): DshellNodeBundleConfig {
+  const inlined = [/^@deepseek-ai\/dsh-ssh(\/|$)/, /^zod(\/|$)/]
+  return {
+    entry: { [artifact]: entry },
+    outDir: 'lib',
+    format: 'esm',
+    platform: 'node',
+    // A floor, not the host's version: a device runs whatever Node it has, and
+    // the entry's top-level await needs modern semantics.
+    target: 'node20',
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    deps: { alwaysBundle: inlined, onlyBundle: false, onlyImport: [] },
+    outputOptions: { entryFileNames: `${artifact}.js` },
+  }
+}
