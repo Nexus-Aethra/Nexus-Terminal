@@ -32,7 +32,10 @@ import {
   DATA_DIR_FIELD, DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE,
   type DshellDataSettings, type DshellSettings,
 } from '../settings.js'
-import { BlockView, type SshSeat } from './block-view.js'
+import { type SshSeat } from './block-view.js'
+import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
+import { injectTuiCss } from './tui-css.js'
+import { type TuiChoice } from './tui.js'
 import type { PipeSeat, PipeTicket } from './status-card.js'
 import { injectSidebarCompactCss } from './sidebar-compact.js'
 import { DshellLeftControls } from './controls.js'
@@ -156,21 +159,6 @@ function modeSwitchSource(deps: {
 }
 
 /**
- * Business face the block-view seat receives from this registration. Pinned as
- * a named type so the slot overload infers it from here rather than from the
- * component's props (the framework composes the locale `t` seat separately).
- */
-interface BlockViewSeat {
-  sessionId: SessionId | undefined
-  pty: PtyStreamService
-  sessions: ISessions
-  /** Read at render time, so a plugin that loads after this one is still picked up. */
-  ssh: SshSeat | undefined
-  pipe: PipeSeat
-  loadImage: MessageImageLoader | undefined
-}
-
-/**
  * Mount the mode store and contribute dshell pieces as entries into the
  * stock composer slot hierarchy. The stock `InputBar` is the visible
  * composer (see dsh `ui-conversation/.../InputBar.tsx`); dshell adds
@@ -289,6 +277,22 @@ export function apply(ctx: Context): void {
     return store
   }
 
+  // The reader's full-screen decisions, one per session and kept for the
+  // page's life — the same bargain the mode store makes: a reload starts from
+  // the host's reading again rather than from a decision nobody remembers
+  // making. A view with no session yet gets a store nothing ever writes.
+  const noSessionTui = createSnapshotStore<TuiChoice | undefined>(undefined)
+  const tuiStores = new Map<string, SnapshotStore<TuiChoice | undefined>>()
+  const tuiFor = (sessionId: SessionId): SnapshotStore<TuiChoice | undefined> => {
+    const key = String(sessionId)
+    let store = tuiStores.get(key)
+    if (store === undefined) {
+      store = createSnapshotStore<TuiChoice | undefined>(undefined)
+      tuiStores.set(key, store)
+    }
+    return store
+  }
+
   /** Model chip face for one session; undefined while the session is unusable. */
   const modelSeat = (sessionId: SessionId): ModelChipFace | undefined => {
     try {
@@ -355,6 +359,10 @@ export function apply(ctx: Context): void {
   // — the rule is scoped by the sidebar root's collapsed class, which is
   // applied on toggle.
   injectSidebarCompactCss()
+  // The rule that puts dsh's composer away while a full-screen program owns the
+  // screen. Injected once, like the rail's: the decision is per-session and
+  // arrives later, as a body attribute.
+  injectTuiCss()
 
   // dshell does not shadow the stock composer bar — the stock InputBar owns
   // the composer surface, so the user gets stock features out of the box:
@@ -380,6 +388,7 @@ export function apply(ctx: Context): void {
         pty,
         completion: shellCompletion,
         hints: commandHints,
+        tui: sessionId === undefined ? undefined : tuiFor(sessionId),
         setMode: (next: SessionMode) => {
           if (sessionId !== undefined) modeFor(sessionId).set(next)
         },
@@ -435,7 +444,7 @@ export function apply(ctx: Context): void {
       priority: -1,
       locale: NS,
       label: () => t('view.tab'),
-      inject: (sessionId: SessionId | undefined): BlockViewSeat => ({
+      inject: (sessionId: SessionId | undefined): TerminalViewSeat => ({
         sessionId,
         pty,
         sessions,
@@ -446,9 +455,10 @@ export function apply(ctx: Context): void {
         loadImage: sessionId === undefined
           ? undefined
           : (attachment) => uiConversation.imageUrl(sessionId, attachment),
+        tui: sessionId === undefined ? noSessionTui : tuiFor(sessionId),
       }),
     },
-    BlockView,
+    DshellTerminalView,
   ))
   // Shell-mode path completion's list. It rides the same floating layer inside
   // the composer card as dsh's own trigger menu (the one wildcard-free seat for

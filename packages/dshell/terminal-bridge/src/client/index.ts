@@ -75,11 +75,28 @@ export interface PtyChunk {
   timeline?: readonly { t: number; n: number }[]
 }
 
+/** What the host reported about a full-screen program on the terminal. */
+export interface TuiReading {
+  /** The program holding the terminal's foreground, or null for the shell. */
+  readonly program: string | null
+  /** Whether the alternate screen is in use. */
+  readonly alt: boolean
+  /** Whether the surface belongs to that program rather than to the timeline. */
+  readonly active: boolean
+}
+
 export interface PtyStreamState {
   sessionId: string | undefined
   status: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
   /** Bumped on every history change; read the text via {@link read}. */
   version: number
+  /**
+   * What the host last reported about a full-screen program on this terminal.
+   *
+   * Undefined until the host has something to say — a shell nobody has run a
+   * program in never sends one, and the view reads undefined as "the timeline".
+   */
+  tui: TuiReading | undefined
   /** Why the shell (or the wire) ended, as the host reported it. */
   reason: string | undefined
   /** The last connection diagnostic the output held, when the host found one. */
@@ -184,6 +201,7 @@ export class PtyStreamService extends Service {
     sessionId: undefined,
     status: 'idle',
     version: 0,
+    tui: undefined,
     reason: undefined,
     detail: undefined,
     ready: false,
@@ -684,6 +702,9 @@ export class PtyStreamService extends Service {
       this.patch({
         sessionId: dshSessionId,
         status: 'connecting',
+        // A different session has its own terminal, so the previous one's
+        // reading is not about this one. The bind's own snapshot fills it in.
+        tui: undefined,
         reason: undefined,
         detail: undefined,
         ready: false,
@@ -774,6 +795,16 @@ export class PtyStreamService extends Service {
         block.text += frame.text
         this.patch({ version: this.state.getSnapshot().version + 1 })
       }
+      return
+    }
+    if (frame.kind === 'tui') {
+      this.patch({
+        tui: {
+          program: typeof frame.program === 'string' ? frame.program : null,
+          alt: frame.alt === true,
+          active: frame.active === true,
+        },
+      })
       return
     }
     if (frame.kind === 'info') {
