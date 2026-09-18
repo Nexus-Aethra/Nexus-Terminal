@@ -8,11 +8,19 @@
  * `dsh/apps/desktop/scripts/package-target.ts`:
  *
  *   build:official → release:pack{dsh,vendor} → pack desktop-host → landlock
- *   → prepare:runtime → prepare:packages → prepare:seed → electron-builder
+ *   → prepare:runtime → prepare:packages → prepare:dsh → electron-builder
+ *
+ * The last prepare step is `prepare:dsh` and not `prepare:seed`, because the
+ * checkout is `0.1.6-alpha.1`: that release renamed rc.2's `prepare-seed.ts`, and
+ * its `seed` / `seedPnpm` build paths, to `prepare-dsh.ts` and `dsh` / `dshPnpm`
+ * (`dshell-roadmap.md`, Phase 10.4, recorded the rename as the reason the
+ * packaging target was pinned to rc.2 at the time). The old name is not a
+ * fallback — it fails with `ERR_MODULE_NOT_FOUND`, and it fails at the END of a
+ * ten-minute build, after every earlier step has already succeeded.
  *
  * The steps that never resolve a target (the builds and the packing) run through
  * plain `pnpm`, exactly as upstream runs them. The four steps that do resolve one
- * — `prepare:runtime`, `prepare:packages`, `prepare:seed`, and electron-builder
+ * — `prepare:runtime`, `prepare:packages`, `prepare:dsh`, and electron-builder
  * itself — are launched as explicit `node --import <hooks> …` processes. That
  * split matters: the hook cannot travel in `NODE_OPTIONS`, because pnpm 11
  * re-executes itself for nested scripts and a loader already registered in the
@@ -32,11 +40,11 @@
  * Usage:
  *   node scripts/package-linux.mjs --dir            # unpacked directory (fast check)
  *   node scripts/package-linux.mjs                  # AppImage
- *   node scripts/package-linux.mjs --prepare-only   # runtime/packages/seed only
+ *   node scripts/package-linux.mjs --prepare-only   # runtime/packages/dsh only
  *   node scripts/package-linux.mjs --dir --from=builder
  *       Resume at one step, skipping earlier ones and reusing their output. The
  *       step ids are build, pack-dsh, pack-host, pack-vendor, landlock, runtime,
- *       packages, seed, builder. Debugging aid; a full run rebuilds everything.
+ *       packages, dsh, builder. Debugging aid; a full run rebuilds everything.
  *
  * Environment overrides:
  *   DSH_DESKTOP_APP_ID            reverse-DNS app id (default com.nexusaethra.dshell)
@@ -279,7 +287,7 @@ async function main() {
     },
     { id: 'runtime', run: () => hookedStep('prepare:runtime', join(DESKTOP, 'scripts', 'prepare-runtime.ts'), targetEnv) },
     { id: 'packages', run: () => hookedStep('prepare:packages', join(DESKTOP, 'scripts', 'prepare-package-set.ts'), targetEnv) },
-    { id: 'seed', run: () => hookedStep('prepare:seed', join(DESKTOP, 'scripts', 'prepare-seed.ts'), targetEnv) },
+    { id: 'dsh', run: () => hookedStep('prepare:dsh', join(DESKTOP, 'scripts', 'prepare-dsh.ts'), targetEnv) },
     {
       id: 'builder',
       run: () => step(
