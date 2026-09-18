@@ -1,15 +1,23 @@
 /**
- * Hide dsh's sidebar section labels in the compact rail.
+ * Hide dsh's sidebar section labels — and dshell's own SSH badge — in the
+ * compact rail.
  *
  * dsh's sidebar narrows to a compact rail when collapsed; the rail keeps
  * showing the section headings as small rotated text, which crowds the icons
- * and adds nothing the user could act on. This module injects one stylesheet
+ * and adds nothing the reader could act on. This module injects one stylesheet
  * and a small DOM walker that marks the offending labels with
  * `data-dshell-rail-label`, and the stylesheet hides them in the collapsed
  * state. Expanded, the labels return to their normal width and position.
  *
+ * The `SSH` badge goes with them, and it does not need the walker: it is a
+ * fixed-width pill (about 35px) that dshell-workspace already marks with
+ * `data-dshell-ssh-badge`, and the rail is narrower than the pill itself — so
+ * the rail was showing a row of badges where the session titles had collapsed
+ * to nothing, and the one thing the badge says (this session is a device) was
+ * crowding the row it was meant to describe.
+ *
  * The CSS-module class names are build-dependent, so the stylesheet targets
- * the data attribute this module adds. The DOM walker no longer matches the
+ * the data attributes these modules add. The DOM walker no longer matches the
  * headings' *text* — dshell-workspace renders those through its own locale
  * dictionary, so an English switch changed `会话 (6)`/`已归档` into
  * `Sessions (6)`/`Archived` and the old matcher stopped firing. It instead
@@ -29,6 +37,9 @@ const STYLE_ID = 'dshell-sidebar-compact-css'
  * inside it.
  */
 const LABEL_ATTR = 'data-dshell-rail-label'
+
+/** The device badge dshell-workspace emits on an SSH session's row. */
+const SSH_BADGE_ATTR = 'data-dshell-ssh-badge'
 
 /** The row marker dshell-workspace puts on every session-list row/header. */
 const ROW_ATTR = 'data-dshell-row'
@@ -93,7 +104,8 @@ export function injectSidebarCompactCss(): void {
     const style = document.createElement('style')
     style.id = STYLE_ID
     style.textContent = `
-[class*="_root"][class*="_collapsed"] [${LABEL_ATTR}] {
+[class*="_root"][class*="_collapsed"] [${LABEL_ATTR}],
+[class*="_root"][class*="_collapsed"] [${SSH_BADGE_ATTR}] {
   display: none !important;
 }
 `.trim()

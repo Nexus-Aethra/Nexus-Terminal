@@ -237,7 +237,10 @@ export function FlatSessionList(props: FlatSessionListBodyProps): ReactElement {
   const rowMain = (row: SessionRow, suffix = ''): ReactElement => {
     return createElement(Fragment, null,
       isDeviceSession(row.id)
-        ? createElement('span', { style: sshBadgeStyle }, 'SSH')
+        // The marker is what lets the compact rail hide this badge: it is the
+        // row's only fixed-width child, and the rail is narrower than the pill
+        // (`sidebar-compact.ts` in `dshell-mode` owns the rule).
+        ? createElement('span', { style: sshBadgeStyle, 'data-dshell-ssh-badge': '' }, 'SSH')
         : null,
       createElement('span', { style: rowTitleStyle }, `${rowLabel(row)}${suffix}`),
     )
