@@ -436,7 +436,7 @@ packages stay needed at runtime because the bundle patch inserts a
 
 Two consequences worth knowing. Any transaction the app's own plugin window
 performs installs from `registry.npmjs.org` (pinned in its `project-manager`),
-where these packages exist at 0.1.2 — the published release, not this checkout —
+where these packages exist at 0.1.3 — the published release, not this checkout —
 so a plugin installed or removed from the UI may replace the local build with it.
 And the app checks upstream's update feed on every start
 (`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it logs a

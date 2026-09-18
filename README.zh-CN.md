@@ -62,7 +62,7 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 
 ```sh
 # 1) dshell 本体。只装一个包：bundle 就是 patch 层，另外十一个由它依赖带入。
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.2
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.3
 
 # 2) patch 里点名、但原版 profile 不带的上游包：浏览器与计算机使用的注册表，以及桌面驱动。
 dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
@@ -76,7 +76,7 @@ dsh web
 dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
 
 **桌面版**里同样的事情有一个窗口入口：`设置 → 插件`，填
-`@nexus-aethra/dshell-bundle@0.1.2`（它从 npmjs 安装，并精确锁定版本）。
+`@nexus-aethra/dshell-bundle@0.1.3`（它从 npmjs 安装，并精确锁定版本）。
 
 > 跳过第 2 步不会致命——dsh 照样启动，只是为两条 computer-use 行报
 > `2 entries did not activate`，其余功能都在。之所以列出来，是因为浏览器与桌面能力正是这次发布的
