@@ -17,6 +17,7 @@ import type { CompletionState, ShellCompletion } from './completion.js'
 import type { CommandHints } from './command-hint.js'
 import { useShellHelpers } from './shell-settings.js'
 import { useDshellTheme } from './theme.js'
+import { toggledChoice, tuiFullScreen, type TuiChoice } from './tui.js'
 import type { SessionMode } from './types.js'
 
 const chipSeatStyle: CSSProperties = { position: 'relative', display: 'flex' }
@@ -93,6 +94,8 @@ export function DshellLeftControls(props: {
   pty: PtyStreamService | undefined
   setMode(next: SessionMode): void
   submitShell(text: string): void
+  /** The reader's full-screen decision for this session (see `tui.ts`). */
+  tui: SnapshotStore<TuiChoice | undefined> | undefined
 } & DshellInputStandardProps & DshellInputCompletion & PropsLocale<'dshellMode'>): ReactElement | null {
   const { t } = props
   const theme = useDshellTheme()
@@ -100,6 +103,18 @@ export function DshellLeftControls(props: {
     props.mode?.subscribe ?? (() => () => {}),
     props.mode?.getSnapshot ?? (() => 'shell' as SessionMode),
   )
+  // The host's reading of the terminal, and the reader's decision about it.
+  // Read here only to draw the way IN — the way out belongs to the full-screen
+  // surface itself, since the composer is exactly what that mode puts away.
+  const tuiReading = useSyncExternalStore(
+    props.pty?.state.subscribe ?? (() => () => {}),
+    () => props.pty?.state.getSnapshot().tui,
+  )
+  const tuiChoice = useSyncExternalStore(
+    props.tui?.subscribe ?? (() => () => {}),
+    props.tui?.getSnapshot ?? (() => undefined),
+  )
+  const fullScreen = tuiFullScreen(tuiReading, tuiChoice)
   // Latest draft, kept in a ref so the DOM-level listener reads it
   // without re-subscribing on every keystroke.
   const draft = props.useInput?.(state => state.draft) ?? ''
@@ -638,6 +653,18 @@ export function DshellLeftControls(props: {
     fontFamily: 'inherit',
     transition: 'color 120ms, border-color 120ms',
   }
+  const fullScreenStyle: CSSProperties = {
+    border: `1px solid ${theme.borderStrong}`,
+    background: 'transparent',
+    color: theme.muted,
+    cursor: 'pointer',
+    borderRadius: 999,
+    padding: '3px 10px',
+    fontSize: 11,
+    whiteSpace: 'nowrap',
+    fontFamily: 'inherit',
+    marginLeft: 8,
+  }
   /** The legend, naming each assist only while it is switched on: promising a
    * key the settings card has turned off is a worse answer than a shorter line. */
   const legendFor = (...leading: readonly string[]): string => [
@@ -664,6 +691,17 @@ export function DshellLeftControls(props: {
               ? legendFor(t('composer.legend.acceptWord'), t('composer.legend.continueHint'))
               : legendFor(t('composer.legend.idle')))
         : t('composer.legend.agent')),
+    // The way INTO full screen, for a program the host's reading misses. Not
+    // drawn while the surface is already the program's — that mode hides the
+    // whole composer, so this button goes with it and the way out is the one
+    // the surface itself carries.
+    mode === 'shell' && !fullScreen
+      ? createElement('button', {
+        style: fullScreenStyle,
+        title: t('tui.enterTitle'),
+        onClick: () => { props.tui?.set(toggledChoice(tuiReading, tuiChoice)) },
+      }, t('tui.enter'))
+      : null,
   )
 }
 

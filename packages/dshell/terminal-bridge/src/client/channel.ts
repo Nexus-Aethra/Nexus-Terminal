@@ -46,6 +46,12 @@ export interface WireFrame {
   /** `block-text` frames: a delta appended to one open block. */
   seq?: number
   text?: string
+  /** `tui` frames: the program holding the terminal, or null for the shell. */
+  program?: string | null
+  /** `tui` frames: whether the alternate screen is in use. */
+  alt?: boolean
+  /** `tui` frames: whether the surface should be handed to that program. */
+  active?: boolean
 }
 
 /** What a channel reports back to its owner. */

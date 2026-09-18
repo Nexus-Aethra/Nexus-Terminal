@@ -23,6 +23,7 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 - [A tour of the screen](#a-tour-of-the-screen)
 - [Two modes: `$ shell` and `✦ agent`](#two-modes-shell-and-agent)
 - [The AI has a terminal of its own](#the-ai-has-a-terminal-of-its-own)
+- [Full-screen programs](#full-screen-programs)
 - [Input assists: Tab, ↑, →](#input-assists-tab--)
 - [**Cross-session collaboration: pipes and the buffer**](#cross-session-collaboration-pipes-and-the-buffer)
 - [SSH device sessions](#ssh-device-sessions)
@@ -180,6 +181,28 @@ row: a read-only live view, with `为 AI 开启一个终端` whenever it is not 
 If dsh's bash tool spawns a persistent shell in the same session, dshell **claims** it as the AI's
 terminal, so the model's `bash` calls, `terminal_send`, and the panel you are watching all converge on
 one PTY — no more "the panel shows one shell while the model ran its command in another".
+
+---
+
+## Full-screen programs
+
+A program that takes the whole screen — `vim`, `htop`, `less`, a coding TUI such as `minimax-code` —
+gets the surface instead of the timeline. The composer steps aside, the terminal fills the column, and
+every key goes straight to the program: the arrows, `Tab`, `Escape`, the control chords, and the mouse
+reporting it asks for. This is the one case where the composer is not the input line, because a
+program that reads the keyboard itself cannot share it with a line editor.
+
+dshell decides this on its own, from two readings of the session's terminal: a foreground program that
+is painting the screen (hiding the cursor, opening a synchronized update, enabling mouse reporting),
+or the alternate screen that `vim` and friends switch to. Either one is enough. A long command is not
+a full-screen program — `npm install` and `sleep 30` keep their timeline.
+
+| | |
+|---|---|
+| Getting out | the `退出全屏` button on the small bar over the program's own screen — or just quit the program, and the timeline comes back by itself |
+| Getting in by hand | the `全屏` button beside the mode chip, for a program the reading misses |
+| While it is on | the transcript is not rendered at all, and the program's output is kept out of the timeline on purpose: its repaints would land there as a wall of half-drawn screens. It is still in the session's raw log, so a reconnect replays the screen |
+| A device session | only the alternate screen is read there (the local process is `ssh`), so the button is the way in for everything else |
 
 ---
 
@@ -433,6 +456,7 @@ have something to say:
 | Input line | `↑` | command history list |
 | Input line | `→` | take one word of the ghost hint |
 | Input line | `Ctrl+C` / `Ctrl+Shift+V` | interrupt / paste into the terminal |
+| Input line | `全屏` | hand the whole surface to a full-screen program |
 | Terminal | drag a directory in | `cd` the terminal there |
 | Timeline | click a task block's header | fold / unfold it |
 | Timeline | the right-edge bookmark rail | jump to an AI turn |
@@ -494,6 +518,9 @@ This is exactly what produced the two screenshots above — the run is real, not
 - **Browser and desktop control are local-session only.** A device session gets neither, on purpose:
   both would act on this machine while the session works on another. The install note above lists
   the two upstream packages that make the desktop half available at all.
+- **Full-screen mode reads the foreground on this machine only.** A device session is detected by the
+  alternate screen alone, so a full-screen program that does not switch buffers needs the `全屏`
+  button there. The reading is Linux's: `dsh web` on macOS or Windows has the button and nothing else.
 - The pipe panel refreshes by polling (about every 3 seconds) — there is no push channel. In-flight
   transfers refresh the status card once a second.
 

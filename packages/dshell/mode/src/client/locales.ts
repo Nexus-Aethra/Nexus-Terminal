@@ -262,6 +262,13 @@ export const zh = {
   'connection.notice.connecting': '◌ 正在连接{device}… {seconds} 秒',
   'connection.reconnectStopped': '✗ 自动重连已停止（{max} 次均失败）',
   'connection.reopenTerminal': '重新打开终端',
+
+  // The full-screen surface: the way in from the composer, the way out from the
+  // surface itself, and the name of the program holding the terminal.
+  'tui.enter': '全屏',
+  'tui.enterTitle': '把整个界面交给这个程序，按键由它直接接收',
+  'tui.leave': '退出全屏',
+  'tui.occupying': '{program} 正在占用终端',
 } satisfies Record<string, string>
 
 /** Mode dictionary key union. */
@@ -494,4 +501,9 @@ export const en = {
   'connection.notice.connecting': '◌ Connecting{device}… {seconds}s',
   'connection.reconnectStopped': '✗ Auto-reconnect stopped ({max} failed)',
   'connection.reopenTerminal': 'Reopen terminal',
+
+  'tui.enter': 'Full screen',
+  'tui.enterTitle': 'Hand the whole surface to this program and let it take the keys',
+  'tui.leave': 'Leave full screen',
+  'tui.occupying': '{program} is holding the terminal',
 } satisfies Record<DshellModeKey, string>

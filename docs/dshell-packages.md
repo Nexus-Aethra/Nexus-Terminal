@@ -158,7 +158,12 @@ when it contributes to model-visible state.
   the page can reach it and falls back to the stream everywhere else —
   in particular the desktop shell, which composes `connection` but not
   `webServer`. Implements the wire protocol in `dshell-architecture.md`
-  § 4.
+  § 4. It also reads what is ON the session's terminal (`foreground.ts`:
+  the PTY's foreground process group from `/proc`, plus the alternate
+  screen in the byte stream) and broadcasts the resulting `tui` frame —
+  the reading that lets the browser hand the whole surface to a
+  full-screen program, and the reason those bytes stay out of the block
+  log (§ 18).
 - dsh services depended on: `ctx.connection` (frame stream + history
   read, the composition-independent path), `ctx.webServer` (the ws fast
   path), `ctx.terminals` (PTY lifecycle), `ctx.agents` (resolve agent by
@@ -204,6 +209,12 @@ when it contributes to model-visible state.
   beside the palette (`settings-card.ts`), `shell-settings.ts` holds the
   client store with a pre-paint cache, and the key interceptor reads it
   through a ref so a flip cannot go stale.
+  The view seat is `terminal-view.ts`, which chooses between the
+  timeline and a full-screen program's own screen (`tui-surface.ts`):
+  the timeline is UNMOUNTED rather than hidden, because it is what pushes
+  the grid to the PTY, and `tui-css.ts` puts dsh's composer away for as
+  long as the program holds the terminal (`tui.ts` keeps the reader's own
+  decision about it) — § 18.
 - dsh services depended on: `ctx.uiSession`, `ctx.agents.inject`,
   `dshell-terminal-bridge` (for main PTY id, the agent stream and
   context buffer read), `ctx.sessions` (the status card's session

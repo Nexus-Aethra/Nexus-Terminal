@@ -944,3 +944,117 @@ See [`dshell-roadmap.md`](./dshell-roadmap.md). The architecture above
 fully specifies what each phase's plugins must produce. The next
 practical step is Phase 0 (`dshell-bundle` skeleton) followed by Phase 1
 (empty `terminal` target registration).
+
+## 18. A full-screen program on the terminal
+
+§ 12 renders a shell stretch as a region of the **log**, measured from its ink,
+and § 13 makes the **composer** the input line with the region a read-only
+mirror. Both are right for commands and both are wrong for a program that takes
+the screen: it places every character itself at a grid it was told the size of,
+and it reads the keyboard directly. This section is the exception, and it is
+deliberately a MODE — while the program is on screen the timeline is not
+rendered at all.
+
+### 18.1 Deciding that a program has taken the terminal
+
+`terminal-bridge/src/foreground.ts`, and the two signals in it are each
+insufficient alone:
+
+| signal | catches | misses |
+|---|---|---|
+| the PTY's foreground process group | every program that takes the terminal, whether or not it paints | nothing — but it fires for `sleep 30` and `npm install` too |
+| the alternate screen (`ESC[?1049h` / `?1049l`) | `vim`, `less`, `htop`, `tmux` | programs that never switch buffers, which includes `minimax-code` |
+
+So a foreground program counts only once it has shown it is PAINTING the screen
+— hiding the cursor, opening a synchronized update, enabling mouse reporting —
+while the alternate screen counts on its own. `active = alt || (program !== null
+&& control)`.
+
+The reading comes from `/proc/<pid>/stat`, and the offsets are load-bearing:
+`comm` is parenthesised and may itself contain parentheses, so the numeric
+fields start after the LAST `)` — which puts `pgrp` at 2 and `tpgid` at 5 of
+what remains (`terminalOwnerOf`, pinned by a spec). `undefined` (no `/proc`, so
+not Linux) is deliberately distinct from `null` (the shell owns it): treating
+"cannot tell" as "nothing is running" would drop the mode on the first read
+failure of an unsupported platform.
+
+Three rules the spec pins, each because getting it wrong is visible:
+
+- **Entry does not wait for the poll.** A chunk that proves a program is
+  painting reads `/proc` on the spot. The poll leaves a window as wide as its
+  interval, and the first chunk of a full-screen program is the largest one it
+  will ever send — and it is exactly the chunk that must not enter the timeline.
+- **Evidence is not inherited.** A named program replacing another clears the
+  evidence, so the plain command that follows a TUI cannot claim the surface the
+  TUI earned. The clearing deliberately does NOT fire for an unnamed reading
+  (`?` — a dying or starting group) or for a name arriving where there was none,
+  because taking a running program's surface away over a name costs the reader
+  their screen.
+- **Only an INCOMPLETE escape sequence is carried across a chunk.** A blind tail
+  re-presents the previous chunk's bytes to the match, which arms the cursor
+  evidence a second time after the clearing above removed it — the exact false
+  positive that clearing exists to prevent. `pendingTail` keeps the longest
+  suffix that is a proper prefix of a watched sequence, and nothing else.
+
+A device session's local child is `ssh`, which holds the local terminal's
+foreground for the session's whole life, so the foreground signal is not watched
+there (§ 4.11's rule, applied to a reading rather than a tool). The bytes still
+carry the alternate screen, so that half keeps working on a device; the manual
+toggle covers the rest.
+
+### 18.2 The wire
+
+One new frame, broadcast on every change and included in the bind snapshot
+(`pushSnapshot`) so a client that binds or re-binds learns the current reading
+rather than being left in a mode nothing will take it out of:
+
+```tsc
+{ kind: 'tui', program: string | null, alt: boolean, active: boolean }
+```
+
+`program` is a LABEL — a program is free to rewrite its own argv, so nothing is
+matched on it — and it is reported even when `active` is false, because it is
+what the full-screen bar puts in front of the reader and what the reader's own
+decision is keyed to.
+
+### 18.3 What the host stops doing while `active`
+
+The bytes still go to `buffer` (a reconnect replays the screen from it) and
+still ride the `output` frame (the viewport is fed by them). What they do NOT
+reach is the **block log** or the **command splitter**: a full-screen program's
+repaints would land in the block log as a wall of half-drawn screens, and the
+block log is what the timeline renders from the moment the mode ends. A
+full-screen app also runs no command lines, so the splitter would only invent
+history from it.
+
+### 18.4 The browser side
+
+| file | what it owns |
+|---|---|
+| `mode/src/client/tui.ts` | the reader's own decision, kept against the PROGRAM it was made about so it cannot become a mode of its own |
+| `mode/src/client/terminal-view.ts` | which surface the seat gets. The timeline is UNMOUNTED, not hidden: it measures the view area and pushes the grid to the PTY, so leaving it mounted under a full-screen program would have two effects sizing one shell |
+| `mode/src/client/tui-surface.ts` | the viewport: `convertEol: false` (a screen, not a log), `scrollback: 0` (a cursor move the program believes stays on screen must not scroll the grid out from under it), sized from its BOX and never from its content, with the row height read off xterm's own element because a full-screen program notices being one row off |
+| `mode/src/client/tui-css.ts` | `[data-composer-seat]` hidden by a body attribute. That is dsh's own marker on the composer's seat — the element that stops taking layout space when hidden, so the view above it grows and the terminal is re-measured with nothing else asked |
+
+`term.onData` is forwarded to the PTY verbatim, which is what makes the mode
+work at all — and it carries xterm's own answers to the program's queries with
+it (`ESC[c`, the background-colour query), which is the only way a program that
+negotiates its terminal ever hears back. The same channel owes the PTY a
+`resize` whenever the grid changes, because the program's own idea of where the
+cursor can go is what it draws its screen from.
+
+The way OUT cannot live in the composer, since the composer is what the mode
+puts away: the surface floats one small bar over the program's screen
+(`pointerEvents: 'none'` everywhere but the button, so the screen stays the
+reader's). The way IN is a button beside the mode chip in
+`conversation.input.left`, for a program the reading misses.
+
+### 18.5 Not covered
+
+- A device session gets the alternate-screen signal only (§ 18.1).
+- A command whose first character is `/` never reaches the shell through the
+  composer (§ 4.5's rule): `/…` is dsh's command channel. Unchanged, and worth
+  knowing before typing an absolute path into a shell line.
+- The mode is per browser and does not survive a reload — the reading does,
+  because the bind snapshot carries it; only the reader's own decision is
+  forgotten, exactly as § 7 treats the mode store.

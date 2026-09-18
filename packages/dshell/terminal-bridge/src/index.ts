@@ -43,6 +43,7 @@ import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
 import { DshellPtyBackend, diagnosticTail, exitLabel, type DshellPtySession } from './pty.js'
+import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
 import { FetchSubscriber, WsSubscriber, type PtySubscriber } from './subscriber.js'
@@ -202,9 +203,17 @@ interface MainRecord extends ShellRecord {
   /** Input-line assembly + output/marker splitter for this shell. */
   splitter: CommandSplitterState
   inputQueue: string[]
+  /**
+   * What is drawing on this session's terminal: the poll's reading of the
+   * foreground process group, and the screen the output has shown. A
+   * full-screen program is not timeline content, and this is what decides it.
+   */
+  foreground: ForegroundState
   /** Push-subscription disposers, released in dropMain. */
   stopOutput: () => void
   stopExit: () => void
+  /** Ends the foreground poll; released with the other two. */
+  stopForeground: () => void
   /**
    * Set when the PTY exited or the dsh session was disposed. The record
    * stays in `mains` briefly so a reconnecting client can receive the
@@ -574,10 +583,12 @@ export class DshellTerminalBridge extends Service {
       splitter,
       activeSend: undefined,
       inputQueue: [],
+      foreground: new ForegroundState(),
       initializing: true,
       ready: false,
       stopOutput: () => {},
       stopExit: () => {},
+      stopForeground: () => {},
     }
     // Start at the grid the view asked for, not the backend's default: the
     // shell's first prompt decides where every later line wraps, and the view
@@ -585,13 +596,46 @@ export class DshellTerminalBridge extends Service {
     const requested = this.pendingSizes.get(dshSessionId)
     if (requested !== undefined) session.resize(requested.cols, requested.rows)
     this.mains.set(agent, record)
+    // A device session's local child is `ssh`, which holds the local
+    // terminal's foreground for the session's whole life — reading it would
+    // call every device session a full-screen program. The bytes still carry
+    // the alternate screen, so that signal keeps working there, and the manual
+    // toggle covers the rest.
+    if (!session.redirected) {
+      record.stopForeground = watchForeground(session.pid, (program) => {
+        if (record.dead !== undefined) return
+        if (!record.foreground.setProgram(program)) return
+        this.broadcast(record.dshSessionId, { kind: 'tui', ...record.foreground.snapshot })
+      })
+    }
     // Raw ANSI push: every output byte lands in the persisted buffer and on
     // the wire untouched — the canvas renders it natively. Suppressed while
     // the init echo is pending so a fresh session opens on a clean slate.
     // The same bytes feed the command splitter (OSC 133;D closes a record).
     record.stopOutput = session.onOutput((chunk) => {
       if (record.initializing) return
+      // The reading comes FIRST, because a chunk that proves a program is
+      // painting the screen is exactly the chunk that must not enter the
+      // timeline. A program the poll has not named yet is read here on the
+      // spot rather than waited for, so the boundary lands on the right chunk.
+      let changed = record.foreground.feed(chunk)
+      if (record.foreground.probing) {
+        const program = foregroundProgram(session.pid)
+        if (program !== undefined) changed = record.foreground.setProgram(program) || changed
+      }
+      if (changed) this.broadcast(record.dshSessionId, { kind: 'tui', ...record.foreground.snapshot })
       record.buffer.append(chunk)
+      record.absOffset += Buffer.byteLength(chunk, 'utf8')
+      if (record.foreground.snapshot.active) {
+        // A full-screen program is not timeline content. Its repaints would
+        // land in the block log as a wall of half-drawn screens, and that log
+        // is what the timeline renders from the moment this mode ends. The
+        // raw buffer keeps every byte, which is what lets a reconnect replay
+        // the screen; the block log and the command splitter see none of it,
+        // because a full-screen app runs no command lines.
+        this.broadcast(record.dshSessionId, { kind: 'output', chunk, time: Date.now() })
+        return
+      }
       const opened = record.blocks.tailSeq
       const block = record.blocks.append(chunk)
       if (block.seq === opened) {
@@ -603,7 +647,6 @@ export class DshellTerminalBridge extends Service {
         // turn is dropped from the timeline and the view stays empty.
         this.broadcast(record.dshSessionId, { kind: 'blocks', blocks: record.blocks.snapshot() })
       }
-      record.absOffset += Buffer.byteLength(chunk, 'utf8')
       const closed = splitOutput(record.splitter, chunk, Date.now())
       if (closed.length > 0) {
         // The window keeps the display form only: `stored` carries the store's
@@ -1172,8 +1215,10 @@ export class DshellTerminalBridge extends Service {
     record.dead = { reason, detail, ready: record.ready, time: Date.now() }
     record.stopOutput()
     record.stopExit()
+    record.stopForeground()
     record.stopOutput = () => {}
     record.stopExit = () => {}
+    record.stopForeground = () => {}
     // Queued keystrokes have nowhere to go, and a pump that keeps retrying a
     // dead PTY is an endless 100ms loop. Dropping them is what the shell's
     // death means anyway.
@@ -1232,6 +1277,7 @@ export class DshellTerminalBridge extends Service {
       if (record.disposeTimer !== undefined) clearTimeout(record.disposeTimer)
       record.stopOutput()
       record.stopExit()
+      record.stopForeground()
       await record.history.flush().catch(() => {})
       await record.buffer.close().catch(() => {})
     }
@@ -1576,6 +1622,11 @@ export class DshellTerminalBridge extends Service {
     })
     // The host owns block order; the client renders this list as given.
     this.sendFrame(client, { kind: 'blocks', blocks: record.blocks.snapshot() })
+    // A client that binds while a program owns the terminal has to know the
+    // surface is that program's, not the timeline's — and one that re-binds
+    // after the program ended must not be left in a mode nothing will take it
+    // out of. Sent unconditionally, because "nothing is running" is an answer.
+    this.sendFrame(client, { kind: 'tui', ...record.foreground.snapshot })
   }
 
   /** Send a single frame to one subscriber; tolerates a closing carrier. */
