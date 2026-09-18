@@ -9,6 +9,17 @@
  * literal in a file whose path is stable, so patching the loaded source leaves
  * every other line of upstream authoritative.
  *
+ * The third patch is not about the target at all. `prepare-dsh.ts` runs
+ * `tests/fixtures/runtime-payload-smoke.mjs` against the materialized runtime,
+ * and that fixture asserts five payloads: `koffi`, `sharp`, `turndown` and
+ * `node-pty` — each declared by a first-party package — and `fs-ext`, which
+ * **nothing declares**. Upstream still expects it: `project-manager.ts` lists it
+ * in `allowBuilds` beside the other two native modules, and
+ * `runtime-file-policy.ts` carries rules for its compiler output by name. So the
+ * declaration is supplied here, into the runtime project's dependencies, rather
+ * than the check being skipped — `fs-ext@2.1.1` builds and satisfies it on the
+ * bundled Node 24.17.0. Delete this patch when upstream declares it itself.
+ *
  * Applied with `node --import scripts/linux-target-patch.mjs <script>` on the
  * individual leaf processes (`scripts/package-linux.mjs`). Deliberately *not*
  * via `NODE_OPTIONS`: pnpm 11 re-executes itself for nested `pnpm run` calls, and
@@ -18,6 +29,15 @@
  */
 
 import { fileURLToPath } from 'node:url'
+
+/**
+ * The version supplied for upstream's undeclared `fs-ext` dependency.
+ *
+ * Pinned exactly, because the desktop project manifests reject anything that is
+ * not an exact registry version. It is the version the payload check was
+ * verified against; upstream pins none of its own.
+ */
+const FS_EXT_VERSION = '2.1.1'
 
 /** @type {{ label: string, file: string, widen: (source: string) => string | undefined }[]} */
 const PATCHES = [
@@ -35,6 +55,14 @@ const PATCHES = [
     widen: source => source.replace(
       /const UPDATE_TARGETS = new Set\(\[([^\]]*)\]\)/u,
       (_match, items) => `const UPDATE_TARGETS = new Set([${items}, 'linux-x64'])`,
+    ),
+  },
+  {
+    label: 'project-manager.ts runtime payload (fs-ext)',
+    file: 'apps/desktop/src/project-manager.ts',
+    widen: source => source.replace(
+      /dependencies: desktopCorePackageOverrides\(packageSet\),/u,
+      `dependencies: { ...desktopCorePackageOverrides(packageSet), 'fs-ext': '${FS_EXT_VERSION}' },`,
     ),
   },
 ]
