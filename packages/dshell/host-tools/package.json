@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-host-tools",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Host capabilities belong to local sessions. Provides the browser-use provider (upstream's dsh-browser-use registry) and denies the desktop tools of upstream's computer-use provider in every session bound to an SSH device.",
   "license": "MIT",
   "repository": {

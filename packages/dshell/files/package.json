@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-files",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "dshell file navigator: replaces dsh's right-sidebar Files tab type with a movable browser \u2014 a `..` row, clickable path segments, back/forward history over the session's own execution world (a device's whole tree for a device session).",
   "license": "MIT",
   "repository": {
