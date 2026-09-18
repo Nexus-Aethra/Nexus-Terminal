@@ -449,6 +449,17 @@ in both dsh themes.
 
 **Rollback:** reinstall the previous `.deb`; the profile can be re-seeded.
 
+**Where the build stands (2026-09-18).** `node scripts/package-linux.mjs` now
+completes against this checkout and produces both artifacts for
+`0.1.6-alpha.1` — the AppImage and the `.deb` — in
+`dsh/apps/desktop/.desktop-build/targets/linux-x64/artifacts/`. Two things had to
+be adapted first, and both are recorded where they were made rather than here:
+the prepare step follows the rename `prepare-seed.ts` → `prepare-dsh.ts`
+(`scripts/package-linux.mjs`), and the runtime project is given the `fs-ext`
+declaration upstream's payload check asserts but nothing declares
+(`scripts/linux-target-hooks.mjs`). The rest of A5 — the seed-omission list, the
+install recipe, and dshell in a desktop profile — is still open.
+
 ### A6 — Deferred capabilities
 
 Listed in §1.3 and deliberately out of this round. Each is a phase of its own:
