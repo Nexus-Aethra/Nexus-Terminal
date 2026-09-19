@@ -10,6 +10,7 @@
  */
 
 import { type Context } from '@deepseek-ai/cordis'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 // Type-only: pulls the renderer-owned slots service (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls ui-layout's SlotMap merge (the `shell.overlay` seat).
@@ -53,8 +54,36 @@ export function apply(ctx: Context): void {
   ctx.inject(['sessions'], (sessionCtx) => {
     sessions = sessionCtx.get('sessions') as unknown as ISessions
   })
+  /**
+   * The slice built for the list snapshot it was built from.
+   *
+   * A React store compares snapshots by identity, so the slice is cached against
+   * the source snapshot rather than rebuilt per read: a fresh object every call
+   * is an infinite render loop, not a slower one.
+   */
+  let slicedFrom: unknown
+  let sliced: ReturnType<SessionSeat['getSnapshot']> = EMPTY_SESSIONS
   const sessionsSeat: SessionSeat = {
-    getSnapshot: () => sessions?.list.getSnapshot() ?? EMPTY_SESSIONS,
+    // Built rather than forwarded: the seat is dshell's own slice of the list,
+    // and the host's snapshot stopped carrying `current` in 0.1.6-alpha.2 —
+    // which Session is on screen is a RETENTION count now (`mainSessionId`).
+    getSnapshot: () => {
+      const list = sessions?.list.getSnapshot()
+      if (list === undefined) return EMPTY_SESSIONS
+      if (list === slicedFrom) return sliced
+      const held = mainSessionId(Object.values(list.byId))
+      sliced = {
+        ids: list.ids.map(String),
+        byId: Object.fromEntries(Object.entries(list.byId).map(([id, row]) => [id, {
+          displayTitle: row.displayTitle,
+          cwd: row.cwd,
+          running: row.running,
+        }])),
+        current: held === undefined ? undefined : String(held),
+      }
+      slicedFrom = list
+      return sliced
+    },
     subscribe: (listener) => sessions?.list.subscribe(listener) ?? (() => {}),
   }
 

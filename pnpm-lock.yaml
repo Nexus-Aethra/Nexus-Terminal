@@ -253,6 +253,10 @@ importers:
         version: 6.0.3
 
   packages/dshell/conversation:
+    dependencies:
+      '@nexus-aethra/dshell-std':
+        specifier: workspace:^
+        version: link:../std
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: link:../../../dsh/vendor/cordis

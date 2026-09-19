@@ -486,14 +486,14 @@ root, and why each manifest now carries:
   entry imports** — `route.js`, `stream.js`, `pty.js`, … — was missing from the
   tarball: it installed, then failed at import time;
 - first-party dsh packages as **peerDependencies carrying the host range we
-  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.1` today — plus the
+  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.2` today — plus the
   same list in `devDependencies`, which is what the local build resolves; never
   as plain dependencies. A plugin must share the host's single instance of a
   first-party package: a second copy breaks `instanceof` across
   `FsError`/`TerminalError`, gives a second `Service` base class, and splits the
   client module table. A union rather than `^` because a prerelease range is not
   an interval that spans channels: `^0.1.5-rc.2` does **not** satisfy
-  `0.1.6-alpha.1` (semver excludes a prerelease whose `major.minor.patch`
+  `0.1.6-alpha.2` (semver excludes a prerelease whose `major.minor.patch`
   differs), and each channel's own range excludes the other. Floating the range
   is wrong for the original reason too — it lets pnpm satisfy the peers from the
   registry instead of the checkout, silently mixing two dsh builds in one tree.

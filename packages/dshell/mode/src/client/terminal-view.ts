@@ -15,6 +15,7 @@ import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { BlockView, type SshSeat } from './block-view.js'
 import type { PipeSeat } from './status-card.js'
@@ -37,6 +38,8 @@ export interface TerminalViewSeat {
   loadImage: MessageImageLoader | undefined
   /** The reader's per-session full-screen decision (see `tui.ts`). */
   tui: SnapshotStore<TuiChoice | undefined>
+  /** Show a conversation the reader picked; absent with no view owner. */
+  openConversation?: ((target: SessionTarget) => void) | undefined
 }
 
 /** The view seat: the program's screen while it holds the terminal, the timeline otherwise. */
@@ -72,6 +75,7 @@ export function DshellTerminalView(props: TerminalViewSeat & PropsLocale<'dshell
     ssh: props.ssh,
     pipe: props.pipe,
     loadImage: props.loadImage,
+    openConversation: props.openConversation,
     t,
   })
 }

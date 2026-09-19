@@ -12,7 +12,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls the settings SlotMap and the ctx.settingsScope merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: pulls the plugin-card SlotMap (`settings.plugin.item`).
+// Type-only: pulls the Plugins-section SlotMap (`settings.plugins.tab`).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 // Type-only: pulls the locale service merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -27,6 +27,7 @@ import type {
 import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
   DATA_DIR_FIELD, DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE,
@@ -204,6 +205,20 @@ export function apply(ctx: Context): void {
   // The sidebar's open/close state belongs to dsh's layout service, but
   // dshell must not change it from a bookmark click — the user owns
   // that toggle via the toolbar's "打开/收起侧边栏" button.
+  // Navigation belongs to a VIEW OWNER since 0.1.6-alpha.2, and the sessions face
+  // lost `openSubagent` with it: a surface that wants a conversation shown asks
+  // `uiWorkspace`, which in this composition is dshell's own stand-in. Resolved
+  // by key like the sibling seats, so a composition without one leaves those rows
+  // inert instead of failing to load.
+  const navigationHost = ctx as unknown as {
+    inject(keys: readonly string[], callback: (scope: {
+      uiWorkspace: { openSession(target: SessionTarget): void }
+    }) => void): unknown
+  }
+  let openConversation: ((target: SessionTarget) => void) | undefined
+  navigationHost.inject(['uiWorkspace'], (scope) => {
+    openConversation = (target) => { scope.uiWorkspace.openSession(target) }
+  })
   let sshSeat: SshSeat | undefined
   sshHost.inject(['dshellSsh'], (scope) => {
     const ssh = scope.dshellSsh
@@ -410,15 +425,27 @@ export function apply(ctx: Context): void {
   // settings section's "configurable" tab as a card keyed by the namespace it
   // edits — the same namespace this package's Host half registers, which is
   // what makes the tab dispatch the card at all.
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
-    { name: 'settings.plugin.item', key: DSHELL_SETTINGS_NAMESPACE, locale: NS },
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+    {
+      name: 'settings.plugins.tab',
+      id: 'terminal',
+      order: 10,
+      label: () => t('settings.title'),
+      locale: NS,
+    },
     DshellSettingsCard,
   ))
-  // The second card, keyed by the second namespace. The section renders one
-  // card per registration whose namespace the Host serves, in registration
-  // order — so the storage card follows the terminal one.
-  ctx.slots.inject('settings.plugin.item', () => ctx.slots.register(
-    { name: 'settings.plugin.item', key: DSHELL_DATA_NAMESPACE, locale: NS },
+  // The second tab. `0.1.6-alpha.2` dispatches the Plugins page by TAB, not by
+  // the namespace a registrant edits, so each surface names its own id and
+  // label and the order is stated rather than inherited from the page.
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+    {
+      name: 'settings.plugins.tab',
+      id: 'data',
+      order: 11,
+      label: () => t('data.title'),
+      locale: NS,
+    },
     DshellDataCard,
   ))
   // The block view owns the stock `chat` cell (same id, lower priority
@@ -455,6 +482,7 @@ export function apply(ctx: Context): void {
         loadImage: sessionId === undefined
           ? undefined
           : (attachment) => uiConversation.imageUrl(sessionId, attachment),
+        openConversation,
         tui: sessionId === undefined ? noSessionTui : tuiFor(sessionId),
       }),
     },

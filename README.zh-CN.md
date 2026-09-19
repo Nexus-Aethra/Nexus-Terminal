@@ -56,7 +56,7 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 
 ### 装进 dsh
 
-前置：**dsh**（`0.1.5-rc.2` 或 `0.1.6-alpha.1` 这条线都行）——桌面版，或者命令行版
+前置：**dsh**（`0.1.5-rc.2` 或 `0.1.6-alpha.2` 这条线都行）——桌面版，或者命令行版
 （`npm install -g @deepseek-ai/dsh@alpha`）；以及 `PATH` 上的 **Node 24.21.0** 与 **pnpm 9.15.0**
 （`dsh plugin` 是转发给 pnpm 执行的）。
 
@@ -65,9 +65,9 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.3
 
 # 2) patch 里点名、但原版 profile 不带的上游包：浏览器与计算机使用的注册表，以及桌面驱动。
-dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
-dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.1
-dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.2
 
 # 3) 启动
 dsh web

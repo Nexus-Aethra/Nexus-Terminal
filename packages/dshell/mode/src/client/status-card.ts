@@ -23,6 +23,7 @@
 import { Component, createElement, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { SPAN_FONT } from './block-terminal.js'
 import { createAgentTerminal, AGENT_PANEL_HEIGHT, type AgentTerminalView } from './agent-terminal.js'
@@ -337,8 +338,10 @@ export function StatusCard(props: {
   sessions: ISessions
   /** The cross-session pipe's face; absent in a composition without it. */
   pipe?: PipeSeat | undefined
+  /** Show a conversation the reader picked (a subagent's); absent with no view owner. */
+  openConversation?: ((target: SessionTarget) => void) | undefined
 } & PropsLocale<'dshellMode'>): ReactElement | null {
-  const { todos, activity, theme, pty, sessionId, sessions, pipe, t } = props
+  const { todos, activity, theme, pty, sessionId, sessions, pipe, openConversation, t } = props
   // Subscribed before any early return: hooks cannot be conditional, and the
   // state they carry is what decides whether the card exists at all.
   const agent = useSyncExternalStore(pty.agent.subscribe, pty.agent.getSnapshot)
@@ -528,8 +531,10 @@ export function StatusCard(props: {
           ...children.map(entry => createElement('div', {
             key: String(entry.id),
             onClick: () => {
+              // `openSubagent` left the sessions face in 0.1.6-alpha.2: navigation
+              // belongs to a view owner, which `openConversation` reaches.
               const address = sessions.subagentAddress(entry.id)
-              if (address !== undefined) sessions.openSubagent(address)
+              if (address !== undefined) openConversation?.(address)
             },
             style: {
               display: 'grid', gridTemplateColumns: '10px 1fr', gap: '6px',

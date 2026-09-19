@@ -23,6 +23,7 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { clearStream, createFold, foldEvent, noteLiveChunk, type BlockFold } from './blocks.js'
@@ -184,6 +185,11 @@ export function BlockView(props: {
   ssh?: SshSeat | undefined
   /** The cross-session pipe's face; absent in a composition without it. */
   pipe?: PipeSeat | undefined
+  /**
+   * Show a conversation the reader picked — a subagent's, today. Absent in a
+   * composition with no view owner, which leaves those rows inert.
+   */
+  openConversation?: ((target: SessionTarget) => void) | undefined
 } & PropsLocale<'dshellMode'>): ReactElement {
   const { t } = props
   const theme = useDshellTheme()
@@ -316,14 +322,11 @@ export function BlockView(props: {
       // A rejected prompt never becomes durable: drop its optimistic bubbles
       // instead of leaving a message on screen the agent never received.
       if (snapshot.promptError !== null) foldRef.current?.inbox.clear()
-      const queued = snapshot.queue
-        .filter(entry => entry.placement !== 'context' && entry.rpcId !== undefined)
-        .map(entry => ({ rpcId: String(entry.rpcId), text: entry.text ?? '', time: 0 }))
-      const queuedIds = new Set(queued.map(entry => entry.rpcId))
-      const echoes = snapshot.pendingSubmissions
-        .filter(entry => !queuedIds.has(String(entry.requestId)))
-        .map(entry => ({ rpcId: String(entry.requestId), text: entry.text, time: entry.time }))
-      const entries = [...queued, ...echoes]
+        // ONE list since 0.1.6-alpha.2: the host queue was folded into the local
+        // echoes, each carrying the placement it is heading for, so the two
+        // sources this used to merge — and de-duplicate by rpc id — are one.
+        const entries = snapshot.pendingSubmissions
+          .map(entry => ({ rpcId: String(entry.requestId), text: entry.text, time: entry.time }))
         .filter(entry => entry.text.length > 0)
         .filter(entry => !claimed.has(entry.rpcId) && !folded?.has(entry.rpcId))
       const key = entries.map(entry => `${entry.rpcId}\u0000${entry.text}`).join('\u0001')
@@ -517,6 +520,7 @@ export function BlockView(props: {
       sessionId: id,
       sessions: props.sessions,
       pipe: props.pipe,
+      openConversation: props.openConversation,
       t,
     })),
     createElement('div', {

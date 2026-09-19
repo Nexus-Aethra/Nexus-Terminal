@@ -58,7 +58,7 @@ Two ways in: install the published plugins into a dsh you already have, or build
 
 ### Install into dsh
 
-Prerequisites: **dsh** on the `0.1.5-rc.2` or `0.1.6-alpha.1` line — either the desktop app, or the
+Prerequisites: **dsh** on the `0.1.5-rc.2` or `0.1.6-alpha.2` line — either the desktop app, or the
 CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pnpm 9.15.0** on `PATH`
 (`dsh plugin` forwards to pnpm).
 
@@ -69,9 +69,9 @@ dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.3
 
 # 2) the upstream rows the patch names that a stock profile does not ship:
 #    the browser-use and computer-use registries, and the desktop driver.
-dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.1
-dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.1
-dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.1
+dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.2
 
 # 3) run
 dsh web

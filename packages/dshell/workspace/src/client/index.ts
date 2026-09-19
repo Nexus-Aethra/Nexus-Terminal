@@ -32,7 +32,7 @@ import { Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: `ctx.remote` plus the mounted `agentPresets` namespace merge.
 import type { DirectoryListing } from '@deepseek-ai/dsh-api-remotes/client'
-import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions, SessionReference, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Session Controller service merges.
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the `workspaces` service merge and its snapshot shape. The
@@ -45,6 +45,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 // Type-only: pulls the `dshellBuffer` service merge the pipe entry toggles.
 import type {} from '@nexus-aethra/dshell-buffer/client'
 import type { SshSnapshot } from '@nexus-aethra/dshell-ssh/client'
@@ -53,6 +54,21 @@ import { newSessionDialog } from './dialog-store.js'
 import { en, zh } from './locales.js'
 import { activeRows, directoryName, presetChoices, type PresetChoice, type SessionRow } from './rows.js'
 import { FlatSessionList, type DeviceSeat, type FlatSessionListProps } from './session-list.js'
+
+/**
+ * The retention source this package claims a Session under.
+ *
+ * `mainView` is the HOST's own source name — it is what the whole Client reads
+ * to answer "which Session is on screen" — and the host declares it inside
+ * `ui-session`, a package this program does not compile. The map is
+ * merge-extensible for exactly this reason, so the source is declared here
+ * instead of borrowed.
+ */
+declare module '@deepseek-ai/dsh-api-session-controller/client' {
+  interface SessionReferenceSourceMap {
+    mainView: unknown
+  }
+}
 
 export const name = '@nexus-aethra/dshell-workspace/client'
 
@@ -73,6 +89,34 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
   ) {
     super(ctx, 'uiWorkspace')
     ctx.effect(() => this.watchBootNavigation(), 'dshell-workspace: boot navigation')
+    // The claim this stand-in holds has to be let go when the plugin unloads, or
+    // the host keeps reporting a Session on screen that nothing is showing.
+    ctx.effect(() => () => { this.clearMain() }, 'dshell-workspace: release the main view claim')
+  }
+
+  /**
+   * The Session this view holds, from the host's retention rule.
+   *
+   * `0.1.6-alpha.2` turned "which Session is on screen" from a list field into a
+   * RETENTION: a view claims one with `retain(target, { source: 'mainView' })`,
+   * and the previous claim must be released, or the Session it named stays held —
+   * and so stays the one the whole Client reads as current.
+   */
+  private mainReference: SessionReference | undefined
+
+  /** Claim a Session for this view, releasing whatever was claimed before. */
+  private replaceMain(target: SessionTarget): void {
+    const reference = this.sessions.retain(target, { source: 'mainView' })
+    const previous = this.mainReference
+    this.mainReference = reference
+    previous?.release()
+  }
+
+  /** Let go, so a Client holding nothing reports no Session on screen. */
+  private clearMain(): void {
+    const previous = this.mainReference
+    this.mainReference = undefined
+    previous?.release()
   }
 
   async connectWorkspace(_workspaceId: WorkspaceId): Promise<SessionId> {
@@ -80,28 +124,30 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
   }
 
   /**
-   * dsh navigation action (rc.1): select a Session. dshell keeps dsh's own
-   * selection semantics, so this is the stock `open`.
+   * dsh navigation action: select a Session.
+   *
+   * The mechanism is a claim now rather than a stored field, so this is the
+   * whole of "select": hold the Session, drop the last hold.
    */
   openSession(sessionId: SessionId): void {
-    this.sessions.open(sessionId)
+    this.replaceMain(sessionId)
   }
 
   /**
-   * dsh navigation action (rc.1): "open a Workspace". dshell has no
+   * dsh navigation action: "open a Workspace". dshell has no
    * workspaces (design 4.7), so the action lands on the terminal-continuity
    * blank session instead — the same target `connectWorkspace` uses.
    */
   async openWorkspace(_workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {
     const sessionId = await this.openBlankSession()
     beforeOpen?.(sessionId)
-    this.sessions.open(sessionId)
+    this.replaceMain(sessionId)
   }
 
-  /** dsh navigation action (rc.1): fork a Session and open the child. */
+  /** dsh navigation action: fork a Session and open the child. */
   async forkSession(sessionId: SessionId): Promise<void> {
     const child = await this.sessions.fork({ sessionId })
-    this.sessions.open(child)
+    this.replaceMain(child)
   }
 
   startSession(_workspaceId?: WorkspaceId): void {
@@ -236,14 +282,15 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
       if (this.workspaces.list.getSnapshot().phase !== 'ready') return
       armed = false
       const archived = this.archivedIds()
-      // dsh restores the last selection from browser storage, so a reload can
-      // land on a session that has since been archived — an archived session
-      // belongs to the settings page's list, not to the main area.
-      const current = state.current
+      // A reload can land on a Session that has since been archived — an
+      // archived session belongs to the settings page's list, not to the main
+      // area. The one to check is the HELD one, which is how the host reports
+      // the selection now that the list carries no `current` field.
+      const current = mainSessionId(Object.values(state.byId))
       if (current !== undefined && !archived.includes(String(current))) return
       const latest = activeRows(state, archived).at(0)
-      if (latest !== undefined) this.sessions.open(latest.id)
-      else if (current !== undefined) this.sessions.clear()
+      if (latest !== undefined) this.replaceMain(latest.id)
+      else if (current !== undefined) this.clearMain()
     }
     const dispose = this.sessions.list.subscribe(reconcile)
     // The boot target depends on the archive set, so the registry's stream is a
@@ -429,11 +476,11 @@ export function apply(ctx: Context): void {
         refresh: () => sessions.refresh(),
         createSession: (name, cwd, presetId) =>
           uiWorkspace.createNamedSession(name, cwd, presetId).then((sessionId) => {
-            sessions.open(sessionId)
+            uiWorkspace.openSession(sessionId)
             return sessionId
           }),
         listPresets: () => uiWorkspace.listPresets(),
-        open: (sessionId) => { sessions.open(sessionId) },
+        open: (sessionId) => { uiWorkspace.openSession(sessionId as SessionId) },
       }),
     },
     FlatSessionList,

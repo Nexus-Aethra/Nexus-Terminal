@@ -29,6 +29,7 @@ import type {
   ConversationViewBuilder,
   ConversationViewDefinition,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 
 export const name = '@nexus-aethra/dshell-conversation/client'
 
@@ -85,7 +86,9 @@ export function apply(ctx: Context): void {
   // re-adds `terminal` to a monotonic active set.
   ctx.effect(() => {
     const reconcile = (): void => {
-      const current = sessions.list.getSnapshot().current
+      // The held Session, by the host's retention rule: `list.current` went
+      // away in 0.1.6-alpha.2 (see `mainSessionId`).
+      const current = mainSessionId(Object.values(sessions.list.getSnapshot().byId))
       if (current === undefined) return
       try {
         ctx.uiConversation.binding(current).activate('terminal')
