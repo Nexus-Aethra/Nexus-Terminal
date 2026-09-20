@@ -28,6 +28,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { Service } from '@deepseek-ai/cordis'
+// Type-only: pulls the layout service merge (ctx.layout), whose panel selection is
+// what returns the central area to the conversation.
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: `ctx.remote` plus the mounted `agentPresets` namespace merge.
@@ -72,7 +75,7 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 
 export const name = '@nexus-aethra/dshell-workspace/client'
 
-export const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.agentPresets', 'workspaces'] as const
+export const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.agentPresets', 'workspaces', 'layout'] as const
 
 /** This package's copy namespace. */
 const NS = 'dshellWorkspace'
@@ -110,6 +113,7 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
     const previous = this.mainReference
     this.mainReference = reference
     previous?.release()
+    this.showConversation()
   }
 
   /** Let go, so a Client holding nothing reports no Session on screen. */
@@ -117,6 +121,22 @@ class DshellUiWorkspace extends Service implements UiWorkspace {
     const previous = this.mainReference
     this.mainReference = undefined
     previous?.release()
+    this.showConversation()
+  }
+
+  /**
+   * Give the central area back to the conversation.
+   *
+   * A global panel — the Plugins page is one — takes the `main` seat for the
+   * whole profile, and nothing about choosing a Session displaces it. The layout
+   * service holds that selection, so it is cleared here, in the same two places
+   * upstream's own `ui-workspace` clears it: selecting a Session returns to the
+   * conversation. Without this the panel keeps the seat, and a reader who opened
+   * it cannot get back by clicking a session (or by anything else this view
+   * owns) — the page looks like a room with no door.
+   */
+  private showConversation(): void {
+    this.ctx.layout.selectPanel(null)
   }
 
   async connectWorkspace(_workspaceId: WorkspaceId): Promise<SessionId> {
