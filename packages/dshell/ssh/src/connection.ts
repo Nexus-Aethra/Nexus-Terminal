@@ -130,6 +130,15 @@ export class DshellSshConnection {
   private failure: Error | undefined
   /** Whether the handshake completed, which is what makes an exit diagnosable. */
   private verified = false
+
+  /**
+   * The device's absolute default directory, from the verified handshake.
+   *
+   * Read by the router to expand a `~`-spelled session root before it becomes a
+   * mapping: the helper's protocol refuses anything that is not absolute, and the
+   * device is the only party that knows what its own `~` means.
+   */
+  private deviceRootValue: string | undefined
   /** Whether the recorded failure came from our own diagnosis or the transport. */
   private selfDiagnosed = false
   /** Resolves after the handshake has been verified. */
@@ -220,6 +229,14 @@ export class DshellSshConnection {
   }
 
   /** Send the handshake request. Split out so its failure can be re-diagnosed. */
+  /**
+   * The device's own absolute root, once the handshake has settled.
+   * @returns the absolute default directory, or undefined before verification.
+   */
+  deviceRoot(): string | undefined {
+    return this.deviceRootValue
+  }
+
   private async hello(): Promise<{ hash: string; platform: string; node: string; nodeVersion: string; root: string }> {
     return await this.peer.request(
       HELPER_OPS.hello,
@@ -268,6 +285,7 @@ export class DshellSshConnection {
     }, period)
     this.heartbeat.unref()
     this.verified = true
+    this.deviceRootValue = hello.root
     return hello
   }
 
