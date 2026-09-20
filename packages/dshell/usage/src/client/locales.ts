@@ -35,9 +35,8 @@ export const zh = {
   'rebuild': '重新聚合',
   'rebuild.busy': '正在聚合…',
 
-  'chart.curve': '每日消耗（按模型堆叠）',
+  'chart.curve': '每日消耗（按模型）',
   'chart.pie': '模型占比',
-  'chart.axis.tokens': '{value} tok',
 
   'table.title': '按模型明细',
   'table.model': '模型',
@@ -51,7 +50,7 @@ export const zh = {
   'state.empty.title': '还没有可统计的用量',
   'state.empty.body': '索引里没有任何一条带用量上报的模型调用。跑一次 agent 会话后再点「重新聚合」。',
   'state.freshness': '索引更新于 {day}',
-  'state.scanned': '本次扫描读取了 {sessions} 个会话，命中 {turns} 次调用。',
+  'state.scanned': '本次扫描列出 {sessions} 个会话，读取了 {read} 个，命中 {turns} 次调用。',
   'state.error': '读取用量失败：{reason}',
   'state.loading': '正在读取索引…',
 } as const
@@ -74,9 +73,8 @@ export const en: Record<DshellUsageKey, string> = {
   'rebuild': 'Rebuild',
   'rebuild.busy': 'Rebuilding…',
 
-  'chart.curve': 'Daily usage, stacked by model',
+  'chart.curve': 'Daily usage by model',
   'chart.pie': 'Share by model',
-  'chart.axis.tokens': '{value} tok',
 
   'table.title': 'By model',
   'table.model': 'Model',
@@ -90,7 +88,7 @@ export const en: Record<DshellUsageKey, string> = {
   'state.empty.title': 'No usage to count yet',
   'state.empty.body': 'The index holds no model call that reported usage. Run an agent session, then press Rebuild.',
   'state.freshness': 'Index updated {day}',
-  'state.scanned': 'This scan read {sessions} sessions and counted {turns} calls.',
+  'state.scanned': 'This scan listed {sessions} sessions, read {read}, and counted {turns} calls.',
   'state.error': 'Reading usage failed: {reason}',
   'state.loading': 'Reading the index…',
 }

@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { DSHELL_USAGE_PATH } from '@nexus-aethra/dshell-std'
-import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { UsageResponse, UsageSummary, UsageTotalRow } from '../protocol.js'
 
 /** A fixed palette: a route keeps its colour as the window changes. */
@@ -34,33 +34,52 @@ const counts = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFr
 
 /** Rough sizes; the page is a settings column, not a full viewport. */
 const CURVE = { width: 720, height: 200, padLeft: 56, padRight: 12, padTop: 12, padBottom: 24 }
-const PIE = { size: 200, radius: 88 }
+const PIE = { size: 200, radius: 88, inner: 52 }
 
 /** Every bucket summed — the measure both charts and the table sort on. */
 function total(buckets: { uncachedInputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number }): number {
   return buckets.uncachedInputTokens + buckets.outputTokens + buckets.cacheReadTokens + buckets.cacheWriteTokens
 }
 
-/** One stacked band's outline, from the upper edge across and the lower back. */
-function bandPath(upper: readonly number[], lower: readonly number[], xs: readonly number[], y: (value: number) => number): string {
-  const top = upper.map((value, index) => `${index === 0 ? 'M' : 'L'}${String(xs[index])},${String(y(value))}`)
-  const bottom = lower.map((value, index) => `L${String(xs[index])},${String(y(value))}`).reverse()
-  return [...top, ...bottom, 'Z'].join(' ')
+/** One model's curve: the path across the days, and a point at each day. */
+function linePoints(values: readonly number[], xs: readonly number[], y: (value: number) => number): string {
+  return values.map((value, index) => `${String(xs[index])},${String(y(value))}`).join(' ')
 }
 
-/** One pie slice. */
-function slicePath(start: number, end: number): string {
-  const { size, radius } = PIE
+/**
+ * One ring segment.
+ *
+ * A segment covering the whole circle needs its own spelling: its start and end
+ * points coincide, and an arc between coincident points draws nothing — which
+ * is exactly what a reader with one model would see. The full turn is two half
+ * turns, outer and inner wound in opposite directions so the middle stays open.
+ */
+function ringPath(start: number, end: number): string {
+  const { size, radius, inner } = PIE
   const cx = size / 2
   const cy = size / 2
-  const point = (angle: number): [number, number] => [
-    cx + radius * Math.cos(angle),
-    cy + radius * Math.sin(angle),
+  const at = (r: number, angle: number): [number, number] => [
+    cx + r * Math.cos(angle),
+    cy + r * Math.sin(angle),
   ]
-  const [x1, y1] = point(start)
-  const [x2, y2] = point(end)
+  if (end - start >= Math.PI * 2 - 1e-6) {
+    const outer = `M${String(cx)},${String(cy - radius)}`
+      + ` A${String(radius)},${String(radius)} 0 1 1 ${String(cx)},${String(cy + radius)}`
+      + ` A${String(radius)},${String(radius)} 0 1 1 ${String(cx)},${String(cy - radius)} Z`
+    const hole = `M${String(cx)},${String(cy - inner)}`
+      + ` A${String(inner)},${String(inner)} 0 1 0 ${String(cx)},${String(cy + inner)}`
+      + ` A${String(inner)},${String(inner)} 0 1 0 ${String(cx)},${String(cy - inner)} Z`
+    return `${outer} ${hole}`
+  }
+  const [ox1, oy1] = at(radius, start)
+  const [ox2, oy2] = at(radius, end)
+  const [ix2, iy2] = at(inner, end)
+  const [ix1, iy1] = at(inner, start)
   const large = end - start > Math.PI ? 1 : 0
-  return `M${String(cx)},${String(cy)} L${String(x1)},${String(y1)} A${String(radius)},${String(radius)} 0 ${String(large)} 1 ${String(x2)},${String(y2)} Z`
+  return `M${String(ox1)},${String(oy1)}`
+    + ` A${String(radius)},${String(radius)} 0 ${String(large)} 1 ${String(ox2)},${String(oy2)}`
+    + ` L${String(ix2)},${String(iy2)}`
+    + ` A${String(inner)},${String(inner)} 0 ${String(large)} 0 ${String(ix1)},${String(iy1)} Z`
 }
 
 /** The page body. */
@@ -84,7 +103,17 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
       const body = await response.json() as UsageResponse
       if ('error' in body) throw new Error(body.error)
       setSummary(body)
-      setNote(action === 'scan' ? t('state.scanned', { sessions: String(body.daysList.length), turns: String(body.totals.reduce((sum, row) => sum + row.turns, 0)) }) : undefined)
+      // The counts come from the scan's own report: how many sessions exist,
+      // how many of them needed decoding, and how many turns were counted are
+      // three different numbers, and none of them is derivable from the rows
+      // the page is about to draw.
+      setNote(action === 'scan' && body.scanned !== undefined
+        ? t('state.scanned', {
+            sessions: counts.format(body.scanned.sessions),
+            read: counts.format(body.scanned.read),
+            turns: counts.format(body.scanned.turns),
+          })
+        : undefined)
     }
     catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -104,31 +133,32 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
     const daysList = summary.daysList
     const models = summary.models
     if (daysList.length === 0 || models.length === 0) return undefined
-    const xs = daysList.map((_, index) => CURVE.padLeft
-      + (daysList.length === 1 ? 0 : (index * (CURVE.width - CURVE.padLeft - CURVE.padRight)) / (daysList.length - 1)))
-    // Cumulative totals per day, in the pie's own order, so a route keeps one
-    // position in both charts.
-    const upper = new Map<string, number[]>()
-    const lower = new Map<string, number[]>()
-    let running = daysList.map(() => 0)
-    for (const model of models) {
-      const values = daysList.map((day) => summary.byDay
-        .filter(row => row.day === day && `${row.provider}/${row.model}` === model)
-        .reduce((sum, row) => sum + total(row), 0))
-      const base = [...running]
-      const top = values.map((value, index) => base[index]! + value)
-      lower.set(model, base)
-      upper.set(model, top)
-      running = top
-    }
-    const max = Math.max(1, ...running)
+    const span = CURVE.width - CURVE.padLeft - CURVE.padRight
+    // A lone day has no interval to interpolate along, so it sits in the middle
+    // of the plot rather than at its left edge.
+    const xs = daysList.length === 1
+      ? [CURVE.padLeft + span / 2]
+      : daysList.map((_, index) => CURVE.padLeft + (index * span) / (daysList.length - 1))
+    const seriesValues = models.map(model => daysList.map(day => summary.byDay
+      .filter(row => row.day === day && `${row.provider}/${row.model}` === model)
+      .reduce((sum, row) => sum + total(row), 0)))
+    // Scaled to the highest single value, not to a stacked total: these are
+    // separate curves, so each one has to be readable on its own.
+    const max = Math.max(1, ...seriesValues.flat())
     const y = (value: number): number => CURVE.height - CURVE.padBottom
       - (value / max) * (CURVE.height - CURVE.padTop - CURVE.padBottom)
-    return { xs, y, max, models, bands: models.map((model, index) => ({
-      model,
-      color: PALETTE[index % PALETTE.length]!,
-      path: bandPath(upper.get(model)!, lower.get(model)!, xs, y),
-    })), daysList }
+    return {
+      xs,
+      y,
+      max,
+      daysList,
+      series: models.map((model, index) => ({
+        model,
+        color: PALETTE[index % PALETTE.length]!,
+        points: linePoints(seriesValues[index]!, xs, y),
+        markers: seriesValues[index]!.map((value, position) => ({ x: xs[position]!, y: y(value) })),
+      })),
+    }
   }, [summary])
 
   const pie = useMemo(() => {
@@ -144,7 +174,7 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
         const start = angle
         const end = angle + share * Math.PI * 2
         angle = end
-        return { row, color: PALETTE[index % PALETTE.length]!, share, path: slicePath(start, end) }
+        return { row, color: PALETTE[index % PALETTE.length]!, share, path: ringPath(start, end) }
       }),
     }
   }, [summary])
@@ -225,8 +255,13 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
                 </g>
               )
             })}
-            {curve.bands.map(band => (
-              <path key={band.model} d={band.path} fill={band.color} fillOpacity={0.75} stroke={band.color} strokeWidth={0.5} />
+            {curve.series.map(series => (
+              <g key={series.model}>
+                <polyline points={series.points} fill="none" stroke={series.color} strokeWidth={2} strokeLinejoin="round" />
+                {series.markers.map((marker, position) => (
+                  <circle key={`${series.model}-${String(position)}`} cx={marker.x} cy={marker.y} r={3} fill={series.color} />
+                ))}
+              </g>
             ))}
             {curve.daysList.map((day, index) => (
               index % Math.ceil(curve.daysList.length / 8) === 0
@@ -238,7 +273,7 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
                 : null
             ))}
           </svg>
-          <Legend models={curve.models} t={t} />
+          <Legend series={curve.series} />
         </figure>
       )}
 
@@ -247,8 +282,22 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
           <figcaption style={{ opacity: 0.8, alignSelf: 'flex-start' }}>{t('chart.pie')}</figcaption>
           <svg viewBox={`0 0 ${String(PIE.size)} ${String(PIE.size)}`} style={{ width: PIE.size, height: PIE.size }} role="img">
             {pie.slices.map(slice => (
-              <path key={`${slice.row.provider}/${slice.row.model}`} d={slice.path} fill={slice.color} fillOpacity={0.85} />
+              <path
+                key={`${slice.row.provider}/${slice.row.model}`}
+                d={slice.path}
+                fill={slice.color}
+                fillOpacity={0.85}
+                fillRule="evenodd"
+              />
             ))}
+            {/* The hole is the point of a ring: it holds the number the slices
+                are shares of, so the reader does not have to add them up. */}
+            <text x={PIE.size / 2} y={PIE.size / 2 - 2} textAnchor="middle" fontSize={16} fill="currentColor">
+              {counts.format(pie.sum)}
+            </text>
+            <text x={PIE.size / 2} y={PIE.size / 2 + 14} textAnchor="middle" fontSize={10} fill="currentColor" fillOpacity={0.6}>
+              tok
+            </text>
           </svg>
           <table style={{ borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -314,17 +363,16 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
   )
 }
 
-/** The curve's colour key, in the same order the bands are stacked. */
-function Legend({ models, t }: { models: readonly string[], t: TranslateNS<'dshellUsage'> }): ReactElement {
+/** The curve's colour key, in the order the lines are drawn. */
+function Legend({ series }: { series: readonly { model: string, color: string }[] }): ReactElement {
   return (
     <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12 }}>
-      {models.map((model, index) => (
-        <span key={model} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: PALETTE[index % PALETTE.length] }} />
-          {model}
+      {series.map(entry => (
+        <span key={entry.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: entry.color }} />
+          {entry.model}
         </span>
       ))}
-      <span style={{ opacity: 0.5 }}>{t('chart.axis.tokens', { value: '' }).trim()}</span>
     </div>
   )
 }

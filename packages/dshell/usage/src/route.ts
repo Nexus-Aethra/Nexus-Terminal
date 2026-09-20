@@ -40,10 +40,14 @@ export function createUsageRoute(deps: UsageRouteDeps): ConnectionFetchRoute {
     const input = await request.json() as UsageRequest
     const days = windowOf(input.days)
     if (input.action === 'scan') {
-      await deps.scanner.rescan()
+      const outcome = await deps.scanner.rescan()
       // A rebuild is what the reader is waiting for, so the summary that
-      // answers it is read after the scan, not before.
-      return deps.store.summary(days)
+      // answers it is read after the scan, not before — and it carries the
+      // scan's own counts, which the page reports.
+      return {
+        ...deps.store.summary(days),
+        scanned: { sessions: outcome.sessions, read: outcome.read, turns: outcome.turns },
+      }
     }
     return deps.store.summary(days)
   }

@@ -58,6 +58,23 @@ export interface UsageSummary {
   readonly models: readonly string[]
   readonly byDay: readonly UsageDayRow[]
   readonly totals: readonly UsageTotalRow[]
+  /**
+   * What the scan that produced this answer did, present only on a `scan`
+   * action. The page reports these numbers, so they come from the scan itself
+   * and not from anything the page can count on the summary — the two are
+   * different quantities and only one of them is "how many sessions".
+   */
+  readonly scanned?: UsageScanReport
+}
+
+/** One scan's own counts. */
+export interface UsageScanReport {
+  /** Sessions the query engine listed, whether or not they were read. */
+  readonly sessions: number
+  /** Sessions whose logs were decoded, because they had grown. */
+  readonly read: number
+  /** Model turns counted from those logs. */
+  readonly turns: number
 }
 
 /** A summary response, or a refusal the page renders verbatim. */
