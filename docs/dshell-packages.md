@@ -425,6 +425,38 @@ when it contributes to model-visible state.
   props (`ctx.sessions` for the session id and cwd).
 - Introduced in: Phase 9.9.
 
+### `dshell-usage`
+
+- Role: the Settings → 用量 page — per-model token consumption, a daily
+  stacked curve, a share pie, and a per-route table. Two-faced Cordis
+  package:
+  - **Host face** owns one SQLite index under dshell's data root
+    (`<root>/usage/usage.sqlite`, `PRAGMA user_version = 1`), a scanner
+    over `ctx.sessionQuery`, and `/api/dshell/usage`. Reading is a
+    `summary` action; the page's rebuild is a `scan` action, because the
+    scan belongs where the events already are.
+  - **Browser face** registers one `settings.section` entry — the same
+    seat dsh's own Plugins page takes — and renders both charts as
+    hand-rolled SVG (`buffer`'s `pipe-graph.tsx` is the only other
+    `.tsx` in the tree).
+- Where the numbers come from: dsh attaches provider-reported accounting
+  to the `assistant/message` event itself (`data.usage`) and the same
+  event's `data.message.source` names the route, so usage and route
+  travel together and nothing is paired up or inferred. A turn that
+  reported no usage, or no route, is skipped rather than bucketed under
+  nothing.
+- Incremental by session: the index keeps the highest seq counted per
+  session, so a rescan skips a session whose log has not grown after a
+  cheap metadata listing. `day` is `YYYY-MM-DD` in the **host's** local
+  time, decided at scan time.
+- Writes are batched on purpose: a scan folds in memory and calls the
+  store once, and concurrent triggers share one flight behind a
+  minimum interval (30 s) plus a debounce — a host with a busy agent
+  still writes at most once per window, never once per model turn.
+- Introduced in: the 0.1.6 line, after the alpha.2 alignment. It has no
+  roadmap phase yet — the page exists and is verified by
+  `packages/dshell/usage/tests/`, not by a phase entry.
+
 ### `dshell-host-tools`
 
 - Role: the gate that decides which sessions get the machine's own
@@ -650,6 +682,9 @@ dshell-bundle
   └── dshell-storage          (library, not a row: the SQLite medium behind
                                 dshell-std's storage contract, consumed by
                                 dshell-terminal-bridge)
+  └── dshell-usage            (the Settings → 用量 page: its own SQLite index
+        │                       over every session's reported usage)
+        └── dsh-session-query       (optional: reading history's events)
 ```
 
 There are no cycles. `dshell-std` has no dependency at all: it is the

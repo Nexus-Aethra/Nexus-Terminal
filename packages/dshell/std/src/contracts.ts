@@ -1033,3 +1033,15 @@ export interface DeviceFsSeat {
 
 /** The cordis service name `DshellFileSystem` publishes under. */
 export const DEVICE_FS_SERVICE = 'dshellDeviceFs'
+
+// ─── usage — the per-model token index the settings page charts ───
+
+/**
+ * The usage index route: one exact `/api` endpoint behind dsh's existing trust
+ * and authentication fence, in the shape every other dshell route uses.
+ *
+ * The page reads aggregates and triggers the scan through the same endpoint:
+ * the scan is the expensive half and belongs on the host, where the session
+ * events already are, so the browser asks for it rather than doing it.
+ */
+export const DSHELL_USAGE_PATH = '/api/dshell/usage'

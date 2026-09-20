@@ -64,7 +64,7 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 
 ```sh
 # 1) dshell itself. One package: the bundle is the patch layer, and it depends
-#    on the other eleven.
+#    on the other twelve.
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.5
 
 # 2) the upstream rows the patch names that a stock profile does not ship:

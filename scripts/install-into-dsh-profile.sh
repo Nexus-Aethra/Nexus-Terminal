@@ -32,6 +32,7 @@ PLUGINS=(
   ssh
   buffer
   files
+  usage
 )
 
 echo "Installing dshell plugins into profile '$PROFILE'..."
