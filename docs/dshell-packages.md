@@ -538,6 +538,28 @@ copies of a core package.
 - Publish order is dependency order — `dshell-std` first, `dshell-bundle` last —
   because each package's `workspace:^` edges become `^0.1.5` ranges that must
   already resolve.
+- **Publish with `pnpm publish`, never `npm publish`.** Only pnpm rewrites the
+  `workspace:` protocol into a real range on the way out; npm ships the specifier
+  as written, so every published manifest keeps `"@nexus-aethra/dshell-std":
+  "workspace:^"` and every install of the result dies with
+  `EUNSUPPORTEDPROTOCOL: Unsupported URL Type "workspace:"`. 0.1.4 was lost this
+  way. The check that would have caught it before publishing: pack the tree and
+  grep the tarballs for a surviving `workspace:`
+
+  ```bash
+  for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
+  for f in /tmp/dshell-packs/*.tgz; do
+    tar -xzOf "$f" package/package.json | grep -q 'workspace:' && echo "STILL workspace: $f"
+  done
+  ```
+
+- **A bad version cannot be withdrawn here.** `npm unpublish` is refused for the
+  release token: it is a granular token with 2FA bypass, and npm answers
+  `403 Granular access tokens that bypass two-factor authentication may not
+  perform this action`. Withdrawing needs a session login (password + OTP) in a
+  browser, which the release flow does not have. `npm deprecate` *is* permitted
+  and is the available mitigation — so a broken version stays on the registry
+  under a warning, and the fix ships as the next version number.
 
 ### Verifying a published artifact
 
