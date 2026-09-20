@@ -12,6 +12,7 @@
  */
 
 import { Service, type Context } from '@deepseek-ai/cordis'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the sessions service merge (ctx.sessions).
@@ -984,7 +985,9 @@ export function apply(ctx: Context): void {
   const stream = new PtyStreamService(ctx)
 
   const reconcile = (): void => {
-    stream.bind(sessions.list.getSnapshot().current)
+    // Bind the held Session, by the host's retention rule: the list carries
+    // no `current` field from 0.1.6-alpha.2 on (see `mainSessionId`).
+    stream.bind(mainSessionId(Object.values(sessions.list.getSnapshot().byId)))
   }
   ctx.effect(() => {
     const dispose = sessions.list.subscribe(reconcile)

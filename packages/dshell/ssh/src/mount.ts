@@ -59,6 +59,33 @@ export function isUnder(parent: string, child: string): boolean {
 }
 
 /**
+ * A device-side root with a `~` spelling expanded to the device's own path.
+ *
+ * A session's root is whatever the reader typed, and `~` is the common one. A
+ * SHELL expands that for free — `cd ~/app` on the device means the right thing
+ * wherever a command runs — which is why the spelling is kept in the binding.
+ *
+ * The helper has no shell to expand it, and its protocol says so outright:
+ * "Always absolute: the caller translates, the device does not guess." A
+ * `~`-spelled path reaching it is refused as an invalid path, and because that
+ * refusal lands inside a turn it costs the whole turn rather than one file
+ * operation. So the translation happens HERE, at the one place a mapping is
+ * built, against the root the device itself reported when the helper
+ * handshaked.
+ *
+ * @param remoteRoot - the root as stored, e.g. `~`, `~/app`, `/srv/app`.
+ * @param deviceRoot - the device's absolute default directory, or undefined
+ *   while no helper has handshaked for it.
+ * @returns an absolute device path, or the input when it cannot be resolved.
+ */
+export function absoluteRemoteRoot(remoteRoot: string, deviceRoot: string | undefined): string {
+  if (!remoteRoot.startsWith('~')) return remoteRoot
+  if (deviceRoot === undefined || !deviceRoot.startsWith('/')) return remoteRoot
+  const rest = remoteRoot.replace(/^~\/?/, '')
+  return rest === '' ? deviceRoot : join(deviceRoot, rest)
+}
+
+/**
  * Translate a path the harness/machine sees into the path the device sees.
  *
  * A path inside the mount maps to the corresponding remote path. Any other

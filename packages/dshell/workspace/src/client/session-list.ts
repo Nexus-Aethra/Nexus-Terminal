@@ -27,6 +27,7 @@ import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/c
 import type { WorkspaceSource } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SshSnapshot } from '@nexus-aethra/dshell-ssh/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls this namespace's key set (PropsLocale<'dshellWorkspace'>).
 import type {} from './locales.js'
@@ -201,6 +202,9 @@ function DeleteDialog(props: {
 export function FlatSessionList(props: FlatSessionListBodyProps): ReactElement {
   const t = props.t
   const state = useSyncExternalStore(props.sessions.subscribe, props.sessions.getSnapshot)
+  // Which row is on screen, by the host's retention rule (`dshell-std`): the
+  // list no longer carries a `current` field.
+  const currentId = mainSessionId(Object.values(state.byId))
   const dialogOpen = useSyncExternalStore(newSessionDialog.subscribe, newSessionDialog.getSnapshot)
   const archive = useSyncExternalStore(props.workspaces.subscribe, props.workspaces.getSnapshot)
   const panel = useSyncExternalStore(props.panel.subscribe, props.panel.getSnapshot)
@@ -297,7 +301,7 @@ export function FlatSessionList(props: FlatSessionListBodyProps): ReactElement {
     // session dshell just released, so step off it first. A shell with no
     // other session lands in a fresh blank one, the same target the new-
     // session affordance uses.
-    if (state.current === deleteTarget.id) {
+    if (currentId === deleteTarget.id) {
       const next = active.find(row => row.id !== deleteTarget.id)
       if (next === undefined) await props.createSession(undefined, undefined, undefined)
       else props.open(next.id)
@@ -341,7 +345,7 @@ export function FlatSessionList(props: FlatSessionListBodyProps): ReactElement {
         }, rows.length === 0 ? t('empty.none') : t('empty.allArchived'))
         : null,
       ...active.map((row) => {
-        const selected = state.current === row.id
+        const selected = currentId === row.id
         return createElement('div', {
           key: row.id,
           'data-dshell-row': 'session',
@@ -394,7 +398,7 @@ export function FlatSessionList(props: FlatSessionListBodyProps): ReactElement {
             return createElement('div', {
               key: `pending-${row.id}`,
               'data-dshell-row': 'pending',
-              style: { ...mutedRowStyle, fontWeight: state.current === row.id ? 600 : 400 },
+              style: { ...mutedRowStyle, fontWeight: currentId === row.id ? 600 : 400 },
               onClick: () => { props.open(row.id) },
             },
               rowMain(row),

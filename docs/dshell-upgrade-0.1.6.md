@@ -14,11 +14,11 @@ its evidence in place; A2 is next.
 
 | | |
 |---|---|
-| Target | `dsh-v0.1.6-alpha.1` = `0a15e36e`, published 2026-09-15T03:10Z |
+| Target | `dsh-v0.1.6-alpha.2` = `ddefc45fbc`, published 2026-09-17T13:30Z (alpha.1 was `0a15e36e`, 2026-09-15) |
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); A3–A6 and T2–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); A3–A6 and T2–T5 open; **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); A3–A6 and T2–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -41,6 +41,46 @@ Two labels matter throughout, because they are different kinds of knowledge:
   artifacts or the trees (type-surface comparisons, pin counts, import checks).
 - **Read** — a rule or a change found in the new tag's source but not executed
   against our own install (the desktop validator, the packaging pipeline).
+
+### The alpha.2 pass (2026-09-19, second run of A1/A2)
+
+Run again on the next prerelease, which is what §1.1 says this roadmap is for.
+What the second run cost, with the parts that were mechanical left out:
+
+- **The pins** (A1/A2): 226 peer and dev lines across ten manifests moved
+  `0.1.5-rc.2 || 0.1.6-alpha.1` → `0.1.5-rc.2 || 0.1.6-alpha.2`. The union keeps
+  rc.2 because that is still what `latest`/`next` publish and what the desktop
+  profile's core is built from.
+- **The host**: checked out, `pnpm install`, then `pnpm run build:lib &&
+  pnpm run build:web` — the second step matters, because the profile links every
+  package and loads its `lib/`, so a stale build is a mixed tree, not a slow one.
+- **The profile** needed the five new upstream packages the alpha.2 preset names
+  (`dsh-office-to-pdf`, `dsh-client-ui-sidebar-browser`,
+  `dsh-client-ui-plugin-manager`, `dsh-workspace-changes`, and the already-linked
+  `dsh-client-ui-deliverables`, whose row was waiting on `workspaceChanges`).
+  Without them the boot reports five entries that did not activate.
+- **Three face changes**, all in the client and all caught by the compiler or the
+  first boot rather than by reading the release notes:
+  1. `sessions.open(id)` → a RETENTION (`retain(target, { source: 'mainView' })`,
+     releasing the previous claim). "Which Session is on screen" stopped being a
+     list field (`sessions.list.current`, gone) and became the row whose
+     `mainView` count is positive — read once in `dshell-std/src/session-view.ts`,
+     because four dshell packages need the same answer.
+  2. `settings.plugin.item` → `settings.plugins.tab`: the Plugins settings section
+     became a tabbed page, so dshell's three cards register tabs with their own id
+     and localized label instead of being dispatched by the namespace they edit.
+  3. `sessions.openSubagent(address)` is gone, and `snapshot.queue` with it:
+     navigation goes through `uiWorkspace.openSession`, and the host queue was
+     folded into `snapshot.pendingSubmissions` (which now carries `placement`).
+- **One bug of our own, found by the boot and not by the types**: building a
+  slice of the session list inside a `useSyncExternalStore` getter returns a fresh
+  object per read, which React reads as a change and re-renders forever. The slice
+  is cached against the source snapshot.
+
+**Acceptance, measured**: `pnpm typecheck` clean; `pnpm test` 301 pass; all faces
+build; the profile boots with no inactive entry; and the block view renders on
+alpha.2 — timeline regions, the mode chip and the full-screen button present, no
+plugin-failure overlay.
 
 ## 1. The baseline (A0)
 

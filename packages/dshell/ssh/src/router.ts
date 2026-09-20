@@ -28,7 +28,7 @@ import { deployHelper, helperPathFor } from './helper/install.js'
 import { PROBE, installProbe } from './helper/target.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import { sshDeviceRoot } from './paths.js'
-import { isUnder, mountFor } from './mount.js'
+import { absoluteRemoteRoot, isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
 import { interactiveShellArgv, localCwd, quote, sshArgv, sshEnv } from './runner.js'
 
@@ -409,9 +409,19 @@ export class SshRouter {
     const assignment = this.bindings.get(sessionId)
     if (assignment === undefined) return undefined
     const device = this.connections.get(assignment.deviceId)
-    return device === undefined
-      ? undefined
-      : { device, remoteRoot: assignment.remoteRoot ?? device.remoteRoot, mount: assignment.mount }
+    if (device === undefined) return undefined
+    return {
+      device,
+      // The stored root is what the reader typed (`~` is the common one) and a
+      // SHELL expands it for free; the helper's protocol refuses anything but an
+      // absolute path, so the translation happens here — the one place a mapping
+      // is made — against the root the device reported at its handshake.
+      remoteRoot: absoluteRemoteRoot(
+        assignment.remoteRoot ?? device.remoteRoot,
+        this.helperConnection?.(device.id)?.deviceRoot(),
+      ),
+      mount: assignment.mount,
+    }
   }
 
   /**

@@ -430,13 +430,13 @@ packages stay needed at runtime because the bundle patch inserts a
 > `dsh-experimental-computer-use-cua-driver-native`, the browser and desktop
 > rows of design 4.11. A desktop profile therefore needs them too, the same way
 > it needs the five above: add them to the profile's `dependencies` (they are on
-> npm at `0.1.6-alpha.1`, so the registry route works), or the boot reports
+> npm at `0.1.6-alpha.2`, so the registry route works), or the boot reports
 > `2 entries did not activate` and the browser and desktop tools are simply
 > absent. Whether this build's seed already packs them has NOT been checked.
 
 Two consequences worth knowing. Any transaction the app's own plugin window
 performs installs from `registry.npmjs.org` (pinned in its `project-manager`),
-where these packages exist at 0.1.3 — the published release, not this checkout —
+where these packages exist at 0.1.5 — the published release, not this checkout —
 so a plugin installed or removed from the UI may replace the local build with it.
 And the app checks upstream's update feed on every start
 (`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it logs a

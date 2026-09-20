@@ -486,14 +486,14 @@ root, and why each manifest now carries:
   entry imports** — `route.js`, `stream.js`, `pty.js`, … — was missing from the
   tarball: it installed, then failed at import time;
 - first-party dsh packages as **peerDependencies carrying the host range we
-  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.1` today — plus the
+  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.2` today — plus the
   same list in `devDependencies`, which is what the local build resolves; never
   as plain dependencies. A plugin must share the host's single instance of a
   first-party package: a second copy breaks `instanceof` across
   `FsError`/`TerminalError`, gives a second `Service` base class, and splits the
   client module table. A union rather than `^` because a prerelease range is not
   an interval that spans channels: `^0.1.5-rc.2` does **not** satisfy
-  `0.1.6-alpha.1` (semver excludes a prerelease whose `major.minor.patch`
+  `0.1.6-alpha.2` (semver excludes a prerelease whose `major.minor.patch`
   differs), and each channel's own range excludes the other. Floating the range
   is wrong for the original reason too — it lets pnpm satisfy the peers from the
   registry instead of the checkout, silently mixing two dsh builds in one tree.
@@ -503,7 +503,7 @@ root, and why each manifest now carries:
   a dependency at all;
 - `@deepseek-ai/cordis` as a peer (`^4.0.2`), matching how dsh publishes its own
   packages;
-- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.3` on
+- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.5` on
   pack;
 - `@deepseek-ai/schemastery` as a peer for the same reason as the rest of the
   list: despite the vendor-library look, it is one of the 241 runtime-owned
@@ -536,8 +536,30 @@ copies of a core package.
   (`@nexus-aethra/dshell-*`). `@deepseek-ai/…` is dsh's own npm org and is not
   publishable by an outside account.
 - Publish order is dependency order — `dshell-std` first, `dshell-bundle` last —
-  because each package's `workspace:^` edges become `^0.1.3` ranges that must
+  because each package's `workspace:^` edges become `^0.1.5` ranges that must
   already resolve.
+- **Publish with `pnpm publish`, never `npm publish`.** Only pnpm rewrites the
+  `workspace:` protocol into a real range on the way out; npm ships the specifier
+  as written, so every published manifest keeps `"@nexus-aethra/dshell-std":
+  "workspace:^"` and every install of the result dies with
+  `EUNSUPPORTEDPROTOCOL: Unsupported URL Type "workspace:"`. 0.1.4 was lost this
+  way. The check that would have caught it before publishing: pack the tree and
+  grep the tarballs for a surviving `workspace:`
+
+  ```bash
+  for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
+  for f in /tmp/dshell-packs/*.tgz; do
+    tar -xzOf "$f" package/package.json | grep -q 'workspace:' && echo "STILL workspace: $f"
+  done
+  ```
+
+- **A bad version cannot be withdrawn here.** `npm unpublish` is refused for the
+  release token: it is a granular token with 2FA bypass, and npm answers
+  `403 Granular access tokens that bypass two-factor authentication may not
+  perform this action`. Withdrawing needs a session login (password + OTP) in a
+  browser, which the release flow does not have. `npm deprecate` *is* permitted
+  and is the available mitigation — so a broken version stays on the registry
+  under a warning, and the fix ships as the next version number.
 
 ### Verifying a published artifact
 
