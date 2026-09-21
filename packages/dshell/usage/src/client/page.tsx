@@ -193,14 +193,19 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
             key={range.key}
             type="button"
             onClick={() => { setDays(range.days) }}
+            /* Selection is stated with weight, edge and emphasis rather than an
+               inverted fill: an inverted fill needs a surface colour that reads
+               against it, and inventing one goes dark-on-dark in a theme this
+               page does not own. */
             style={{
               padding: '4px 12px',
               borderRadius: 999,
               cursor: 'pointer',
-              border: '1px solid currentColor',
-              background: days === range.days ? 'currentColor' : 'transparent',
-              color: days === range.days ? 'var(--dsh-surface, #fff)' : 'inherit',
-              opacity: days === range.days ? 1 : 0.7,
+              border: days === range.days ? '1.5px solid currentColor' : '1px solid currentColor',
+              background: 'transparent',
+              color: 'inherit',
+              fontWeight: days === range.days ? 600 : 400,
+              opacity: days === range.days ? 1 : 0.55,
             }}
           >
             {t(range.key)}
