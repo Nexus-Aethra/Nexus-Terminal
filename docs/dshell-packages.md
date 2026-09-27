@@ -373,6 +373,13 @@ when it contributes to model-visible state.
 - Reads `dshellSshRouting` structurally when present, to probe a
   device-bound target before admitting a delegation; a composition
   without dshell-ssh simply has no device to check.
+- Cross-world byte moves (`download` / `upload`) write into the target
+  world by one of three lanes: `ctx.deviceFs` while the device's helper
+  is up, `ctx.shell` with the bytes as base64 on stdin when it is not,
+  and `node:fs` only for a world that runs on this machine — a device
+  spelling must never reach the host filesystem. Above the inline
+  ceiling the bytes move in chunks, verified by a sha256 each world
+  computes in its own terms.
 - Introduced in: Phase 9.8.
 
 ### `dshell-files`

@@ -928,8 +928,8 @@ export class BufferService {
       error: undefined,
     }
     this.transfers.set(id, record)
-    // Scratch directories live INSIDE each world's workspace, not /tmp: the
-    // slicing and reassembly run through that world's sandboxed shell, and a
+    // A staging directory lives INSIDE the world that needs one, not in /tmp:
+    // the reassembly runs through that world's sandboxed shell, and a
     // 工作区内修改 policy refuses writes outside the workspace.
     //
     // The path is spelled in the world's OWN namespace — its process path — and
@@ -950,10 +950,6 @@ export class BufferService {
         return this.ctx.fs.processPath(target)
       })
     }
-    // Both scratch paths exist so the two-host branch can use them; the
-    // device-host branch never writes to either.
-    const sourceScratch = await scratchOf(sourceWorld)
-    const destinationScratch = await scratchOf(destinationWorld)
     try {
       // The two worlds share no filesystem, so the file moves through the
       // harness in bounded pieces: the source world reads each chunk at an
@@ -963,6 +959,10 @@ export class BufferService {
       // No scratch parts on either side, no split / cat / sha256sum scripts.
       const destinationPath = this.ctx.fs.processPath(destination)
       const destinationOps = this.deviceOpsFor(destinationWorld)
+      // Only a destination with no byte-level ops stages parts on disk; a
+      // helper takes the assembled file in one atomic write, and the source
+      // never stages at all — its chunks are read at offsets.
+      const destinationScratch = destinationOps === undefined ? await scratchOf(destinationWorld) : ''
       let bytesDone = 0
       const buffers: Buffer[] = []
       let total = 0
@@ -1021,11 +1021,13 @@ export class BufferService {
         const sumOf = (text: string): string =>
           text.split('\n').map(line => line.trim()).find(line => line.length > 0)?.split(/\s+/u)[0] ?? ''
         const destinationSha = sumOf(await this.readWorldFile(destinationWorld, `${destinationScratch}/sum`, signal))
-        const sourceSha = sumOf(await this.readWorldFile(sourceWorld, `${sourceScratch}/sum`, signal))
+        // The source's digest is asked of the source's own world: the
+        // destination cannot compute it, and no scratch file of the source's
+        // holds it — the chunks were read at offsets, never split on disk.
+        const sourceSha = await this.sha256AcrossWorld(sourceWorld, this.ctx.fs.processPath(source), signal)
         if (sourceSha === '' || destinationSha !== sourceSha) {
-          throw new Error(`分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha || '未知'}。中间数据保留在 ${sourceScratch} 与 ${destinationScratch}`)
+          throw new Error(`分块传输校验不一致：源 ${sourceSha || '未知'}，目标 ${destinationSha || '未知'}。中间数据保留在 ${destinationScratch}`)
         }
-        await this.execAs(sourceWorld, `rm -rf -- ${quote(sourceScratch)}`, signal)
         await this.execAs(destinationWorld, `rm -rf -- ${quote(destinationScratch)}`, signal)
       }
       const finished: BufferTransfer = { ...record, bytesDone: size, chunksDone: chunksTotal, finishedAt: Date.now() }
@@ -1056,8 +1058,12 @@ export class BufferService {
     )
   }
 
-  /** Run one shell command AS one world, fenced by that world's own policy. */
-  private async execAs(world: Agent, command: string, signal?: AbortSignal): Promise<void> {
+  /**
+   * Run one shell command AS one world, fenced by that world's own policy.
+   * @param stdin - text to write to the command's stdin before closing it; the
+   *   base64 lane of {@link writeBytesAs} is its only caller.
+   */
+  private async execAs(world: Agent, command: string, signal?: AbortSignal, stdin?: string): Promise<void> {
     const shell = this.ctx.get('shell')
     if (shell === undefined) {
       throw new Error('本次组合没有 shell 服务，无法执行跨世界传输')
@@ -1070,7 +1076,7 @@ export class BufferService {
       ...policy === undefined ? {} : { sandboxPolicy: policy },
       ...signal === undefined ? {} : { signal },
     }))
-    const result = await (await shell.execute({ ...spec, stdin: undefined })).result()
+    const result = await (await shell.execute({ ...spec, stdin })).result()
     if (result.exitCode !== 0) {
       const detail = result.stderr.text.trim()
       throw new Error(
@@ -1116,23 +1122,38 @@ export class BufferService {
   /**
    * Write bytes into ONE session's execution world.
    *
-   * When the world is bound to a device, `ctx.deviceFs.writeBytes` lands the
-   * bytes on the device directly: the helper stages atomically and creates
-   * missing parents. When the world is the host (or no helper is up), this
-   * falls back to `node:fs.writeFile` — the same in-process path the pre-M3
-   * implementation always used.
+   * Three lanes, and the world decides which:
+   *
+   *  - a device with its helper up takes the bytes through
+   *    `ctx.deviceFs.writeBytes`, which stages atomically and creates missing
+   *    parents;
+   *  - a device with NO helper takes them through the shell seam, which routes
+   *    to that device anyway, as base64 on stdin decoded there. This lane is
+   *    the reason the fallback below is not simply `node:fs`: `processPath`
+   *    spells a DEVICE path, and writing that spelling on this machine would
+   *    create it here — the one thing a device session must never do.
+   *  - a session that runs here writes here.
+   *
+   * A session bound to a device that cannot be served never reaches any of the
+   * three: `deviceOpsFor` refuses on the way past.
    */
   private async writeBytesAs(world: Agent, target: FsTarget, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+    const path = this.ctx.fs.processPath(target)
     const ops = this.deviceOpsFor(world)
     if (ops !== undefined) {
-      // `processPath` is the device path the helper can open, exactly the
-      // spelling the destination ops need.
-      const path = this.ctx.fs.processPath(target)
       await ops.mkdir([posixDirname(path)], true)
       await ops.writeBytes(path, bytes, signal)
       return
     }
-    const path = this.ctx.fs.processPath(target)
+    if (this.routing?.targetForSession(String(world.id)) !== undefined) {
+      await this.execAs(
+        world,
+        `mkdir -p -- ${quote(posixDirname(path))} && base64 -d > ${quote(path)}`,
+        signal,
+        Buffer.from(bytes).toString('base64'),
+      )
+      return
+    }
     const { promises: fs } = await import('node:fs')
     await fs.mkdir(posixDirname(path), { recursive: true })
     await fs.writeFile(path, bytes, { signal })
