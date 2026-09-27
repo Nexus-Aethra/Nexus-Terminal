@@ -239,8 +239,10 @@ function settleDataRoot(ctx: Context, config: Partial<DshellSettings>): DshellDa
  *
  * @param ctx - host context, for the attached session registry.
  * @param sessionId - the session that just opted into terminal mode.
+ * @returns the name this call chose, or undefined when the session already had
+ *   one — which may be the user's own rename, and is then left alone.
  */
-function titleTerminalSession(ctx: Context, sessionId: string): void {
+function titleTerminalSession(ctx: Context, sessionId: string): string | undefined {
   const registry = ctx.get('sessions') as unknown as {
     get(id: string): {
       readonly seq: number
@@ -250,16 +252,13 @@ function titleTerminalSession(ctx: Context, sessionId: string): void {
     } | undefined
   } | undefined
   const session = registry?.get(sessionId)
-  if (session === undefined) return
-  if (session.snapshotEvents().some(event => event.type === 'session/title')) return
+  if (session === undefined) return undefined
+  if (session.snapshotEvents().some(event => event.type === 'session/title')) return undefined
+  const clock = new Date()
+  const stamp = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`
+  const title = hostLocale(ctx) === 'en' ? `Terminal session ${stamp}` : `终端会话 ${stamp}`
   try {
-    const clock = new Date()
-    const stamp = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`
-    session.append('session/title', {
-      title: hostLocale(ctx) === 'en' ? `Terminal session ${stamp}` : `终端会话 ${stamp}`,
-      messageSeqs: [],
-      source: { kind: 'user' },
-    })
+    session.append('session/title', { title, messageSeqs: [], source: { kind: 'user' } })
     // NOT a turn, however much one would help.
     //
     // dsh clears `blank` on `turn/start` alone, and a blank session in a
@@ -271,17 +270,40 @@ function titleTerminalSession(ctx: Context, sessionId: string): void {
     // The reader then calls the whole session corrupt, and a corrupt session
     // cannot be resumed: the terminal lost its shell for good, on the first
     // reload after the session had ever been used.
+    return title
   } catch (error) {
     // A refusal is reported rather than swallowed: the name is what the section
     // lists the session under, and its absence is invisible from the UI
-    // otherwise.
+    // otherwise. The caller still records the name it asked for, so the row is
+    // named even when the log is not.
     say(ctx, `dshell: could not name the terminal session: ${error instanceof Error ? error.message : String(error)}`, 'warn')
+    return title
   }
 }
 
+/**
+ * The session ids dsh still has, persisted ones included.
+ *
+ * Read through `sessionQuery` because that is the catalog dsh's own session
+ * list is built from: the live session store holds only materialized sessions,
+ * and a terminal session that has not been opened since a restart is exactly
+ * the one a reconciliation must not mistake for a deleted one. Undefined means
+ * this deployment does not mount the query engine, which is an unanswered
+ * question rather than an empty catalog.
+ *
+ * @param ctx - host context.
+ * @returns every session id dsh knows, or undefined when it cannot say.
+ */
+async function sessionCatalog(ctx: Context): Promise<readonly string[] | undefined> {
+  const query = ctx.get('sessionQuery') as unknown as {
+    listSessions(signal?: AbortSignal): Promise<readonly { header: { id: string } }[]>
+  } | undefined
+  if (query === undefined) return undefined
+  return (await query.listSessions()).map(record => record.header.id)
+}
+
 /** The language the browser reported, for the one host-side string dshell writes. */
-function hostLocale(ctx: Context): string {
-  try {
+function hostLocale(ctx: Context): string {  try {
     const settings = ctx.get('settings') as unknown as {
       describe(): readonly { ns: string; value?: { preference?: unknown } }[]
     } | undefined
@@ -333,16 +355,31 @@ export function apply(ctx: Context, config: Partial<DshellSettings> = {}): void 
   // a shell starts too. It is also the workspace the sidebar section adopts, so
   // the session's cwd — and therefore the PTY's — is that directory.
   const terminalRoot = hostHome()
-  const terminalModes = new TerminalModeRegistry(join(plan.root, 'terminal-mode.json'), terminalRoot)
+  const terminalModes = new TerminalModeRegistry(join(plan.root, 'terminal-mode.json'), terminalRoot, {
+    catalog: () => sessionCatalog(ctx),
+    onOrphan: (sessionIds) => {
+      say(ctx, `dshell: ${String(sessionIds.length)} terminal session(s) are not in dsh's catalog and were set aside: ${sessionIds.join(', ')}`, 'warn')
+    },
+  })
   ctx.provide(DSHELL_TERMINAL_MODE_SERVICE, terminalModes)
+  // Read, then check the table against the sessions dsh actually has. The two
+  // are one chain because a reconciliation that ran before the read would
+  // set aside every record it had not loaded yet.
   void terminalModes.load()
+    .then(() => terminalModes.reconcile())
+    .catch((error: unknown) => {
+      say(ctx, `dshell: the terminal-session table was not loaded: ${error instanceof Error ? error.message : String(error)}`, 'warn')
+    })
   // The route waits on `connection` in a child inject so this package's apply
   // keeps waiting on `settings` alone — the settlement order above depends on
   // being the earliest host package to run.
   ctx.inject(['connection'], (routeCtx) => {
     routeCtx.effect(
       () => routeCtx.connection.fetch.register(createTerminalModeRoute(terminalModes, {
-        onStart: (sessionId: string) => { titleTerminalSession(routeCtx, sessionId) },
+        onStart: (sessionId: string) => {
+          const title = titleTerminalSession(routeCtx, sessionId)
+          if (title !== undefined) void terminalModes.setTitle(sessionId, title)
+        },
       })),
       'dshell-mode: terminal-mode route',
     )

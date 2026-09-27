@@ -820,10 +820,13 @@ host / GUI) stays the target if the other packages grow rules of their own.
 
 dshell's own data sits under a harness home, exactly as dsh's does: `dshell/`
 (device registry and keys, buffer links and grants, session tags, the mount
-points device sessions stand in) and `dshell-pty/` (transcripts, their timelines,
-the command-history database). The home itself comes from dsh — `$DSH_HOME`, else
-`~/.dsh` — and for a long time that was the whole story: to put dshell's files on
-another disk you had to move the harness with them.
+points device sessions stand in), `dshell-pty/` (transcripts, their timelines,
+the command-history database) and `terminal-mode.json` (the terminal-session
+identity table: one record per session that runs the integrated terminal, keyed
+by the dsh session id, carrying its origin, directory, name, archive and started
+bits and the way its composer reads Enter). The home itself comes from dsh —
+`$DSH_HOME`, else `~/.dsh` — and for a long time that was the whole story: to put
+dshell's files on another disk you had to move the harness with them.
 
 The settings now name that directory themselves, in a namespace and a CARD of
 their own (`dshell-data`, field `dir`), and both the separation and the placement
@@ -856,7 +859,7 @@ on purpose:
 
 | what | where it goes |
 | --- | --- |
-| `dshell/ssh` (minus `ctl/` and the regenerated `askpass.sh`), `dshell/buffer`, `dshell/tags.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
+| `dshell/ssh` (minus `ctl/` and the regenerated `askpass.sh`), `dshell/buffer`, `dshell/tags.json`, `terminal-mode.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
 | `dshell/mnt/**` | **stays** — each directory is a session's working directory, and dsh recorded that as an absolute path when the session was created; moving them would break every existing device session |
 | `dshell/ssh/ctl/**` | stays — Unix sockets belonging to the process that is running right now, recreated on demand |
 

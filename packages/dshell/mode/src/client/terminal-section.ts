@@ -133,6 +133,9 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
       if (deps.modes.getSnapshot().workspaceId !== workspaceId) await deps.modes.useWorkspace(workspaceId)
       const sessionId = await deps.createSession(workspaceId)
       if (sessionId === undefined) return
+      // Recorded here rather than left to the view's own rule: this button is
+      // the one choice in the flow that is unambiguous, and the record says so.
+      await deps.modes.set(String(sessionId), true, { origin: 'section', cwd: path })
       deps.openSession(sessionId)
     } catch (error) {
       console.warn('dshell: could not open a terminal session', error)
@@ -280,10 +283,26 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     // sessions archived in its own registry, and our archive bit is a separate
     // thing, so a session archived there must still appear here. The summary is
     // used for its title and recency when the list happens to carry it.
+    /**
+     * The name one row shows.
+     *
+     * dsh's durable title first, because that is also where a rename by the
+     * reader lands; then the name dshell recorded when it named the session,
+     * which is what a session shows while dsh has not projected a title for it;
+     * only then dsh's own display fallback, whose last resort is the bare id.
+     * @param id - the session id.
+     * @returns the name to show.
+     */
+    const titleOf = (id: string): string => {
+      const summary = list.byId[id as SessionId]
+      return summary?.title
+        ?? flag.records.find(record => record.sessionId === id)?.title
+        ?? summary?.displayTitle
+        ?? id
+    }
     const desired = [...flag.sessions]
       .filter(id => showArchived || !flag.archived.includes(id))
-      .filter(id => query.length === 0
-        || (list.byId[id as SessionId]?.displayTitle ?? id).toLowerCase().includes(query.toLowerCase()))
+      .filter(id => query.length === 0 || titleOf(id).toLowerCase().includes(query.toLowerCase()))
       .sort((left, right) => (list.byId[right as SessionId]?.updatedAt ?? 0) - (list.byId[left as SessionId]?.updatedAt ?? 0))
 
     setIcon(foldButton, folded ? 'chevronUp' : 'chevronDown')
@@ -312,7 +331,7 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
         row = createRow(id)
         rows.set(id, row)
       }
-      row.title.textContent = list.byId[id as SessionId]?.displayTitle ?? id
+      row.title.textContent = titleOf(id)
       setIcon(row.toggle, flag.archived.includes(id) ? 'unarchive' : 'archive')
       row.root.style.background = id === current ? ROW_HOVER : 'transparent'
       listEl.append(row.root)

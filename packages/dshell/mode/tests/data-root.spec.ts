@@ -45,8 +45,8 @@ function file(path: string, body = 'x\n'): void {
 }
 
 /**
- * A root that looks like a used harness home: the four trees dshell keeps, plus
- * the two things that must stay behind.
+ * A root that looks like a used harness home: the five records dshell keeps,
+ * plus the two things that must stay behind.
  */
 function usedRoot(name: string): string {
   const root = scratch(name)
@@ -55,6 +55,7 @@ function usedRoot(name: string): string {
   file(join(root, 'dshell/ssh/known_hosts'), 'host\n')
   file(join(root, 'dshell/buffer/state.json'), '{}\n')
   file(join(root, 'dshell/tags.json'), '{}\n')
+  file(join(root, 'terminal-mode.json'), '{"version":2,"records":[]}\n')
   file(join(root, 'dshell-pty/session-abc.log'), 'log\n')
   // Stays: a session's working directory, which dsh recorded as an absolute
   // path, and a control socket belonging to a process.
@@ -101,7 +102,7 @@ describe('moving a data root', () => {
     const to = scratch('to')
     const migration = migrateDataRoot(from, to)
     expect(migration).toBeDefined()
-    expect(migration?.moved).toEqual(['dshell/ssh', 'dshell/buffer', 'dshell/tags.json', 'dshell-pty'])
+    expect(migration?.moved).toEqual(['dshell/ssh', 'dshell/buffer', 'dshell/tags.json', 'terminal-mode.json', 'dshell-pty'])
     expect(migration?.failed).toEqual([])
 
     // The device registry, the keys and the transcripts are in the new root.
@@ -197,7 +198,7 @@ describe('applying a root, and coming back', () => {
 
     const first = start(harnessHome, destination)
     expect(first.source).toBe('setting')
-    expect(first.migration?.moved).toEqual(['dshell/ssh', 'dshell/buffer', 'dshell/tags.json', 'dshell-pty'])
+    expect(first.migration?.moved).toEqual(['dshell/ssh', 'dshell/buffer', 'dshell/tags.json', 'terminal-mode.json', 'dshell-pty'])
     // The variable is what the other packages' path helpers read.
     expect(process.env[DSHELL_HOME_ENV]).toBe(destination)
     expect(existsSync(join(destination, 'dshell/ssh/devices.json'))).toBe(true)
@@ -238,10 +239,10 @@ describe('applying a root, and coming back', () => {
     // feature, failing on the second use.
     const harnessHome = usedRoot('harness')
     const destination = scratch('destination')
-    expect(start(harnessHome, destination).migration?.moved).toHaveLength(4)
+    expect(start(harnessHome, destination).migration?.moved).toHaveLength(5)
     expect(start(harnessHome, '').migration?.from).toBe(destination)
     const again = start(harnessHome, destination)
-    expect(again.migration?.moved).toHaveLength(4)
+    expect(again.migration?.moved).toHaveLength(5)
     expect(existsSync(join(destination, 'dshell/ssh/devices.json'))).toBe(true)
     expect(start(harnessHome, '').migration?.from).toBe(destination)
     expect(existsSync(join(harnessHome, 'dshell/ssh/devices.json'))).toBe(true)

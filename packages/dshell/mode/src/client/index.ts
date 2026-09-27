@@ -135,6 +135,8 @@ function gated<S extends { modes: TerminalModeClient; sessionId: SessionId | und
  */
 function modeSwitchSource(deps: {
   modeFor(sessionId: SessionId): SnapshotStore<SessionMode>
+  /** Turn one session's composer the other way, durably. */
+  setMode(sessionId: SessionId, next: SessionMode): void
   sendShell(text: string): void
   t: TranslateNS<'dshellMode'>
   isOn(sessionId: SessionId): boolean
@@ -184,7 +186,7 @@ function modeSwitchSource(deps: {
         token: `/${next}`,
         hint: t('mode.switch.hint'),
         submit: async (args) => {
-          deps.modeFor(session.sessionId).set(next)
+          deps.setMode(session.sessionId, next)
           const rest = args.trim()
           if (next === 'shell' && rest.length > 0) deps.sendShell(rest)
           return {
@@ -222,7 +224,7 @@ function modeSwitchSource(deps: {
       }
       const next = canonicalOf(name)
       if (next === undefined) return undefined
-      deps.modeFor(pick.session.sessionId).set(next)
+      deps.setMode(pick.session.sessionId, next)
       return { text: '' }
     },
     // The no-menu path (pasted line, or menu already closed): claim and
@@ -394,21 +396,51 @@ export function apply(ctx: Context): void {
   const models = ctx.get('modelDirectories') as unknown as
     { directoryFor(sessionId: SessionId): ModelDirectoryFace }
 
+  /**
+   * One session's composer mode: a local store for the instant answer, seeded
+   * from and written back to the identity table.
+   *
+   * The durable copy is the table's `mode` field, so the mode a reader left a
+   * session in is the mode it comes back in — a reload used to start every
+   * session at `shell` because the store was the only copy. Seeding is not
+   * enough on its own: the table arrives over the network, and a store created
+   * before it lands holds the default, so a publish adopts every value it
+   * carries. Adoption is safe without tracking writes in flight because the
+   * host's answer to a write republishes the table with that write already in
+   * it — a publish that disagrees is a newer reading from somewhere else.
+   */
   const modeStores = new Map<string, SnapshotStore<SessionMode>>()
   const modeFor = (sessionId: SessionId): SnapshotStore<SessionMode> => {
     const key = String(sessionId)
     let store = modeStores.get(key)
     if (store === undefined) {
-      store = createSnapshotStore<SessionMode>('shell')
+      store = createSnapshotStore<SessionMode>(modes.modeOf(key))
       modeStores.set(key, store)
     }
     return store
   }
+  const setSessionMode = (sessionId: SessionId, next: SessionMode): void => {
+    const key = String(sessionId)
+    modeFor(sessionId).set(next)
+    void modes.setMode(key, next)
+  }
+  ctx.effect(() => {
+    const adopt = (): void => {
+      for (const [key, store] of modeStores) {
+        const durable = modes.modeOf(key as SessionId)
+        if (store.getSnapshot() !== durable) store.set(durable)
+      }
+    }
+    adopt()
+    return modes.subscribe(adopt)
+  })
 
   // The reader's full-screen decisions, one per session and kept for the
-  // page's life — the same bargain the mode store makes: a reload starts from
-  // the host's reading again rather than from a decision nobody remembers
-  // making. A view with no session yet gets a store nothing ever writes.
+  // page's life only. Unlike the mode, this one is deliberately not durable:
+  // the choice belongs to the PROGRAM that was on screen (see `tui.ts`), so a
+  // reload starts from the host's reading again rather than from a decision
+  // made about a program that is no longer running. A view with no session yet
+  // gets a store nothing ever writes.
   const noSessionTui = createSnapshotStore<TuiChoice | undefined>(undefined)
   const tuiStores = new Map<string, SnapshotStore<TuiChoice | undefined>>()
   const tuiFor = (sessionId: SessionId): SnapshotStore<TuiChoice | undefined> => {
@@ -514,7 +546,7 @@ export function apply(ctx: Context): void {
         hints: commandHints,
         modes,
         setMode: (next: SessionMode) => {
-          if (sessionId !== undefined) modeFor(sessionId).set(next)
+          if (sessionId !== undefined) setSessionMode(sessionId, next)
         },
         submitShell: sendShell,
       }),
@@ -522,8 +554,10 @@ export function apply(ctx: Context): void {
     gated(DshellLeftControls),
   ))
   // `/shell`, `/agent` and `/fullscreen` live in the client-side slash pipeline,
-  // not on `ctx.commands`: they flip browser stores, which no host handler can
-  // reach. Registered once; each session controller polls it.
+  // not on `ctx.commands`: they flip browser state, which no host handler can
+  // reach. The two mode forms also write the identity table, so the mode a
+  // session was left in survives the page. Registered once; each session
+  // controller polls it.
   //
   // The full-screen toggle is the same decision the composer's button used to
   // make, read from the same two places: the host's reading of what is on the
@@ -538,7 +572,7 @@ export function apply(ctx: Context): void {
   ctx.inject(['inputTriggers'], (scope) => {
     scope.effect(
       () => scope.inputTriggers.registerSource(modeSwitchSource({
-        modeFor, sendShell, t, isOn: id => modes.isOn(id), toggleFullScreen,
+        modeFor, setMode: setSessionMode, sendShell, t, isOn: id => modes.isOn(id), toggleFullScreen,
       })),
       'dshell-mode: /shell + /agent + /fullscreen source',
     )
@@ -642,18 +676,50 @@ export function apply(ctx: Context): void {
   const TERMINAL_VIEW_ID = 'chat'
   let disposeView: (() => void) | undefined
   let viewSession: string | undefined
+  // The workspace registry, read through `ctx.get` because a composition
+  // without the workspace controller simply has no terminal workspace and the
+  // rule below then opts nothing in.
+  const workspaceSeat = ctx.get('workspaces') as unknown as {
+    list: {
+      getSnapshot(): {
+        readonly items: readonly {
+          readonly workspaceId: string
+          readonly path: string
+          readonly sessionIds: readonly SessionId[]
+        }[]
+      }
+      subscribe(listener: () => void): () => void
+    }
+  } | undefined
+  /**
+   * The workspace whose sessions are terminal sessions by construction.
+   *
+   * Found by the id the section recorded when it adopted the directory, and
+   * failing that by the directory itself: adoption is idempotent host-side, so
+   * a recorded id can be stale while the path still names the same workspace.
+   * @returns the workspace row, or undefined while the list has not arrived.
+   */
+  const terminalWorkspace = (): { readonly workspaceId: string; readonly sessionIds: readonly SessionId[] } | undefined => {
+    const items = workspaceSeat?.list.getSnapshot().items ?? []
+    const recorded = modes.getSnapshot().workspaceId
+    const root = modes.root()
+    return items.find(item => recorded !== undefined && item.workspaceId === recorded)
+      ?? items.find(item => root.length > 0 && item.path === root)
+  }
   ctx.effect(() => {
     const sync = (): void => {
       const current = currentSession.get()
-      // A session created in the terminal block (its cwd is the block's
-      // directory) is a terminal session by construction: the sidebar carried
-      // the choice, so nothing has to ask. Opting in here also seeds the
-      // session host-side (title + empty turn), which is what stops dsh from
-      // reusing it as a blank draft.
-      const root = modes.root()
-      if (current !== undefined && root.length > 0 && !modes.isOn(current)
-        && sessions.list.getSnapshot().byId[current]?.cwd === root) {
-        void modes.set(String(current), true)
+      // A session inside the terminal section's own workspace is a terminal
+      // session by construction: the sidebar carried that choice when it adopted
+      // the directory, and dsh's own 新会话 targets whichever workspace is open.
+      // Membership is the test, not the directory. Every terminal session runs
+      // in the same one — and so can a stock conversation — so the cwd equality
+      // this replaces silently converted any session that happened to start in
+      // the home directory.
+      if (current !== undefined && !modes.isOn(current)
+        && terminalWorkspace()?.sessionIds.includes(current) === true) {
+        const cwd = sessions.list.getSnapshot().byId[current]?.cwd
+        void modes.set(String(current), true, { origin: 'workspace', ...cwd === undefined ? {} : { cwd } })
       }
       const wanted = current !== undefined && modes.isOn(current) ? String(current) : undefined
       // Re-assert the lock on every pass: the strip may have rendered after the
@@ -724,6 +790,10 @@ export function apply(ctx: Context): void {
     // watched too because the strip re-renders when entries change and the
     // chat tab must be re-hidden each time it does.
     const disposeCurrent = currentSession.subscribe(sync)
+    // The workspace list decides membership, and it arrives after the session
+    // list on a cold page: without this the first pass finds no workspace and
+    // the session dsh just created stays a stock conversation.
+    const disposeWorkspaces = workspaceSeat?.list.subscribe(sync)
     const disposeSlots = ctx.slots.subscribe('conversation.view', () => {
       applyTabLock(ctx, viewSession !== undefined, t('view.terminal'))
     })
@@ -732,6 +802,7 @@ export function apply(ctx: Context): void {
       disposeList()
       disposeModes()
       disposeCurrent()
+      disposeWorkspaces?.()
       disposeSlots()
       disposeView?.()
       disposeView = undefined
@@ -785,10 +856,11 @@ export function apply(ctx: Context): void {
       if (state.reason === undefined) return
       if (asked.has(sessionId)) return
       // The Session's own directory is part of the ask — the Host refuses a
-      // resume that names a different one — so the list has to have answered
-      // before it can be made. Waiting costs nothing: a list change is one of
-      // this effect's triggers.
+      // resume that names a different one. dsh's list is the authority on it;
+      // the identity record is the fallback for the window before that list has
+      // answered, which on a cold page is the window the failure lands in.
       const cwd = sessions.list.getSnapshot().byId[sessionId as SessionId]?.cwd
+        ?? modes.record(sessionId)?.cwd
       if (cwd === undefined) return
       asked.add(sessionId)
       void (async () => {
@@ -807,19 +879,26 @@ export function apply(ctx: Context): void {
     const disposePty = pty.state.subscribe(review)
     const disposeCurrent = currentSession.subscribe(review)
     const disposeList = sessions.list.subscribe(review)
+    // The table decides both the gate (`isOn`) and the fallback directory, and
+    // it arrives over the network after the first failure has already been
+    // reported.
+    const disposeModes = modes.subscribe(review)
     review()
     return () => {
       disposePty()
       disposeCurrent()
       disposeList()
+      disposeModes()
     }
   }, 'dshell-mode: make a restored terminal session live')
 
   // The sidebar's terminal block: one icon in the 「工作区」 header row that
   // adopts dshell's terminal directory as a workspace and opens a session in
-  // it. Sessions created there carry that directory as their cwd, which is what
-  // makes them terminal sessions — no per-session switch, and the distinction
-  // is visible in the sidebar.
+  // it. What makes those sessions terminal sessions is the record this package
+  // writes for them — the button records `origin: 'section'` itself, and a
+  // session dsh creates inside the same workspace is adopted by membership.
+  // The distinction is visible in the sidebar, and no per-session switch is
+  // needed to make it.
   ctx.effect(() => {
     const workspaces = ctx.get('workspaces') as unknown as {
       create(input: { path: string }): Promise<{ workspaceId: string }>

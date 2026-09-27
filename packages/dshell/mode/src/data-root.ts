@@ -108,6 +108,7 @@ const ROOT_MOVES: readonly RootMove[] = [
   { path: join('dshell', 'ssh'), skip: ['ctl', 'askpass.sh'] },
   { path: join('dshell', 'buffer') },
   { path: join('dshell', 'tags.json') },
+  { path: 'terminal-mode.json' },
   { path: 'dshell-pty' },
 ]
 

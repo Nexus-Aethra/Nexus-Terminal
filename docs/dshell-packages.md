@@ -215,11 +215,34 @@ when it contributes to model-visible state.
   the grid to the PTY, and `tui-css.ts` puts dsh's composer away for as
   long as the program holds the terminal (`tui.ts` keeps the reader's own
   decision about it) — § 18.
+  The host half also owns the terminal-session identity table
+  (`terminal-mode.ts`, document `terminal-mode.json` under the data
+  root): one record per session that runs the integrated terminal,
+  keyed by the dsh session id and carrying its origin (`section` for
+  the sidebar's own button, `workspace` for one dsh created inside the
+  adopted workspace, `legacy` for the id list this table replaced),
+  its directory, the name dshell gave it, dshell's own archive and
+  started bits, and the composer mode — which is why `shell` / `agent`
+  survives a reload. dsh gives a plugin no durable per-session field
+  of its own: `SessionCreateRequest` carries no metadata, a projection
+  can only fold logged events, and an event type declared outside the
+  dsh repository is unknown to its generated vocabulary, so a log
+  carrying one is refused on the next cold read (`ignorable` is the
+  escape hatch and live `append` cannot set it). The table is written
+  through a temp file and `rename`, every mutation runs on one
+  serialized chain, and a start-up reconciliation checks it against
+  `sessionQuery`'s catalog: a record whose session is gone moves to
+  `orphans` — reported, and dropped on the next reconciliation that
+  still misses it — rather than being deleted on the spot.
 - dsh services depended on: `ctx.uiSession`, `ctx.agents.inject`,
   `dshell-terminal-bridge` (for main PTY id, the agent stream and
   context buffer read), `ctx.sessions` (the status card's session
   titles, running bit and subagent catalog), `dshell-buffer` (its pipe
-  rows; optional, reached through a late-binding seat).
+  rows; optional, reached through a late-binding seat),
+  `ctx.get('workspaces')` (the browser half's membership test for a
+  session dsh created in the adopted workspace) and
+  `ctx.get('sessionQuery')` (the reconciliation's catalog; optional,
+  and its absence means "cannot answer", never "nothing exists").
 - Introduced in: Phase 5 (state and dispatch); expanded in Phase 7
   (injection), Phase 9.11 (status card), Phase 10.12 (Tab completion
   folds capitals), Phase 10.13 (the command hint) and Phase 10.14 (the
