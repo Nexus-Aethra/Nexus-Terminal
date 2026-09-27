@@ -223,16 +223,19 @@ function settleDataRoot(ctx: Context, config: Partial<DshellSettings>): DshellDa
 }
 
 /**
- * Give an opted-in session an event of its own.
+ * Name an opted-in session, once.
  *
- * dsh reuses the workspace's blank session when `新会话` is pressed
- * (`reuseOrCreateBlank` matches on `summary.blank`, and a summary is blank while
- * `session.seq === 0`). A terminal-mode session runs commands in a PTY and never
- * logs a turn, so it would stay that blank draft forever and `新会话` would keep
- * selecting it instead of creating one. One `session/title` event — the
- * vocabulary dsh itself writes for a renamed session — ends that, and names the
- * session honestly at the same time. It is skipped when the session already has
- * events, so a session that opted in later keeps its own history.
+ * Every terminal session is born the same way, so without a name the section
+ * lists rows nobody can tell apart; `session/title` is dsh's own event for a
+ * named session, and the time in the name is what makes two of them distinct.
+ * A session that already carries a title keeps it, because that title may be
+ * the user's own rename — dsh writes the same event for one.
+ *
+ * This is the ONLY event this package writes. It deliberately does not open a
+ * turn: a session that has never run one stays `blank`, and a blank session in
+ * a workspace is that workspace's reusable draft, so `新会话` may select it
+ * instead of creating one. That is a cosmetic annoyance; fabricating a turn to
+ * prevent it corrupts the log (see the note in the body).
  *
  * @param ctx - host context, for the attached session registry.
  * @param sessionId - the session that just opted into terminal mode.
@@ -248,15 +251,8 @@ function titleTerminalSession(ctx: Context, sessionId: string): void {
   } | undefined
   const session = registry?.get(sessionId)
   if (session === undefined) return
-  // "Blank" is dsh's word for "no turn ever started here", and it is the exact
-  // condition that makes this session the workspace's reusable draft. A session
-  // that already has turns keeps its history untouched.
-  const turns = session.snapshotEvents().filter(event => event.type === 'turn/start').length
-  if (turns > 0) return
+  if (session.snapshotEvents().some(event => event.type === 'session/title')) return
   try {
-    // A title, so the session has a name a reader recognises.
-    // The time is part of the name on purpose: every terminal session is born
-    // the same way, so without it the section lists rows nobody can tell apart.
     const clock = new Date()
     const stamp = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`
     session.append('session/title', {
@@ -264,20 +260,22 @@ function titleTerminalSession(ctx: Context, sessionId: string): void {
       messageSeqs: [],
       source: { kind: 'user' },
     })
-    // An EMPTY turn, because dsh clears `blank` on `turn/start` alone — in its
-    // persisted list projection and in the browser's fold alike. Without one, a
-    // terminal-mode session (which logs no turns by design) stays the
-    // workspace's reusable blank draft for its whole life, so `新会话` keeps
-    // selecting it instead of creating one — the reported bug. The turn opens
-    // and closes without a step: the log shape the docs describe for a turn
-    // that never ran, no model call, and nothing for the transcript to show.
-    session.append('turn/start', { turn: turns + 1 })
-    session.append('turn/end', { turn: turns + 1, reason: { kind: 'blocked' } })
+    // NOT a turn, however much one would help.
+    //
+    // dsh clears `blank` on `turn/start` alone, and a blank session in a
+    // workspace is that workspace's reusable draft, so an empty turn here used
+    // to look like the way to stop `新会话` from selecting this session. It is
+    // not: the log is a VALIDATED format (`session-format-v3-to-v4`), and the
+    // Agent's own turn counter is its own — the first real turn still writes
+    // `turn/start {turn: 1}`, which after a fabricated turn 1 is a duplicate.
+    // The reader then calls the whole session corrupt, and a corrupt session
+    // cannot be resumed: the terminal lost its shell for good, on the first
+    // reload after the session had ever been used.
   } catch (error) {
-    // A refusal leaves the flag set — the session then behaves as before — but
-    // it is reported rather than swallowed: the blank-session reuse this call
-    // exists to end is invisible from the UI otherwise.
-    say(ctx, `dshell: could not seed the terminal session: ${error instanceof Error ? error.message : String(error)}`, 'warn')
+    // A refusal is reported rather than swallowed: the name is what the section
+    // lists the session under, and its absence is invisible from the UI
+    // otherwise.
+    say(ctx, `dshell: could not name the terminal session: ${error instanceof Error ? error.message : String(error)}`, 'warn')
   }
 }
 

@@ -56,8 +56,9 @@ export interface TerminalSectionDeps {
       subscribe(listener: () => void): () => void
     }
   }
-  readonly openWorkspaceSession: (workspaceId: string) => void
   readonly openSession: (sessionId: SessionId) => void
+  /** Mint a session in a workspace, bypassing dsh's blank-draft reuse. */
+  readonly createSession: (workspaceId: string) => Promise<SessionId | undefined>
   readonly t: TranslateNS<'dshellMode'>
 }
 
@@ -110,9 +111,15 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
   }
 
   /**
-   * Create the workspace if needed, then open a terminal session in it. The
+   * Create the workspace if needed, then mint a session in it and open it. The
    * session is born unstarted, and its initialization page asks where it runs
    * and which preset it uses — so nothing is asked here.
+   *
+   * The session is minted DIRECTLY rather than through dsh's workspace open,
+   * which reuses the workspace's blank draft (`reuseOrCreateBlank`): a terminal
+   * session logs no turn, so it stays `blank` for as long as it is used as a
+   * shell, and every press of this button would land the reader back in the
+   * session already on screen.
    */
   const start = async (): Promise<void> => {
     if (busy) return
@@ -124,7 +131,9 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
       // recorded id may be stale (the terminal root is a setting that can move).
       const workspaceId = (await deps.workspaces.create({ path })).workspaceId
       if (deps.modes.getSnapshot().workspaceId !== workspaceId) await deps.modes.useWorkspace(workspaceId)
-      deps.openWorkspaceSession(workspaceId)
+      const sessionId = await deps.createSession(workspaceId)
+      if (sessionId === undefined) return
+      deps.openSession(sessionId)
     } catch (error) {
       console.warn('dshell: could not open a terminal session', error)
     } finally {

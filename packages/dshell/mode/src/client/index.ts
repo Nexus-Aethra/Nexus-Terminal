@@ -302,14 +302,12 @@ export function apply(ctx: Context): void {
   // inert instead of failing to load.
   const navigationHost = ctx as unknown as {
     inject(keys: readonly string[], callback: (scope: {
-      uiWorkspace: { openSession(target: SessionTarget): void; startSession(workspaceId: string): void }
+      uiWorkspace: { openSession(target: SessionTarget): void }
     }) => void): unknown
   }
   let openConversation: ((target: SessionTarget) => void) | undefined
-  let startWorkspaceSession: ((workspaceId: string) => void) | undefined
   navigationHost.inject(['uiWorkspace'], (scope) => {
     openConversation = (target) => { scope.uiWorkspace.openSession(target) }
-    startWorkspaceSession = (workspaceId) => { scope.uiWorkspace.startSession(workspaceId) }
   })
   let sshSeat: SshSeat | undefined
   // The device seat is built ONCE: `useSyncExternalStore` demands a stable
@@ -742,6 +740,81 @@ export function apply(ctx: Context): void {
     }
   }, 'dshell-mode: terminal view for opted-in sessions')
 
+  /**
+   * Bring a terminal session the browser merely RESTORED back to life.
+   *
+   * Revealing a Session does not materialize one: `sessions.retain` resolves an
+   * address "without materializing a Session", and the stock composer asks for
+   * an Agent only when a message is sent. dsh's own views never notice — a chat
+   * transcript renders from the log, and the first send builds the Agent — but a
+   * terminal binds its shell on sight, so a session restored by a reload (or by
+   * a restart of the harness) had no Agent: the bind failed with "no live
+   * agent", the retry budget was spent, and a line typed into the dead terminal
+   * was swallowed.
+   *
+   * A failed bind is therefore the signal. The ask is `session.create` with an
+   * explicit identity — what dsh's own workspace open does to reuse a blank
+   * session — which RESUMES the persisted one, Agent included, instead of
+   * starting a new session under the same id. Then the terminal gets a fresh
+   * retry budget, because the failures it spent were not its own.
+   *
+   * One ask per session per outage: `asked` is cleared only once the shell is
+   * up again, so a later failure (another restart) is repaired the same way.
+   */
+  ctx.effect(() => {
+    const asked = new Set<string>()
+    const review = (): void => {
+      const current = currentSession.get()
+      const sessionId = current === undefined || !modes.isOn(current) ? undefined : String(current)
+      if (sessionId === undefined) {
+        asked.clear()
+        return
+      }
+      const state = pty.state.getSnapshot()
+      if (state.sessionId !== sessionId) return
+      // A live connection is the answer, and clears the record so a LATER
+      // outage (another restart) is repaired the same way.
+      if (state.status === 'open') {
+        asked.delete(sessionId)
+        return
+      }
+      // The failure report is what makes the ask worth making: a first bind
+      // still in flight has no reason yet, and the retry loop keeps the status
+      // at 'connecting' even once its budget is gone — which is exactly the
+      // state this has to notice.
+      if (state.reason === undefined) return
+      if (asked.has(sessionId)) return
+      // The Session's own directory is part of the ask — the Host refuses a
+      // resume that names a different one — so the list has to have answered
+      // before it can be made. Waiting costs nothing: a list change is one of
+      // this effect's triggers.
+      const cwd = sessions.list.getSnapshot().byId[sessionId as SessionId]?.cwd
+      if (cwd === undefined) return
+      asked.add(sessionId)
+      void (async () => {
+        try {
+          await sessions.create({ sessionId: sessionId as SessionId, cwd })
+        } catch {
+          // The list stays the authority on whether the Agent arrived, and the
+          // terminal's own notice reports what the connection made of it.
+        }
+        const now = pty.state.getSnapshot()
+        if (now.sessionId === sessionId && now.status !== 'open' && now.status !== 'connecting') {
+          pty.reconnect()
+        }
+      })()
+    }
+    const disposePty = pty.state.subscribe(review)
+    const disposeCurrent = currentSession.subscribe(review)
+    const disposeList = sessions.list.subscribe(review)
+    review()
+    return () => {
+      disposePty()
+      disposeCurrent()
+      disposeList()
+    }
+  }, 'dshell-mode: make a restored terminal session live')
+
   // The sidebar's terminal block: one icon in the 「工作区」 header row that
   // adopts dshell's terminal directory as a workspace and opens a session in
   // it. Sessions created there carry that directory as their cwd, which is what
@@ -762,8 +835,24 @@ export function apply(ctx: Context): void {
         sessions,
         currentSession,
         workspaces,
-        openWorkspaceSession: (workspaceId: string) => { startWorkspaceSession?.(workspaceId) },
         openSession: (sessionId: SessionId) => { openConversation?.(sessionId as unknown as SessionTarget) },
+        // `session.create` and not the workspace open: opening a workspace
+        // reuses its blank draft, and a terminal session stays blank (it logs
+        // no turn), so `+` would keep returning the session already on screen.
+        // Bound, because `create` is a prototype method that reads `this`, and
+        // re-stated because the contract brands the workspace id with a type
+        // this package does not depend on.
+        createSession: async (workspaceId: string) => {
+          const createIn = sessions.create.bind(sessions) as unknown as (
+            opts: { workspaceId: string },
+          ) => Promise<SessionId>
+          try {
+            return await createIn({ workspaceId })
+          } catch (error: unknown) {
+            console.warn('dshell: could not create a terminal session', error)
+            return undefined
+          }
+        },
         t,
       })
     } catch (error) {
