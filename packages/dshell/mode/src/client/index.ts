@@ -37,7 +37,7 @@ import { createElement, type ReactElement } from 'react'
 import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
 import { injectTuiCss } from './tui-css.js'
 import { applyTabLock } from './terminal-mode-lock.js'
-import { type TuiChoice } from './tui.js'
+import { toggledChoice, type TuiChoice } from './tui.js'
 import type { PipeSeat, PipeTicket } from './status-card.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
@@ -65,10 +65,20 @@ export const inject = ['slots', 'locale', 'sessions', 'dshellPtyStream', 'modelD
 /** This package's copy namespace. */
 const NS = 'dshellMode'
 
-/** Per-message routing mode for one session. The `name` stays the canonical identifier. */
-const MODE_MENU_ROWS: readonly { name: 'shell' | 'agent'; descriptionKey: DshellModeKey }[] = [
+/** The slash command that hands the surface to the program on the terminal. */
+const FULLSCREEN_COMMAND = 'fullscreen'
+
+/**
+ * The rows this source contributes to the `/` menu.
+ *
+ * `fullscreen` sits with the modes because it is the same kind of choice — how
+ * the next keystroke is routed — and because a one-off control does not deserve
+ * a place in the composer row (see `DshellLeftControls`).
+ */
+const MODE_MENU_ROWS: readonly { name: string; descriptionKey: DshellModeKey }[] = [
   { name: 'shell', descriptionKey: 'mode.menu.shell' },
   { name: 'agent', descriptionKey: 'mode.menu.agent' },
+  { name: FULLSCREEN_COMMAND, descriptionKey: 'tui.enterTitle' },
 ]
 
 /** Typed aliases → canonical mode. `/terminal` stays an accepted alias. */
@@ -111,16 +121,16 @@ function gated<S extends { modes: TerminalModeClient; sessionId: SessionId | und
  */
 
 /**
- * `/shell` and `/agent` as first-class client commands. They are NOT host
- * commands: the per-session mode store lives in this browser module, so the
- * handler has to run here. The input-trigger pipeline is the supported
- * client-side entry — a source on `/` contributes menu rows and claims
- * `matchEnter` with a local `CommandClaim` whose `submit` flips the store
- * (no RPC, no durable command lifecycle to pollute the log). Typed args
- * after a shell switch run immediately (`/shell ls -la`). Plain draft text
- * still routes through the capture-phase composer listener; this source
- * owns the slash forms only.
- * @param deps - per-session mode store and the main-shell sender.
+ * `/shell`, `/agent` and `/fullscreen` as first-class client commands. They are
+ * NOT host commands: the per-session mode and full-screen stores live in this
+ * browser module, so the handlers have to run here. The input-trigger pipeline
+ * is the supported client-side entry — a source on `/` contributes menu rows and
+ * claims `matchEnter` with a local `CommandClaim` whose `submit` flips the store
+ * (no RPC, no durable command lifecycle to pollute the log). Typed args after a
+ * shell switch run immediately (`/shell ls -la`). Plain draft text still routes
+ * through the capture-phase composer listener; this source owns the slash forms
+ * only.
+ * @param deps - per-session stores, the main-shell sender, and the full-screen toggle.
  * @returns the trigger source for `ctx.inputTriggers.registerSource`.
  */
 function modeSwitchSource(deps: {
@@ -128,6 +138,8 @@ function modeSwitchSource(deps: {
   sendShell(text: string): void
   t: TranslateNS<'dshellMode'>
   isOn(sessionId: SessionId): boolean
+  /** Flip one session's full-screen choice; reports whether it is now full. */
+  toggleFullScreen(sessionId: SessionId): boolean
 }): InputTriggerSource {
   const { t } = deps
   /** Resolve a typed/picked name to its canonical mode (`/terminal` → shell). */
@@ -135,7 +147,34 @@ function modeSwitchSource(deps: {
     const canonical = rawName === 'terminal' ? 'shell' : rawName
     return MODE_ALIASES.has(canonical) ? canonical as SessionMode : undefined
   }
+  const isKnown = (name: string): boolean => name === FULLSCREEN_COMMAND || canonicalOf(name) !== undefined
+  /**
+   * The rows on offer for one session.
+   *
+   * Full screen belongs to the terminal surface, so it is offered only while the
+   * line is routed to the shell: in agent mode Enter sends to the model, and a
+   * full-screen program would not be the thing the reader is looking at.
+   */
+  const rowsFor = (session: ClientSessionContext): readonly { name: string; descriptionKey: DshellModeKey }[] =>
+    deps.modeFor(session.sessionId).getSnapshot() === 'shell'
+      ? MODE_MENU_ROWS
+      : MODE_MENU_ROWS.filter(row => row.name !== FULLSCREEN_COMMAND)
+  const fullScreenClaim = (session: ClientSessionContext): { claim: CommandClaim } => ({
+    claim: {
+      name: FULLSCREEN_COMMAND,
+      token: `/${FULLSCREEN_COMMAND}`,
+      hint: t('mode.fullscreen.hint'),
+      submit: async () => {
+        const full = deps.toggleFullScreen(session.sessionId)
+        return {
+          kind: 'success',
+          text: full ? t('mode.fullscreen.on') : t('mode.fullscreen.off'),
+        }
+      },
+    },
+  })
   const claimFor = (name: string, session: ClientSessionContext): { claim: CommandClaim } => {
+    if (name === FULLSCREEN_COMMAND) return fullScreenClaim(session)
     const next = canonicalOf(name) as SessionMode
     return {
       claim: {
@@ -167,7 +206,7 @@ function modeSwitchSource(deps: {
       if (req.position !== 'leading') return []
       if (!deps.isOn(_session.sessionId)) return []
       const query = req.query.trim().toLowerCase()
-      return MODE_MENU_ROWS
+      return rowsFor(_session)
         .filter(row => row.name.startsWith(query))
         .map(row => ({ name: row.name, description: t(row.descriptionKey), value: row.name }))
     },
@@ -176,7 +215,12 @@ function modeSwitchSource(deps: {
     // token with empty text makes that ONE keystroke with no leftover draft,
     // instead of the stock two-step "insert token, then submit" claim.
     onPick: (pick) => {
-      const next = canonicalOf((pick.candidate.value ?? pick.candidate.name).toLowerCase())
+      const name = (pick.candidate.value ?? pick.candidate.name).toLowerCase()
+      if (name === FULLSCREEN_COMMAND) {
+        deps.toggleFullScreen(pick.session.sessionId)
+        return { text: '' }
+      }
+      const next = canonicalOf(name)
       if (next === undefined) return undefined
       deps.modeFor(pick.session.sessionId).set(next)
       return { text: '' }
@@ -189,7 +233,7 @@ function modeSwitchSource(deps: {
       const ws = trimmed.search(/\s/)
       const token = ws === -1 ? trimmed : trimmed.slice(0, ws)
       const name = token.slice(1).toLowerCase()
-      if (canonicalOf(name) === undefined) return undefined
+      if (!isKnown(name)) return undefined
       if (!deps.isOn(session.sessionId)) return undefined
       if (envelope.attachments > 0) throw new Error(t('mode.attachmentsUnsupported', { name }))
       return claimFor(name, session)
@@ -470,20 +514,35 @@ export function apply(ctx: Context): void {
         pty,
         completion: shellCompletion,
         hints: commandHints,
-        tui: sessionId === undefined ? undefined : tuiFor(sessionId),
         modes,
+        setMode: (next: SessionMode) => {
+          if (sessionId !== undefined) modeFor(sessionId).set(next)
+        },
         submitShell: sendShell,
       }),
     },
     gated(DshellLeftControls),
   ))
-  // `/shell` and `/agent` live in the client-side slash pipeline, not on
-  // `ctx.commands`: they flip a browser store, which no host handler can
+  // `/shell`, `/agent` and `/fullscreen` live in the client-side slash pipeline,
+  // not on `ctx.commands`: they flip browser stores, which no host handler can
   // reach. Registered once; each session controller polls it.
+  //
+  // The full-screen toggle is the same decision the composer's button used to
+  // make, read from the same two places: the host's reading of what is on the
+  // terminal, and the reader's decision about it (`tui.ts` — the choice belongs
+  // to the PROGRAM, so the next program starts from the reading again).
+  const toggleFullScreen = (sessionId: SessionId): boolean => {
+    const store = tuiFor(sessionId)
+    const next = toggledChoice(pty.state.getSnapshot().tui, store.getSnapshot())
+    store.set(next)
+    return next.full
+  }
   ctx.inject(['inputTriggers'], (scope) => {
     scope.effect(
-      () => scope.inputTriggers.registerSource(modeSwitchSource({ modeFor, sendShell, t, isOn: id => modes.isOn(id) })),
-      'dshell-mode: /shell + /agent source',
+      () => scope.inputTriggers.registerSource(modeSwitchSource({
+        modeFor, sendShell, t, isOn: id => modes.isOn(id), toggleFullScreen,
+      })),
+      'dshell-mode: /shell + /agent + /fullscreen source',
     )
   })
   // The palette is a dshell plugin setting, so it lives in the Plugins

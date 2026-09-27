@@ -42,7 +42,7 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 |---|---|
 | A full-bleed terminal | One main shell per session, running real commands — full screen, colours, cursor |
 | One merged timeline | Shell output and AI work interleave by time; each AI turn is a collapsible **task block** |
-| Two modes | `$ shell` makes Enter run a command, `✦ agent` makes Enter send to the AI — `/shell` and `/agent` switch between them |
+| Two modes | `$ shell` makes Enter run a command, `✦ agent` makes Enter send to the AI — the `$` / `✦` glyph in the input line is the mode, click it to flip |
 | The AI's own shell | The AI gets a separate PTY, so it never blocks your foreground program and never steals your terminal |
 | Cross-session work | Sessions form **pipes** to delegate tasks to each other and share files by name (the **buffer**) — including across SSH devices |
 | Device sessions | Open a session directly on a remote machine: commands, files and the visible terminal all run there |
@@ -130,7 +130,7 @@ the top right, and the input line sits at the bottom.
 | **Left sidebar** | Create and switch sessions; `归档` files one away into the `已归档` group; `多选` then batches `恢复` / `删除`; a deleted session first moves to `待删除 · 重启后清除` |
 | **Right sidebar: files** | The `文件` tab browses the session's working directory with back/forward; double-clicking a directory makes it the root; **drag a directory onto the terminal** to `cd` there; device sessions also get `打开文件传输` |
 | **Status card** | Always in the top right, collapsed to one line; expand it for the AI terminal, subagents, background jobs, buffer transfers and delegation replies |
-| **Input line** | `?` names the gestures that are live and the mode in force, on hover; `/shell` / `/agent` switch modes |
+| **Input line** | the `$` / `✦` glyph is the mode — click to flip, hover for its name; `?` names the gestures that are live, on hover |
 
 The **timeline** is the point: a stretch of shell output occupies one region (a real mini terminal
 that scrolls horizontally), and one AI turn occupies one task block. The block's header line says what
@@ -142,13 +142,14 @@ it is doing, for how long, and what it has spent; clicking it folds the block in
 
 ## Two modes: `$ shell` and `✦ agent`
 
-The input line says which mode is in force, and the mode is switched with a slash command typed right
-in the input box:
+The `$` / `✦` glyph at the left of the input line is the mode — click it to flip, hover it to read
+which one it is. The same switch is a slash command typed right in the input box:
 
 | Input | Effect |
 |---|---|
 | `/shell <command>` | Switch to shell mode and run the command immediately (`/terminal` is an alias) |
 | `/agent <text>` | Switch to agent mode and send the text to the AI |
+| `/fullscreen` | Hand the whole surface to the program on the terminal (the way in when the reading misses) |
 | `/new` | Create a session that inherits the current session's working directory |
 
 In `$ shell` mode:
@@ -197,7 +198,7 @@ a full-screen program — `npm install` and `sleep 30` keep their timeline.
 | | |
 |---|---|
 | Getting out | the `退出全屏` button on the small bar over the program's own screen — or just quit the program, and the timeline comes back by itself |
-| Getting in by hand | the full-screen button in the input line, for a program the reading misses |
+| Getting in by hand | `/fullscreen`, for a program the reading misses |
 | While it is on | the transcript is not rendered at all, and the program's output is kept out of the timeline on purpose: its repaints would land there as a wall of half-drawn screens. It is still in the session's raw log, so a reconnect replays the screen |
 | A device session | only the alternate screen is read there (the local process is `ssh`), so the button is the way in for everything else |
 
@@ -421,13 +422,13 @@ have something to say:
 
 | Where | Action | What it does |
 |---|---|---|
-| Input line | `/shell` / `/agent` | switch modes |
+| Input line | click `$` / `✦` (or `/shell`, `/agent`) | switch modes |
 | Input line | hover `?` | the key legend for the current state |
 | Input line | `Tab` | completion: commands in the command position, directories after `cd`, paths elsewhere (case-insensitive match, real spelling applied) |
 | Input line | `↑` | command history list |
 | Input line | `→` | take one word of the ghost hint |
 | Input line | `Ctrl+C` / `Ctrl+Shift+V` | interrupt / paste into the terminal |
-| Input line | the full-screen button | hand the whole surface to a full-screen program |
+| Input line | `/fullscreen` | hand the whole surface to a full-screen program |
 | Terminal | drag a directory in | `cd` the terminal there |
 | Timeline | click a task block's header | fold / unfold it |
 | Timeline | the right-edge bookmark rail | jump to an AI turn |
@@ -490,8 +491,8 @@ This is exactly what produced the two screenshots above — the run is real, not
   both would act on this machine while the session works on another. The install note above lists
   the two upstream packages that make the desktop half available at all.
 - **Full-screen mode reads the foreground on this machine only.** A device session is detected by the
-  alternate screen alone, so a full-screen program that does not switch buffers needs the full-screen
-  button there. The reading is Linux's: `dsh web` on macOS or Windows has the button and nothing else.
+  alternate screen alone, so a full-screen program that does not switch buffers needs `/fullscreen`
+  there. The reading is Linux's: `dsh web` on macOS or Windows has the reading and nothing else.
 - The pipe panel refreshes by polling (about every 3 seconds) — there is no push channel. In-flight
   transfers refresh the status card once a second.
 

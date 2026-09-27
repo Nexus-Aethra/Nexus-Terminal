@@ -32,6 +32,9 @@ export const zh = {
   'mode.switch.hint': '切换模式',
   'mode.switch.shell': '已切换到 shell 模式 · Enter 直接执行命令',
   'mode.switch.agent': '已切换到 agent 模式 · Enter 发送给 AI',
+  'mode.fullscreen.hint': '全屏',
+  'mode.fullscreen.on': '已进入全屏 · 按键直接交给程序',
+  'mode.fullscreen.off': '已退出全屏',
   'mode.attachmentsUnsupported': '/{name} 不支持附件',
   // The blank-session switch that opts a new session into the integrated
   // terminal, and the view tab an opted-in session gains.
@@ -66,8 +69,10 @@ export const zh = {
   'preset.cordis': '创造模式',
   'view.terminal': '智能终端',
 
-  // The composer legend. The mode itself is named by the `/shell` and `/agent`
-  // commands, so the mode identifier needs no label here.
+  // The mode chip and its legend. The chip names the mode identifier, which
+  // stays canonical; only its displayed label comes from here.
+  'composer.mode.shell': 'shell',
+  'composer.mode.agent': 'agent',
   'composer.legend.idle': '直接输入',
   'composer.legend.tab': 'Tab 补全',
   'composer.legend.history': '↑ 历史',
@@ -323,6 +328,9 @@ export const en = {
   'mode.switch.hint': 'Switch mode',
   'mode.switch.shell': 'Switched to shell mode · Enter runs the command directly',
   'mode.switch.agent': 'Switched to agent mode · Enter sends to the AI',
+  'mode.fullscreen.hint': 'Full screen',
+  'mode.fullscreen.on': 'Full screen on · the program takes the keys',
+  'mode.fullscreen.off': 'Left full screen',
   'mode.attachmentsUnsupported': '/{name} does not support attachments',
   'mode.flag.label': 'Terminal mode',
   'mode.flag.on': 'on',
@@ -355,6 +363,8 @@ export const en = {
   'preset.cordis': 'Creator mode',
   'view.terminal': 'Terminal',
 
+  'composer.mode.shell': 'shell',
+  'composer.mode.agent': 'agent',
   'composer.legend.idle': 'Type directly',
   'composer.legend.tab': 'Tab completes',
   'composer.legend.history': '↑ history',

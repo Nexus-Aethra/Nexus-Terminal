@@ -1046,8 +1046,8 @@ cursor can go is what it draws its screen from.
 The way OUT cannot live in the composer, since the composer is what the mode
 puts away: the surface floats one small bar over the program's screen
 (`pointerEvents: 'none'` everywhere but the button, so the screen stays the
-reader's). The way IN is the full-screen icon button in `conversation.input.left`,
-for a program the reading misses.
+reader's). The way IN is the `/fullscreen` command, for a program the reading
+misses.
 
 ### 18.5 Not covered
 

@@ -8,7 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { IconFullscreenOutlineRegular, IconQuestionOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconQuestionOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { readShellCaret, type ShellCaret } from '@nexus-aethra/dshell-std'
 import { shellReportCwd } from './shell-report.js'
@@ -17,8 +17,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompletionState, ShellCompletion } from './completion.js'
 import type { CommandHints } from './command-hint.js'
 import { useShellHelpers } from './shell-settings.js'
+import { useDshellTheme } from './theme.js'
 import type { TerminalModeClient } from './terminal-mode.js'
-import { toggledChoice, tuiFullScreen, type TuiChoice } from './tui.js'
 import type { SessionMode } from './types.js'
 
 const controlsRowStyle: CSSProperties = { position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }
@@ -114,27 +114,15 @@ export function DshellLeftControls(props: {
   pty: PtyStreamService | undefined
   /** The terminal-mode flag; the wrapper gates on it, the chip never sees off. */
   modes: TerminalModeClient
+  setMode(next: SessionMode): void
   submitShell(text: string): void
-  /** The reader's full-screen decision for this session (see `tui.ts`). */
-  tui: SnapshotStore<TuiChoice | undefined> | undefined
 } & DshellInputStandardProps & DshellInputCompletion & PropsLocale<'dshellMode'>): ReactElement | null {
   const { t } = props
+  const theme = useDshellTheme()
   const mode = useSyncExternalStore(
     props.mode?.subscribe ?? (() => () => {}),
     props.mode?.getSnapshot ?? (() => 'shell' as SessionMode),
   )
-  // The host's reading of the terminal, and the reader's decision about it.
-  // Read here only to draw the way IN — the way out belongs to the full-screen
-  // surface itself, since the composer is exactly what that mode puts away.
-  const tuiReading = useSyncExternalStore(
-    props.pty?.state.subscribe ?? (() => () => {}),
-    () => props.pty?.state.getSnapshot().tui,
-  )
-  const tuiChoice = useSyncExternalStore(
-    props.tui?.subscribe ?? (() => () => {}),
-    props.tui?.getSnapshot ?? (() => undefined),
-  )
-  const fullScreen = tuiFullScreen(tuiReading, tuiChoice)
   // Latest draft, kept in a ref so the DOM-level listener reads it
   // without re-subscribing on every keystroke.
   const draft = props.useInput?.(state => state.draft) ?? ''
@@ -683,6 +671,26 @@ export function DshellLeftControls(props: {
           ? legendFor(t('composer.legend.acceptWord'), t('composer.legend.continueHint'))
           : legendFor(t('composer.legend.idle')))
     : t('composer.legend.agent')
+  // The mode as the one glyph that names it — `$` for shell, `✦` for agent —
+  // and nothing else: the word was the chip's whole width, and the ink says
+  // which mode it is as well as the glyph does. Clicking it still flips the
+  // mode, and the tooltip spells the symbol out.
+  const next: SessionMode = mode === 'shell' ? 'agent' : 'shell'
+  const glyph = mode === 'shell' ? '$' : '✦'
+  const modeLabel = `${glyph} ${t(mode === 'shell' ? 'composer.mode.shell' : 'composer.mode.agent')}`
+  const modeStyle: CSSProperties = {
+    ...controlStyle,
+    color: mode === 'shell' ? theme.accentText : theme.muted,
+    fontSize: 14,
+    lineHeight: 1,
+  }
+  const modeButton: ReactElement = createElement('button', {
+    type: 'button',
+    'data-dshell-control': '',
+    style: modeStyle,
+    'aria-label': modeLabel,
+    onClick: () => { props.setMode(next) },
+  }, glyph)
   // One `?` in place of the legend: the row it costs is the row the model
   // selector and the send button need, and the legend is read once, not every
   // time. It is a button so the keyboard can reach it, wrapped in dsh's own
@@ -696,21 +704,12 @@ export function DshellLeftControls(props: {
     style: controlStyle,
     'aria-label': legend,
   }, createElement(IconQuestionOutlineRegular, { size: 14 }))
-  // The way INTO full screen, for a program the host's reading misses. Not
-  // drawn while the surface is already the program's: that mode hides the whole
-  // composer, so the way out is the one the surface itself carries.
-  const fullScreenButton = createElement('button', {
-    type: 'button',
-    'data-dshell-control': '',
-    style: controlStyle,
-    'aria-label': t('tui.enterTitle'),
-    onClick: () => { props.tui?.set(toggledChoice(tuiReading, tuiChoice)) },
-  }, createElement(IconFullscreenOutlineRegular, null))
+  // The way into full screen is NOT here: it is `/fullscreen`, for the same
+  // reason the mode switch is a command — a control that is used once does not
+  // deserve a place in the row the model selector and the send button share.
   return createElement('div', { style: controlsRowStyle },
+    createElement(Tooltip, { label: modeLabel, side: 'top', delayMs: 500, children: modeButton }),
     createElement(Tooltip, { label: legend, side: 'top', delayMs: 500, children: legendButton }),
-    mode === 'shell' && !fullScreen
-      ? createElement(Tooltip, { label: t('tui.enterTitle'), side: 'top', delayMs: 500, children: fullScreenButton })
-      : null,
   )
 }
 
