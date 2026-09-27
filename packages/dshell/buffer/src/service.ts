@@ -91,6 +91,13 @@ export const MAX_BIG_BYTES = 4 * 1024 * 1024 * 1024
 const MAX_USER_ENTRIES = 1000
 /** How long a settled transfer stays in the snapshot for progress surfaces. */
 const TRANSFER_TAIL_MS = 15_000
+/**
+ * How long a session's hiding stays memory-only before the pipes are settled
+ * for good. `session/disposed` fires at host shutdown too, and a shutdown must
+ * never persist "every in-flight ticket failed"; twenty seconds separates a
+ * reader's deletion from a process that is on its way out.
+ */
+const HIDE_GRACE_MS = 20_000
 
 /** What one cross-world copy moved, and between which paths. */
 export interface TransferOutcome {
@@ -173,6 +180,8 @@ export class BufferService {
    * composition and dsh stops naming them, so there is nothing left to hide.
    */
   private readonly departed = new Set<string>()
+  /** Sessions whose hiding is waiting out the grace before it is settled. */
+  private readonly hides = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly feasibility: Feasibility
   /**
    * A context carrying `subprocess`, for the device probe only.
@@ -226,6 +235,14 @@ export class BufferService {
     this.watchdog = setInterval(() => { void this.sweep() }, WATCHDOG_INTERVAL_MS)
     this.watchdog.unref?.()
     this.ctx.on('agent/disposed', ({ agent }) => { void this.onAgentDisposed(String(agent.id)) })
+    // dsh disposes a Session both when the reader deletes it and when the host
+    // goes down, and only the first orphans anything. The hiding is therefore
+    // immediate and memory-only, while the settlement waits out the grace: a
+    // shutdown never lives that long, a deletion does. Whatever the grace
+    // missed — a deletion inside a restart's blind window, state written
+    // before this path existed — the boot reconciliation settles.
+    this.ctx.on('session/disposed', (session: { id: SessionId }) => { this.hideSession(String(session.id)) })
+    void this.reconcile()
   }
 
   /** Stop the watchdog. State stays on disk for the next start. */
@@ -400,15 +417,66 @@ export class BufferService {
   // ------------------------------------------------------------------ detach
 
   /**
+   * One session's disposal, as dsh reports it: hide it from the pipe UI at
+   * once, and settle its pipes once the disposal has outlived the grace.
+   *
+   * The split is the whole point. `session/disposed` is also how a host
+   * shutdown says goodbye to every loaded session, and settling on that would
+   * persist "every in-flight ticket failed" on each restart; only a disposal
+   * that outlives the grace is a deletion.
+   *
+   * @param sessionId - the disposed session.
+   */
+  private hideSession(sessionId: string): void {
+    this.departed.add(sessionId)
+    if (this.disposed || this.hides.has(sessionId)) return
+    const timer = setTimeout(() => {
+      this.hides.delete(sessionId)
+      void this.detachSession(sessionId)
+    }, HIDE_GRACE_MS)
+    timer.unref?.()
+    this.hides.set(sessionId, timer)
+  }
+
+  /**
+   * Settle the pipes of every session dsh's catalog no longer lists.
+   *
+   * Covers what the grace path never saw: a deletion that landed inside a
+   * restart's blind window, and state written before that path existed. The
+   * catalog is the same cold listing dsh's own sidebar is built from, so a
+   * session merely not opened since the last start is still in it and is left
+   * alone; a catalog that is absent or throws is an unanswered question and
+   * changes nothing.
+   */
+  async reconcile(): Promise<void> {
+    const query = this.ctx.get('sessionQuery') as unknown as {
+      listSessions(signal?: AbortSignal): Promise<readonly { header: { id: string } }[]>
+    } | undefined
+    if (query === undefined) return
+    let known: Set<string>
+    try {
+      known = new Set((await query.listSessions()).map(record => record.header.id))
+    } catch {
+      return
+    }
+    const referenced = new Set<string>()
+    for (const link of this.links) { referenced.add(link.a); referenced.add(link.b) }
+    for (const ticket of this.tickets) { referenced.add(ticket.from); referenced.add(ticket.to) }
+    for (const grant of this.grants) { referenced.add(grant.from); referenced.add(grant.to) }
+    for (const sessionId of referenced) {
+      if (!known.has(sessionId) && !this.hides.has(sessionId)) await this.detachSession(sessionId)
+    }
+  }
+
+  /**
    * A session is gone: settle every unsettled ticket it participates in,
    * revoke every grant it holds or issued, drop its pipes, and remember that
    * the pipe UI must not draw it any more.
    *
-   * Deleting a session in dshell does not dispose its agent — the delete
-   * route only frees dshell's own memory and schedules the log purge — so
-   * this must be called explicitly by the deletion path;
-   * {@link onAgentDisposed} covers the narrower case of an agent actually
-   * being disposed in this process.
+   * Two callers, neither of them the deletion route itself: {@link hideSession}
+   * once a disposal has survived the grace, and {@link reconcile} for whatever
+   * the grace never saw. {@link onAgentDisposed} covers the narrower case of
+   * tickets whose agent disappeared mid-flight.
    *
    * The id is remembered because dsh still lists it: a deleted-but-loaded
    * session stays in `ctx.sessions` until the next start (dsh cannot tear one
@@ -445,18 +513,21 @@ export class BufferService {
   }
 
   /**
-   * Undo {@link detachSession}'s hiding when the pending deletion is cancelled.
+   * Undo {@link hideSession}'s hiding when the deletion is cancelled.
    *
-   * A session whose log is scheduled for removal can be restored before the
-   * next start (the sidebar's 取消): dsh never forgot it and the log is intact,
-   * so it is a live session again and must be offered — as a graph node and as
-   * a pipe endpoint — exactly as before. Its pipes are not resurrected: those
-   * were cut when the deletion was requested, and re-linking is a new gesture.
+   * Within the grace this also withdraws the pending settlement, so a
+   * cancelled deletion leaves the session's pipes exactly as they were; after
+   * the grace the pipes are already cut and re-linking is a new gesture.
    *
    * @param sessionId - the session whose scheduled deletion was cancelled.
    */
   restoreSession(sessionId: string): void {
     this.departed.delete(sessionId)
+    const timer = this.hides.get(sessionId)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      this.hides.delete(sessionId)
+    }
   }
 
   // -------------------------------------------------------------- delegation

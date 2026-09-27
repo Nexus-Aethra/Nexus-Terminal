@@ -360,12 +360,13 @@ when it contributes to model-visible state.
     toggles — that button is the link glyph first in dshell-mode's
     terminal section header, the only chrome dshell owns in the sidebar.
     The panel drops any session the host reports
-    as `departed` — a session dshell deleted that dsh still lists until
-    the next start — from the graph nodes and the endpoint pickers, so a
-    deleted session cannot linger as an edge-less node. Cancelling a
-    scheduled deletion calls back into the host (`restoreSession`), which
-    releases the id from that set: the session is live again and returns
-    to the graph.
+    as `departed` — a session dsh disposed — from the graph nodes and the
+    endpoint pickers. A disposal hides at once and settles its pipes only
+    after a grace, because `session/disposed` is also how a host shutdown
+    says goodbye and must never persist "every ticket failed"; whatever
+    the grace never saw, a boot reconciliation against dsh's cold session
+    catalog (`sessionQuery.listSessions`, the same listing the sidebar is
+    built from) settles, so state older than this path heals too.
 - dsh services depended on: `ctx.tools`, `ctx.systemPrompt`, `ctx.fs`,
   `ctx.agents`, `ctx.sessionController`, `ctx.sandboxPolicy` (optional),
   `ctx.shell` (cross-world byte transfer), `ctx.connection.fetch`; the

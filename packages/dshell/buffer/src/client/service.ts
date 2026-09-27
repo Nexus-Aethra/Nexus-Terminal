@@ -33,9 +33,9 @@ export interface BufferSnapshot {
   /** Chunked transfers in flight (and the freshly settled), for progress UI. */
   readonly transfers: readonly BufferTransfer[]
   /**
-   * Sessions dshell deleted that dsh still lists until the next start. The
-   * panel drops their nodes: dsh cannot tear a loaded session down, so the id
-   * outlives its pipes and would otherwise draw as an orphan node.
+   * Sessions dsh disposed that it still lists until the next start. The
+   * panel drops their nodes: dsh cannot tear a loaded session down, so the
+   * id outlives its pipes and would otherwise draw as an orphan node.
    */
   readonly departed: readonly string[]
   /** The last refusal or transport failure, shown until the next call. */
