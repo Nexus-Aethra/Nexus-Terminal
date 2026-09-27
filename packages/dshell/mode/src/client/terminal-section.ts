@@ -27,7 +27,7 @@ import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TerminalModeClient } from './terminal-mode.js'
-import type { CurrentSessionSeat } from './terminal-mode-switch.js'
+import type { CurrentSessionSeat, DeviceChoiceSeat } from './terminal-mode-switch.js'
 import { dshIcon, type DshIconName } from './dsh-icons.js'
 
 /** The sidebar hole the workspace browser fills; our section sits after its region. */
@@ -43,6 +43,25 @@ const TOOL_HOVER = 'var(--dsw-alias-button-tool-bar-hover)'
 const BORDER = 'var(--dsw-alias-border-l2)'
 const RADIUS = 'var(--dsw-radius-md)'
 
+/**
+ * The place pill's metrics, copied from the one dshell puts on dsh's own
+ * session rows (`dshell-ssh`'s `session-bind.ts`), so the two rows read as one
+ * language. Ours carries no dropdown: the host refuses to move a session that
+ * has history, and a session that has none answers the question on its
+ * initialization page.
+ */
+const PLACE_CSS = 'display:inline-flex;align-items:center;max-width:96px;padding:1px 6px;box-sizing:border-box;' +
+  'border-radius:4px;border:1px solid var(--dsw-border, transparent);background:transparent;flex:none;' +
+  'font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+
+/** The row menu's panel and items, on dsh's own menu tokens. */
+const MENU_PANEL_CSS = 'position:absolute;top:100%;right:0;z-index:40;min-width:132px;padding:4px;border-radius:8px;' +
+  'border:1px solid var(--dsw-border, transparent);background:var(--dsw-menu-bg, Canvas);' +
+  'box-shadow:0 8px 24px rgb(0 0 0 / 0.18)'
+const MENU_ITEM_CSS = 'display:flex;align-items:center;gap:6px;width:100%;padding:4px 8px;box-sizing:border-box;' +
+  'border-radius:4px;border:none;background:transparent;color:inherit;font-size:12px;line-height:18px;' +
+  'text-align:left;cursor:pointer'
+
 /** What the section needs from the rest of the composition. */
 export interface TerminalSectionDeps {
   readonly modes: TerminalModeClient
@@ -56,9 +75,17 @@ export interface TerminalSectionDeps {
       subscribe(listener: () => void): () => void
     }
   }
+  /**
+   * The device seat, so a row can say where its shell runs. Undefined in a
+   * composition without `dshell-ssh`, where every terminal is local and the pill
+   * says so.
+   */
+  readonly devices: DeviceChoiceSeat | undefined
   readonly openSession: (sessionId: SessionId) => void
   /** Mint a session in a workspace, bypassing dsh's blank-draft reuse. */
   readonly createSession: (workspaceId: string) => Promise<SessionId | undefined>
+  /** Ask for the rename dialog, seeded with the row's current title. */
+  readonly requestRename: (sessionId: SessionId, currentTitle: string) => void
   readonly t: TranslateNS<'dshellMode'>
 }
 
@@ -66,7 +93,12 @@ export interface TerminalSectionDeps {
 interface Row {
   readonly root: HTMLElement
   readonly title: HTMLElement
+  readonly place: HTMLElement
   readonly toggle: HTMLButtonElement
+  readonly menu: HTMLButtonElement
+  readonly menuPanel: HTMLElement
+  readonly menuRename: HTMLButtonElement
+  readonly menuArchive: HTMLButtonElement
 }
 
 /**
@@ -183,6 +215,15 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
 
   const rows = new Map<string, Row>()
 
+  /**
+   * The row whose menu is open, and the call that takes it down.
+   *
+   * One at a time for the whole section, which is what a menu is: opening a
+   * second row's closes the first, and a press anywhere outside does too.
+   */
+  let openMenuRow: HTMLElement | undefined
+  let closeMenu: (() => void) | undefined
+
   /** One session's row; its listeners are bound once, to this session's id. */
   const createRow = (id: string): Row => {
     const rowEl = document.createElement('div')
@@ -193,6 +234,15 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     mark.style.flex = 'none'
     const titleEl = document.createElement('span')
     titleEl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;line-height:20px'
+    // dsh's own gesture for a rename is a double-click on the row's title.
+    titleEl.addEventListener('dblclick', (event) => {
+      event.stopPropagation()
+      event.preventDefault()
+      deps.requestRename(id as SessionId, titleEl.textContent ?? id)
+    })
+    const place = document.createElement('span')
+    place.style.cssText = PLACE_CSS
+    place.style.color = LABEL_TERTIARY
     const toggle = iconButton('archive', deps.t('block.archiveOne'), () => { /* handled on pointerdown */ })
     toggle.style.opacity = '0'
     // pointerdown, so the action lands before any re-render the store's tick
@@ -202,10 +252,68 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
       const archivedNow = deps.modes.getSnapshot().archived.includes(id)
       void deps.modes.setArchived(id, !archivedNow)
     })
-    rowEl.addEventListener('mouseenter', () => { rowEl.style.background = ROW_HOVER; toggle.style.opacity = '1' })
+
+    const menuWrap = document.createElement('div')
+    menuWrap.style.cssText = 'position:relative;display:inline-flex;flex:none'
+    const menu = iconButton('more', deps.t('row.actions'), () => {
+      if (openMenuRow === rowEl) { closeMenu?.(); return }
+      closeMenu?.()
+      menuPanel.style.display = 'block'
+      const away = (event: PointerEvent): void => {
+        if (event.target instanceof Node && menuPanel.contains(event.target)) return
+        closeMenu?.()
+      }
+      document.addEventListener('pointerdown', away)
+      openMenuRow = rowEl
+      closeMenu = (): void => {
+        document.removeEventListener('pointerdown', away)
+        menuPanel.style.display = 'none'
+        openMenuRow = undefined
+        closeMenu = undefined
+      }
+    })
+    menu.style.opacity = '0'
+    const menuPanel = document.createElement('div')
+    menuPanel.style.cssText = MENU_PANEL_CSS
+    menuPanel.style.display = 'none'
+    menuPanel.setAttribute('role', 'menu')
+    const menuItem = (icon: DshIconName, label: string, onClick: () => void): HTMLButtonElement => {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.setAttribute('role', 'menuitem')
+      item.style.cssText = MENU_ITEM_CSS
+      const artwork = dshIcon(icon, 14)
+      artwork.style.flex = 'none'
+      artwork.style.color = LABEL_TERTIARY
+      const caption = document.createElement('span')
+      caption.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+      caption.textContent = label
+      item.append(artwork, caption)
+      item.addEventListener('mouseenter', () => { item.style.background = ROW_HOVER })
+      item.addEventListener('mouseleave', () => { item.style.background = 'transparent' })
+      item.addEventListener('pointerdown', (event) => { event.stopPropagation() })
+      item.addEventListener('click', (event) => { event.stopPropagation(); closeMenu?.(); onClick() })
+      return item
+    }
+    const menuRename = menuItem('edit', deps.t('row.rename'), () => {
+      deps.requestRename(id as SessionId, titleEl.textContent ?? id)
+    })
+    const menuArchive = menuItem('archive', deps.t('row.archive'), () => {
+      const archivedNow = deps.modes.getSnapshot().archived.includes(id)
+      void deps.modes.setArchived(id, !archivedNow)
+    })
+    menuPanel.append(menuRename, menuArchive)
+    menuWrap.append(menu, menuPanel)
+
+    rowEl.addEventListener('mouseenter', () => {
+      rowEl.style.background = ROW_HOVER
+      toggle.style.opacity = '1'
+      menu.style.opacity = '1'
+    })
     rowEl.addEventListener('mouseleave', () => {
       if (id !== deps.currentSession.get()) rowEl.style.background = 'transparent'
       toggle.style.opacity = '0'
+      menu.style.opacity = '0'
     })
     rowEl.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return
@@ -216,8 +324,8 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
       if (target instanceof HTMLElement && target.closest('button') !== null) return
       deps.openSession(id as SessionId)
     })
-    rowEl.append(mark, titleEl, toggle)
-    return { root: rowEl, title: titleEl, toggle }
+    rowEl.append(mark, titleEl, place, toggle, menuWrap)
+    return { root: rowEl, title: titleEl, place, toggle, menu, menuPanel, menuRename, menuArchive }
   }
 
   /** Whether dsh's sidebar is in its 36px rail state. */
@@ -300,6 +408,23 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
         ?? summary?.displayTitle
         ?? id
     }
+    /**
+     * Where one session's shell runs, in the words the pill shows.
+     *
+     * Read from dshell-ssh's own bindings, so the answer is the same one the
+     * pill on dsh's native row gives. A session that was never bound — or any
+     * session in a composition without the ssh plugin — runs here.
+     * @param id - the session id.
+     * @returns the device's name, or the local label.
+     */
+    const placeOf = (id: string): string => {
+      const snapshot = deps.devices?.snapshot()
+      const binding = snapshot?.bindings.find(row => row.sessionId === id)
+      const device = binding === undefined || snapshot === undefined
+        ? undefined
+        : snapshot.devices.find(row => row.id === binding.deviceId)
+      return device?.name ?? deps.t('block.local')
+    }
     const desired = [...flag.sessions]
       .filter(id => showArchived || !flag.archived.includes(id))
       .filter(id => query.length === 0 || titleOf(id).toLowerCase().includes(query.toLowerCase()))
@@ -332,12 +457,22 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
         rows.set(id, row)
       }
       row.title.textContent = titleOf(id)
-      setIcon(row.toggle, flag.archived.includes(id) ? 'unarchive' : 'archive')
+      const place = placeOf(id)
+      row.place.textContent = place
+      row.place.title = deps.t('block.place', { place })
+      const archived = flag.archived.includes(id)
+      setIcon(row.toggle, archived ? 'unarchive' : 'archive')
+      setIcon(row.menuArchive, archived ? 'unarchive' : 'archive')
+      const archiveLabel = row.menuArchive.querySelector('span')
+      if (archiveLabel !== null) archiveLabel.textContent = deps.t(archived ? 'row.unarchive' : 'row.archive')
       row.root.style.background = id === current ? ROW_HOVER : 'transparent'
       listEl.append(row.root)
     }
     for (const [id, row] of [...rows]) {
       if (alive.has(id)) continue
+      // A menu hanging off a row that is going must not outlive it, or its
+      // document listener would keep a removed node alive.
+      if (openMenuRow === row.root) closeMenu?.()
       row.root.remove()
       rows.delete(id)
     }
@@ -367,6 +502,9 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     deps.workspaces.list.subscribe(() => { render() }),
     deps.modes.subscribe(render),
     deps.currentSession.subscribe(render),
+    // A binding made or dropped on the initialization page changes what the
+    // pill says, and the ssh service republishes when it does.
+    deps.devices?.subscribe(render) ?? (() => {}),
   ]
   attach()
   render()
@@ -396,6 +534,7 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
   })
   rowObserver.observe(document.body, { childList: true, subtree: true })
   return () => {
+    closeMenu?.()
     observer.disconnect()
     rowObserver.disconnect()
     for (const dispose of disposers) dispose()

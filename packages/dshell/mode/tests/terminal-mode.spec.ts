@@ -89,6 +89,19 @@ describe('the identity table on disk', () => {
     expect(registry.snapshot()).toEqual(['session-a', 'session-b'])
   })
 
+  it('clears the archive bit again, in the document and not just in memory', async () => {
+    const { registry, file } = table()
+    await registry.set('session-a', true, { origin: 'section' })
+    await registry.setArchived('session-a', true)
+    await registry.setArchived('session-a', false)
+
+    expect(registry.record('session-a')?.archived).toBeUndefined()
+    // Absence is the off state, so the key must be GONE: an `archived: false`
+    // left in the document would be re-read as a record that says something.
+    const body = read(file)
+    expect(JSON.stringify(body?.records)).not.toContain('archived')
+  })
+
   it('writes nothing for a session it has no record of', async () => {
     const { registry, file } = table()
     await registry.set('session-a', true, { origin: 'section' })

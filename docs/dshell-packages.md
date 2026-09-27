@@ -243,6 +243,18 @@ when it contributes to model-visible state.
   session dsh created in the adopted workspace) and
   `ctx.get('sessionQuery')` (the reconciliation's catalog; optional,
   and its absence means "cannot answer", never "nothing exists").
+  The section's rows carry two more things. A pill at the row's end
+  says where that shell runs — the device's name, or `本机` — on the
+  metrics `dshell-ssh` already uses for the same pill on dsh's native
+  rows, and read-only, because the host refuses to move a session that
+  has history and a session that has none answers the question on its
+  initialization page. And a rename: the row's title takes a
+  double-click (dsh's own gesture) and its `⋯` menu offers the same
+  action, both raising one `shell.overlay` entry that renders dsh's
+  `Modal` and writes through `SessionFace.rename`, under a reference
+  source this package declares (`dshellRename`). dsh's own rename
+  dialog cannot be reused: its request channel is a local of
+  ui-workspace's apply, not a service.
 - Introduced in: Phase 5 (state and dispatch); expanded in Phase 7
   (injection), Phase 9.11 (status card), Phase 10.12 (Tab completion
   folds capitals), Phase 10.13 (the command hint) and Phase 10.14 (the

@@ -50,13 +50,31 @@ import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
 import { TerminalModeClient } from './terminal-mode.js'
 import { useTerminalModeOn, type DeviceChoiceSeat } from './terminal-mode-switch.js'
 import { mountTerminalSection } from './terminal-section.js'
+import { DshellRenameDialog, requestRename } from './rename-dialog.js'
 import type { PresetSeat } from './creation-panel.js'
 import type { DshellModeKey } from './locales.js'
 import { en, zh } from './locales.js'
 import type { ModelChipFace, ModelDirectoryFace, SessionMode } from './types.js'
 
+// The reference source the rename hop retains a session under. The map is
+// merge-extensible, so a package names its own use rather than borrowing
+// `workspaceOperation` — the counts are what tell a reader who is holding one.
+declare module '@deepseek-ai/dsh-api-session-controller/client' {
+  interface SessionReferenceSourceMap {
+    /** One rename raised from the terminal section's rows. */
+    dshellRename: unknown
+  }
+}
+
 /** The pipe's state before (or without) a buffer service to read it from. */
 const EMPTY_PIPE_STATE = { links: [], tickets: [] } as const
+
+/**
+ * The device reading with no `dshell-ssh` in the composition: nothing bound, so
+ * every terminal is local. One shared value because a store's `getSnapshot`
+ * must return the same object until something actually changed.
+ */
+const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
@@ -316,6 +334,25 @@ export function apply(ctx: Context): void {
   // `snapshot` identity AND a cached return value, so the projection of the
   // ssh service's own snapshot is memoized by that snapshot's identity.
   let deviceSeat: DeviceChoiceSeat | undefined
+  /**
+   * Subscribers the forwarder below took before the seat arrived.
+   *
+   * `dshellSsh` is reached through `inject`, which answers once the service is
+   * up — possibly after a surface that reads devices has already been built. A
+   * surface handed the seat variable itself would keep the `undefined` it was
+   * given and call every session local, so the terminal section is handed a
+   * forwarder instead: built once, reading through at call time, and relaying
+   * the subscriptions it collected early.
+   */
+  const deviceListeners = new Set<() => void>()
+  const deviceForward: DeviceChoiceSeat = {
+    snapshot: () => deviceSeat?.snapshot() ?? NO_DEVICES,
+    bind: async (sessionId, deviceId) => { await deviceSeat?.bind(sessionId, deviceId) },
+    subscribe: (listener) => {
+      deviceListeners.add(listener)
+      return () => { deviceListeners.delete(listener) }
+    },
+  }
   sshHost.inject(['dshellSsh'], (scope) => {
     const ssh = scope.dshellSsh
     let cachedRaw: unknown
@@ -337,6 +374,8 @@ export function apply(ctx: Context): void {
       bind: (sessionId: string, deviceId: string | null) => ssh.bind(sessionId, deviceId),
       subscribe: listener => ssh.subscribe(listener),
     }
+    // Relay to whoever subscribed before the seat existed (see `deviceForward`).
+    ssh.subscribe(() => { for (const listener of [...deviceListeners]) listener() })
     sshSeat = {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
@@ -603,6 +642,36 @@ export function apply(ctx: Context): void {
       locale: NS,
     },
     DshellDataCard,
+  ))
+  /**
+   * Name a session the host's own way.
+   *
+   * `rename` lives on the session face, so the row retains the session for the
+   * one call — the same hop ui-workspace makes for its own rows, under a source
+   * of ours so the reference counts name who was holding it.
+   * @param sessionId - the session to name.
+   * @param title - the raw title; the host normalizes what it accepts.
+   */
+  const renameSession = async (sessionId: SessionId, title: string): Promise<void> => {
+    const result = await sessions.using(
+      sessionId,
+      { source: 'dshellRename' },
+      reference => reference.binding.session.rename(title),
+    )
+    if (!result.ok) throw new Error(result.error.message)
+  }
+  // The terminal section's rename dialog. dsh's own answers a request raised
+  // through a share ui-workspace keeps to itself, so a row outside its tree
+  // registers its own overlay entry instead — dsh's Modal, dsh's rename field,
+  // and the host's durable title, which is what every surface reads.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register(
+    {
+      name: 'shell.overlay',
+      id: 'dshell-terminal-rename',
+      locale: NS,
+      inject: () => ({ rename: renameSession }),
+    },
+    DshellRenameDialog,
   ))
   // The block view owns the stock `chat` cell no more. The integrated terminal
   // is an ADDITIVE `conversation.view` entry that exists only while the
@@ -914,6 +983,8 @@ export function apply(ctx: Context): void {
         sessions,
         currentSession,
         workspaces,
+        devices: deviceForward,
+        requestRename,
         openSession: (sessionId: SessionId) => { openConversation?.(sessionId as unknown as SessionTarget) },
         // `session.create` and not the workspace open: opening a workspace
         // reuses its blank draft, and a terminal session stays blank (it logs

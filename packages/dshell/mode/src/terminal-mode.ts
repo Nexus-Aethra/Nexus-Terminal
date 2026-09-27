@@ -81,6 +81,20 @@ function isOrigin(value: unknown): value is TerminalSessionOrigin {
   return value === 'section' || value === 'workspace' || value === 'legacy'
 }
 
+/**
+ * One record with the archive bit removed.
+ *
+ * Absence is the off state — a record never carries `archived: false` — so
+ * clearing the bit drops the key. Writing a falsy one instead would survive the
+ * round trip as a field that says nothing, and `readRecord` would keep it.
+ * @param record - the record to copy.
+ * @returns the copy, unarchived.
+ */
+function unarchived(record: TerminalSessionRecord): TerminalSessionRecord {
+  const { archived: _archived, ...rest } = record
+  return rest
+}
+
 /** One record read back from the document, with every field checked. */
 function readRecord(value: unknown): TerminalSessionRecord | undefined {
   if (typeof value !== 'object' || value === null) return undefined
@@ -207,7 +221,9 @@ export class TerminalModeRegistry {
 
   /** Set dshell's own archive bit for one terminal session. */
   async setArchived(sessionId: string, archived: boolean): Promise<void> {
-    await this.mutate(() => this.patch(sessionId, archived ? { archived: true } : { archived: undefined }))
+    await this.mutate(() => this.patch(sessionId, current => archived
+      ? { ...current, archived: true }
+      : unarchived(current)))
   }
 
   /**
@@ -216,17 +232,17 @@ export class TerminalModeRegistry {
    * host refuses to change them once history exists.
    */
   async markStarted(sessionId: string): Promise<void> {
-    await this.mutate(() => this.patch(sessionId, { started: true }))
+    await this.mutate(() => this.patch(sessionId, current => ({ ...current, started: true })))
   }
 
   /** Persist which way one session's composer reads Enter. */
   async setMode(sessionId: string, mode: TerminalComposerMode): Promise<void> {
-    await this.mutate(() => this.patch(sessionId, { mode }))
+    await this.mutate(() => this.patch(sessionId, current => ({ ...current, mode })))
   }
 
   /** Name a terminal session, so its row never falls back to the bare id. */
   async setTitle(sessionId: string, title: string): Promise<void> {
-    await this.mutate(() => this.patch(sessionId, { title }))
+    await this.mutate(() => this.patch(sessionId, current => ({ ...current, title })))
   }
 
   /** Remember (once) which workspace the terminal section lives in. */
@@ -368,23 +384,23 @@ export class TerminalModeRegistry {
     for (const listener of [...this.listeners]) listener()
   }
 
-  /** Replace one record's fields; an absent record is not created. */
+  /**
+   * Rewrite one record; an absent record is not created.
+   * @param sessionId - the record to change.
+   * @param next - the record as it should read; a write is skipped when it is
+   *   the same as the one on disk.
+   * @returns whether the document differs.
+   */
   private patch(
     sessionId: string,
-    fields: { archived?: boolean | undefined, started?: boolean | undefined, mode?: TerminalComposerMode | undefined, title?: string | undefined },
+    next: (current: TerminalSessionRecord) => TerminalSessionRecord,
   ): boolean {
     const index = this.records.findIndex(record => record.sessionId === sessionId)
     if (index < 0) return false
     const current = this.records[index]!
-    const next: TerminalSessionRecord = {
-      ...current,
-      ...fields.archived === undefined ? {} : { archived: fields.archived },
-      ...fields.started === undefined ? {} : { started: fields.started },
-      ...fields.mode === undefined ? {} : { mode: fields.mode },
-      ...fields.title === undefined ? {} : { title: fields.title },
-    }
-    if (JSON.stringify(next) === JSON.stringify(current)) return false
-    this.records = [...this.records.slice(0, index), next, ...this.records.slice(index + 1)]
+    const updated = next(current)
+    if (JSON.stringify(updated) === JSON.stringify(current)) return false
+    this.records = [...this.records.slice(0, index), updated, ...this.records.slice(index + 1)]
     return true
   }
 
