@@ -115,9 +115,10 @@ describe('writeBytesAs lanes', () => {
   })
 
   it('a device without a helper takes the shell seam, never node:fs', async () => {
-    const target = join(home, 'device-spelled.bin')
     const h = harness({ deviceOps: undefined, bound: true, opsCalls: [] })
-    await writeBytesAs(service(h), DEVICE, target)
+    const svc = service(h)
+    const target = join(home, 'device-spelled.bin')
+    await writeBytesAs(svc, DEVICE, target)
     expect(h.shellCalls).toHaveLength(1)
     expect(h.shellCalls[0]?.command).toContain('base64 -d >')
     expect(h.shellCalls[0]?.command).toContain(target)
@@ -128,9 +129,10 @@ describe('writeBytesAs lanes', () => {
   })
 
   it('a session that runs here writes here', async () => {
-    const target = join(home, 'local.bin')
     const h = harness({ deviceOps: undefined, bound: false, opsCalls: [] })
-    await writeBytesAs(service(h), LOCAL, target)
+    const svc = service(h)
+    const target = join(home, 'local.bin')
+    await writeBytesAs(svc, LOCAL, target)
     expect(h.shellCalls).toEqual([])
     expect(readFileSync(target)).toEqual(Buffer.from(BYTES))
   })
