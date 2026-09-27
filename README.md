@@ -128,7 +128,7 @@ the top right, and the input line sits at the bottom.
 | Area | What you can do |
 |---|---|
 | **Left sidebar** | Create and switch sessions; `归档` files one away into the `已归档` group; `多选` then batches `恢复` / `删除`; a deleted session first moves to `待删除 · 重启后清除` |
-| **`终端` section** | Its own section below the workspace list: `+` mints a terminal session; the pill at the row's end says where that shell runs (`本机` or the device name); double-click the title, or use the row's `⋯`, for `重命名` / `归档`; the section header carries the search and the archived filter |
+| **`终端` section** | Its own section below the workspace list: the link glyph first in its header opens the cross-session pipe panel (provided by dshell-buffer, and it survives the fold, being the panel's only entry); `+` mints a terminal session; the pill at the row's end says where that shell runs (`本机` or the device name); double-click the title, or use the row's `⋯`, for `重命名` / `归档`; the section header also carries the search and the archived filter |
 | **Right sidebar: files** | The `文件` tab browses the session's working directory with back/forward; double-clicking a directory makes it the root; **drag a directory onto the terminal** to `cd` there; device sessions also get `打开文件传输` |
 | **Status card** | Always in the top right, collapsed to one line; expand it for the AI terminal, subagents, background jobs, buffer transfers and delegation replies |
 | **Input line** | the `$` / `✦` glyph is the mode — click to flip, hover for its name; `?` names the gestures that are live, on hover |

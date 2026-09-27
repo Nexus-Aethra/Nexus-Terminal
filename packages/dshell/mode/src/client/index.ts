@@ -67,7 +67,7 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 }
 
 /** The pipe's state before (or without) a buffer service to read it from. */
-const EMPTY_PIPE_STATE = { links: [], tickets: [] } as const
+const EMPTY_PIPE_STATE = { links: [], tickets: [], open: false } as const
 
 /**
  * The device reading with no `dshell-ssh` in the composition: nothing bound, so
@@ -394,7 +394,7 @@ export function apply(ctx: Context): void {
   // for it. Subscribe is forwarded the same way, and subscribers already
   // waiting are woken when the service lands.
   type PipeService = {
-    getSnapshot(): { links: readonly { id: string; a: string; b: string }[]; tickets: readonly PipeTicket[] }
+    getSnapshot(): { links: readonly { id: string; a: string; b: string }[]; tickets: readonly PipeTicket[]; open: boolean }
     subscribe(listener: () => void): () => void
     load(): Promise<void>
     cancel(ticketId: string): Promise<void>
@@ -404,6 +404,7 @@ export function apply(ctx: Context): void {
   let pipeService: PipeService | undefined
   const pipeSeat: PipeSeat = {
     getSnapshot: () => pipeService?.getSnapshot() ?? EMPTY_PIPE_STATE,
+    available: () => pipeService !== undefined,
     subscribe: (listener) => {
       pipeListeners.add(listener)
       return () => { pipeListeners.delete(listener) }
@@ -984,6 +985,7 @@ export function apply(ctx: Context): void {
         currentSession,
         workspaces,
         devices: deviceForward,
+        pipe: pipeSeat,
         requestRename,
         openSession: (sessionId: SessionId) => { openConversation?.(sessionId as unknown as SessionTarget) },
         // `session.create` and not the workspace open: opening a workspace

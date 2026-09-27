@@ -3,9 +3,9 @@
  * refreshed from the route after every mutation, plus the panel's open state.
  *
  * The open state lives here rather than inside the panel component because the
- * sidebar's entry button (dshell-workspace) is a different bundle and cannot
- * value-import this one; it reaches the toggle through the `dshellBuffer`
- * service, exactly as dshell-workspace reaches dshell-ssh.
+ * entry button (dshell-mode's terminal section) is a different bundle and
+ * cannot value-import this one; it reaches the toggle through the
+ * `dshellBuffer` service, exactly as dshell-mode reaches dshell-ssh.
  */
 
 import { Service, type Context } from '@deepseek-ai/cordis'

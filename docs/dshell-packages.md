@@ -356,8 +356,10 @@ when it contributes to model-visible state.
     contract between the two sessions: the buffer namespace is rooted at
     `/`, one namespace per session, and grant ids never leave the host.
   - **Browser face** provides the pipe panel in the frame-wide
-    `shell.overlay` seat and the `dshellBuffer` service the sidebar
-    header button toggles. The panel drops any session the host reports
+    `shell.overlay` seat and the `dshellBuffer` service the entry button
+    toggles — that button is the link glyph first in dshell-mode's
+    terminal section header, the only chrome dshell owns in the sidebar.
+    The panel drops any session the host reports
     as `departed` — a session dshell deleted that dsh still lists until
     the next start — from the graph nodes and the endpoint pickers, so a
     deleted session cannot linger as an edge-less node. Cancelling a
@@ -652,8 +654,9 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
   which device a session runs on and probe it before admitting a
   delegation.
 - `ctx.dshellBuffer` (client) — the pipe state and its mutations. Read by
-  the terminal view's status card; the sidebar `管道` entry went with
-  dshell-workspace.
+  the terminal view's status card, and by the terminal section's header
+  entry (the link glyph, leftmost), which is where the `管道` button lives
+  now that dshell-workspace is gone.
 
 ### Replaces
 

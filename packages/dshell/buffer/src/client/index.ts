@@ -4,9 +4,9 @@
  *
  * The panel enters `shell.overlay` — the additive, click-through frame layer —
  * rather than replacing anything, so a composition that omits this package
- * simply has one fewer floating surface. The sidebar entry that opens it lives
- * in dshell-workspace and reaches the service by injection, which is the only
- * collaboration path between client bundles.
+ * simply has one fewer floating surface. The entry that opens it lives in
+ * dshell-mode's terminal section header and reaches the service by injection,
+ * which is the only collaboration path between client bundles.
  */
 
 import { type Context } from '@deepseek-ai/cordis'

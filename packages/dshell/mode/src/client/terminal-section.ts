@@ -28,6 +28,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TerminalModeClient } from './terminal-mode.js'
 import type { CurrentSessionSeat, DeviceChoiceSeat } from './terminal-mode-switch.js'
+import type { PipeSeat } from './status-card.js'
 import { dshIcon, type DshIconName } from './dsh-icons.js'
 
 /** The sidebar hole the workspace browser fills; our section sits after its region. */
@@ -81,6 +82,14 @@ export interface TerminalSectionDeps {
    * says so.
    */
   readonly devices: DeviceChoiceSeat | undefined
+  /**
+   * The cross-session pipe's face, for the header's entry button. The panel it
+   * opens is frame-wide rather than this section's, but the section is the only
+   * chrome dshell owns in the sidebar, and an entry that lives nowhere is an
+   * entry the reader cannot find. Undefined in a composition without
+   * `dshell-buffer`; the button then does not render at all.
+   */
+  readonly pipe: PipeSeat | undefined
   readonly openSession: (sessionId: SessionId) => void
   /** Mint a session in a workspace, bypassing dsh's blank-draft reuse. */
   readonly createSession: (workspaceId: string) => Promise<SessionId | undefined>
@@ -180,6 +189,23 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
   const header = document.createElement('div')
   header.style.cssText = 'display:flex;align-items:center;gap:4px;height:36px;padding-left:4px;' +
     'margin-bottom:4px;box-sizing:border-box;overflow:hidden'
+  /**
+   * The pipe panel's entry, first in the bar.
+   *
+   * It stays visible when the section is folded, unlike the list's own tools:
+   * the panel is frame-wide and this is its only entry, so folding the terminal
+   * list must not put the pipes out of reach.
+   */
+  const pipeButton = iconButton('link', deps.t('block.pipe'), () => {
+    const pipe = deps.pipe
+    if (pipe === undefined) return
+    pipe.setOpen(!pipe.getSnapshot().open)
+  })
+  // Registered after `iconButton`'s own handlers, so it has the last word on the
+  // colour: an open panel keeps the button lit after the pointer leaves.
+  pipeButton.addEventListener('mouseleave', () => {
+    pipeButton.style.color = deps.pipe?.getSnapshot().open === true ? LABEL_PRIMARY : LABEL_TERTIARY
+  })
   const foldButton = iconButton('chevronDown', deps.t('block.fold'), () => {
     void deps.modes.setFolded(!deps.modes.getSnapshot().folded)
   })
@@ -194,7 +220,7 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
   })
   const archiveButton = iconButton('filter', deps.t('block.archived'), () => { showArchived = !showArchived; render() })
   const createButton = iconButton('code', deps.t('block.create'), () => { void start() })
-  header.append(foldButton, labelEl, searchButton, archiveButton, createButton)
+  header.append(pipeButton, foldButton, labelEl, searchButton, archiveButton, createButton)
 
   const searchInput = document.createElement('input')
   searchInput.type = 'text'
@@ -383,6 +409,13 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     // workspace list, folded it docks at the sidebar's foot.
     attach()
 
+    // The pipe entry is not one of the list's tools: it survives the fold, and
+    // it disappears only when no buffer service is behind the seat (a
+    // composition without `dshell-buffer`, or the frames before it lands).
+    const pipe = deps.pipe
+    pipeButton.style.display = pipe === undefined || !pipe.available() ? 'none' : 'inline-flex'
+    pipeButton.style.color = pipe?.getSnapshot().open === true ? LABEL_PRIMARY : LABEL_TERTIARY
+
     const list = deps.sessions.list.getSnapshot()
     const flag = deps.modes.getSnapshot()
     const folded = flag.folded
@@ -505,6 +538,9 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     // A binding made or dropped on the initialization page changes what the
     // pill says, and the ssh service republishes when it does.
     deps.devices?.subscribe(render) ?? (() => {}),
+    // The pipe panel opened or closed — from this button, from the panel's own
+    // close, or from a status card — and the entry button lights to match.
+    deps.pipe?.subscribe(render) ?? (() => {}),
   ]
   attach()
   render()

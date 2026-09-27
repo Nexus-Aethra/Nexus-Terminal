@@ -89,6 +89,12 @@ function jobDuration(t: PropsLocale<'dshellMode'>['t'], job: JobView, now: numbe
 export interface PipeState {
   readonly links: readonly { readonly id: string; readonly a: string; readonly b: string }[]
   readonly tickets: readonly PipeTicket[]
+  /**
+   * Whether the frame-wide pipe panel is on screen. The card ignores it; the
+   * terminal section's entry button reads it to show its own pressed state, and
+   * a panel closed from inside itself has to be visible on the button too.
+   */
+  readonly open?: boolean | undefined
   /** Chunked buffer transfers in flight (and the freshly settled). */
   readonly transfers?: readonly {
     readonly id: string
@@ -105,6 +111,15 @@ export interface PipeState {
 export interface PipeSeat {
   getSnapshot(): PipeState
   subscribe(listener: () => void): () => void
+  /**
+   * Whether a buffer service is behind the seat right now.
+   *
+   * The seat exists in every composition so its consumers can be unconditional,
+   * and a composition without `dshell-buffer` answers every call with nothing —
+   * which is indistinguishable from "no pipes yet". An entry button has to tell
+   * the two apart, or it offers a panel that can never open.
+   */
+  available(): boolean
   /** Re-read the committed pipe state from the host. */
   load(): Promise<void>
   /** Withdraw an outstanding ticket. */
