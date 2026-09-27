@@ -83,7 +83,7 @@ const MODE_ALIASES = new Map<string, SessionMode>([
  *
  * The wrapper owns the only hook the gate needs, so the gated component keeps
  * its own hook order untouched and a session without the flag renders nothing
- * at all — no chip, no completion list, no ghost hint.
+ * at all — no submit router, no completion list, no ghost hint.
  * @param Real - the surface, which receives the flag seat like everything else.
  * @returns the registration-ready component.
  */
@@ -452,11 +452,13 @@ export function apply(ctx: Context): void {
   // the `/` | `@` trigger popup (commands / skills / files / sessions),
   // context-occupancy ring, model select, attachment surface, subagent bar,
   // and send / stop button. dshell contributes exactly one entry, gated on the
-  // terminal-mode flag: the dual-mode chip + submit router.
+  // terminal-mode flag: the submit router, its legend, and the way into full
+  // screen. The mode itself is switched through `/shell` and `/agent`, which
+  // need no room in the row.
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
     {
       // Own id so dshell can be addressed individually by future owners.
-      id: 'dshell-mode-chip',
+      id: 'dshell-terminal-controls',
       name: 'conversation.input.left',
       order: 100,
       locale: NS,
@@ -470,9 +472,6 @@ export function apply(ctx: Context): void {
         hints: commandHints,
         tui: sessionId === undefined ? undefined : tuiFor(sessionId),
         modes,
-        setMode: (next: SessionMode) => {
-          if (sessionId !== undefined) modeFor(sessionId).set(next)
-        },
         submitShell: sendShell,
       }),
     },

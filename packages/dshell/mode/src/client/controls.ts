@@ -21,7 +21,7 @@ import type { TerminalModeClient } from './terminal-mode.js'
 import { toggledChoice, tuiFullScreen, type TuiChoice } from './tui.js'
 import type { SessionMode } from './types.js'
 
-const chipSeatStyle: CSSProperties = { position: 'relative', display: 'flex' }
+const controlsRowStyle: CSSProperties = { position: 'relative', display: 'flex', alignItems: 'center' }
 
 /**
  * How long the reader has to stop typing before the host is sent to look.
@@ -95,7 +95,6 @@ export function DshellLeftControls(props: {
   pty: PtyStreamService | undefined
   /** The terminal-mode flag; the wrapper gates on it, the chip never sees off. */
   modes: TerminalModeClient
-  setMode(next: SessionMode): void
   submitShell(text: string): void
   /** The reader's full-screen decision for this session (see `tui.ts`). */
   tui: SnapshotStore<TuiChoice | undefined> | undefined
@@ -642,32 +641,22 @@ export function DshellLeftControls(props: {
   }, [pty, sendShell, clearDraft, completion, sessionIdRef])
 
   if (props.sessionId === undefined) return null
-  const next: SessionMode = mode === 'shell' ? 'agent' : 'shell'
-  const glyph = mode === 'shell' ? '$' : '✦'
-  const label = t(mode === 'shell' ? 'composer.mode.shell' : 'composer.mode.agent')
-  const chipStyle: CSSProperties = {
-    border: `1px solid ${mode === 'shell' ? theme.accentBorder : theme.borderStrong}`,
-    background: mode === 'shell' ? theme.accentFaint : 'transparent',
-    color: mode === 'shell' ? theme.accentText : theme.muted,
-    cursor: 'pointer',
-    borderRadius: 999,
-    padding: '3px 10px',
-    fontSize: 11,
-    whiteSpace: 'nowrap',
-    fontFamily: 'inherit',
-    transition: 'color 120ms, border-color 120ms',
-  }
   const fullScreenStyle: CSSProperties = {
-    border: `1px solid ${theme.borderStrong}`,
-    background: 'transparent',
-    color: theme.muted,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    padding: 0,
+    border: 'none',
+    // No resting fill here: an inline `background` would outrank the hover rule
+    // in `composer-css.ts`, which is the only thing that makes this icon read as
+    // a control at all.
+    color: 'var(--dsw-alias-label-secondary)',
     cursor: 'pointer',
-    borderRadius: 999,
-    padding: '3px 10px',
-    fontSize: 11,
-    whiteSpace: 'nowrap',
-    fontFamily: 'inherit',
+    borderRadius: 'var(--dsw-radius-sm)',
     marginLeft: 8,
+    fontFamily: 'inherit',
   }
   /** The legend, naming each assist only while it is switched on: promising a
    * key the settings card has turned off is a worse answer than a shorter line. */
@@ -677,12 +666,11 @@ export function DshellLeftControls(props: {
     ...helpers.historyList ? [t('composer.legend.history')] : [],
     t('composer.legend.ctrlC'),
   ].join(' · ')
-  return createElement('div', { style: chipSeatStyle },
-    createElement('button', {
-      style: chipStyle,
-      onClick: () => { props.setMode(next) },
-    }, `${glyph} ${label}`),
-    createElement('div', { style: { color: theme.muted, fontSize: 12, marginLeft: 8 } },
+  // No mode chip: switching is a command (`/shell`, `/agent`), and the legend
+  // below already says which mode is in force. The chip was a second entry for
+  // one capability, charging the composer row for the duplicate.
+  return createElement('div', { style: controlsRowStyle },
+    createElement('div', { style: { color: theme.muted, fontSize: 12 } },
       mode === 'shell'
         ? (attachmentCount > 0
           ? t('composer.legend.attachments')
@@ -695,17 +683,41 @@ export function DshellLeftControls(props: {
               ? legendFor(t('composer.legend.acceptWord'), t('composer.legend.continueHint'))
               : legendFor(t('composer.legend.idle')))
         : t('composer.legend.agent')),
-    // The way INTO full screen, for a program the host's reading misses. Not
-    // drawn while the surface is already the program's — that mode hides the
-    // whole composer, so this button goes with it and the way out is the one
-    // the surface itself carries.
+    // The way INTO full screen, for a program the host's reading misses. Drawn
+    // as the icon button dsh puts in this row — a bare glyph until it is
+    // hovered — because the label it used to carry cost the width the command
+    // row needs. Not drawn while the surface is already the program's: that
+    // mode hides the whole composer, so the way out is the one the surface
+    // itself carries.
     mode === 'shell' && !fullScreen
       ? createElement('button', {
+        type: 'button',
+        'data-dshell-fullscreen': '',
         style: fullScreenStyle,
         title: t('tui.enterTitle'),
+        'aria-label': t('tui.enterTitle'),
         onClick: () => { props.tui?.set(toggledChoice(tuiReading, tuiChoice)) },
-      }, t('tui.enter'))
+      }, FullscreenGlyph())
       : null,
+  )
+}
+
+/**
+ * dsh's own fullscreen artwork (`IconFullscreenOutline`), copied verbatim: a
+ * client plugin has no icon set, and a hand-drawn corner glyph would read as a
+ * different control beside dsh's own buttons.
+ */
+function FullscreenGlyph(): ReactElement {
+  return createElement('svg', {
+    width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none',
+    xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, strokeWidth: 1,
+  },
+    createElement('path', {
+      d: 'M2.33154 9.40576V13.1685C2.3318 13.4444 2.55556 13.6685 2.83154 13.6685H6.49463V14.6685H2.83154C2.00328 14.6685 1.3318 13.9967 1.33154 13.1685V9.40576H2.33154ZM13.1685 1.33154C13.9964 1.33199 14.6683 2.00352 14.6685 2.83154V6.40576H13.6685V2.83154C13.6683 2.5558 13.4441 2.33199 13.1685 2.33154H9.49463V1.33154H13.1685Z',
+      fill: 'currentColor',
+    }),
+    createElement('path', { d: 'M9.4292 6.57077L13.914 2.08594', stroke: 'currentColor' }),
+    createElement('path', { d: 'M6.57077 9.4292L2.08594 13.914', stroke: 'currentColor' }),
   )
 }
 

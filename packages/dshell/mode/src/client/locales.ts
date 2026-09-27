@@ -66,10 +66,8 @@ export const zh = {
   'preset.cordis': '创造模式',
   'view.terminal': '智能终端',
 
-  // The composer chip and its legend. The chip names the mode identifier, which
-  // stays canonical; only its displayed label comes from here.
-  'composer.mode.shell': 'shell',
-  'composer.mode.agent': 'agent',
+  // The composer legend. The mode itself is named by the `/shell` and `/agent`
+  // commands, so the mode identifier needs no label here.
   'composer.legend.idle': '直接输入',
   'composer.legend.tab': 'Tab 补全',
   'composer.legend.history': '↑ 历史',
@@ -295,7 +293,6 @@ export const zh = {
 
   // The full-screen surface: the way in from the composer, the way out from the
   // surface itself, and the name of the program holding the terminal.
-  'tui.enter': '全屏',
   'tui.enterTitle': '把整个界面交给这个程序，按键由它直接接收',
   'tui.leave': '退出全屏',
   'tui.occupying': '{program} 正在占用终端',
@@ -358,8 +355,6 @@ export const en = {
   'preset.cordis': 'Creator mode',
   'view.terminal': 'Terminal',
 
-  'composer.mode.shell': 'shell',
-  'composer.mode.agent': 'agent',
   'composer.legend.idle': 'Type directly',
   'composer.legend.tab': 'Tab completes',
   'composer.legend.history': '↑ history',
@@ -561,7 +556,6 @@ export const en = {
   'connection.reconnectStopped': '✗ Auto-reconnect stopped ({max} failed)',
   'connection.reopenTerminal': 'Reopen terminal',
 
-  'tui.enter': 'Full screen',
   'tui.enterTitle': 'Hand the whole surface to this program and let it take the keys',
   'tui.leave': 'Leave full screen',
   'tui.occupying': '{program} is holding the terminal',
