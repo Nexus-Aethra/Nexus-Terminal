@@ -24,8 +24,8 @@
 
 import { createElement, Fragment, useEffect, useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import {
-  FileTypeIcon, IconChevronLeftOutline14, IconChevronRightOutline14, IconFolderClose16, IconFolderOpen16,
-  IconRefreshOutline16, IconRightUpOutline16, classifyFileType,
+  FileTypeIcon, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconFolderCloseMedium, IconFolderOpenMedium,
+  IconRefreshOutlineMedium, IconRightUpOutlineMedium, classifyFileType,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, PropsStore, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the session standard props (`sessionId`, `useSessions`).
@@ -152,8 +152,8 @@ export function Entry({ parent, entry, tree }: { parent: string; entry: DshellFi
       },
         createElement('span', { style: styles.iconStyle },
           expanded
-            ? createElement(IconFolderOpen16, { size: 16 })
-            : createElement(IconFolderClose16, { size: 16 })),
+            ? createElement(IconFolderOpenMedium, { size: 16 })
+            : createElement(IconFolderCloseMedium, { size: 16 })),
         createElement('span', { style: styles.nameStyle }, entry.name),
       ),
       expanded
@@ -322,7 +322,7 @@ export function DshellFilesBody({
           tree.onPress?.(event, { path: parent, name: '..', kind: 'directory' })
         },
       },
-        createElement('span', { style: styles.iconStyle }, createElement(IconFolderClose16, { size: 16 })),
+        createElement('span', { style: styles.iconStyle }, createElement(IconFolderCloseMedium, { size: 16 })),
         createElement('span', { style: styles.parentNameStyle }, '..'),
       )))
   }
@@ -342,7 +342,7 @@ export function DshellFilesBody({
         title: t('back'),
         'data-dshell-file-nav': 'back',
         onClick: () => { back(tab.id) },
-      }, createElement(IconChevronLeftOutline14, { size: 16 })),
+      }, createElement(IconChevronLeftOutlineRegular, { size: 16 })),
       createElement('button', {
         type: 'button',
         style: atEnd ? styles.navButtonOffStyle : styles.navButtonStyle,
@@ -351,7 +351,7 @@ export function DshellFilesBody({
         title: t('forward'),
         'data-dshell-file-nav': 'forward',
         onClick: () => { forward(tab.id) },
-      }, createElement(IconChevronRightOutline14, { size: 16 })),
+      }, createElement(IconChevronRightOutlineRegular, { size: 16 })),
       createElement('div', { style: styles.pathStyle, 'data-dshell-file-path': '', title: state.root }, crumbs),
       canCd
         ? createElement('button', {
@@ -361,7 +361,7 @@ export function DshellFilesBody({
           title: t('cd'),
           'data-dshell-file-nav': 'cd',
           onClick: () => { cd(tab.id, state.root) },
-        }, createElement(IconRightUpOutline16, { size: 16 }))
+        }, createElement(IconRightUpOutlineMedium, { size: 16 }))
         : null,
       createElement('button', {
         type: 'button',
@@ -370,7 +370,7 @@ export function DshellFilesBody({
         title: t('reload'),
         'data-dshell-file-nav': 'reload',
         onClick: () => { reload(tab.id, state.root, signal) },
-      }, createElement(IconRefreshOutline16, { size: 16 })),
+      }, createElement(IconRefreshOutlineMedium, { size: 16 })),
       // The way into the transfer view. Shown only where there is something to
       // transfer TO: a device session whose binding has a mount directory, with
       // this package's own transfer type registered in the composition.

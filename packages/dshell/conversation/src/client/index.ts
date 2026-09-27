@@ -1,22 +1,21 @@
 /**
- * dshell-conversation browser face — Phase 4 (activity marker).
+ * dshell-conversation browser face — the `terminal` conversation target.
  *
- * The single registration here is an always-active ConversationView
- * Definition on the `terminal` target with no renderer. Its only job is
- * to count the Session as active conversation activity so the framework
- * skips the centered hero layout and engages the docked composer (the
- * terminal-style dock lives in `dshell-mode` and shadows
- * `conversation.composer.bar`). The dock itself is the visible content
- * surface — no separate view tab — keeping PTY output and the input
- * line fused in one column.
+ * The target is what takes a session out of dsh's centered hero phase and into
+ * the docked composer: ui-conversation resolves the shell phase from active
+ * targets, and its restore path falls back to `chat` whenever no preference
+ * exists. Registering it unconditionally (the old shape) forced EVERY session —
+ * including stock ones — into the docked layout, which is exactly the native
+ * surface this package must now leave alone.
  *
- * The plugin also auto-activates `terminal` whenever a new Session
- * becomes current. The stock view-restore path falls back to `chat` when
- * no preference exists, which would put the conversation back in `hero`
- * phase; activating `terminal` first forces `active` phase immediately.
- * A subsequent `selectView('chat')` from the user (the header still
- * shows the chat tab in the view ledger for advanced use) takes
- * precedence via the stock selectView path — we only steer the default.
+ * So the target, and the auto-activation that steers an opted-in session onto
+ * it, exist only while the CURRENT session carries the terminal-mode flag. The
+ * flag lives in dshell-mode's browser half and is reached by service key: a
+ * composition without it simply never registers the target.
+ *
+ * A subsequent `selectView` from the reader (the strip's 会话 tab) takes
+ * precedence through the stock path — activation only steers the default, and
+ * the strip's selection is a separate per-session preference.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -60,48 +59,82 @@ const viewDefinition: ConversationViewDefinition<never, TerminalSnapshot> = {
   isActive: () => true,
 }
 
-/** Register the always-active `terminal` target and auto-activate it per current session. */
+/** The flag face this package needs: a read and a wake-up. */
+interface TerminalModeFace {
+  isOn(sessionId: string): boolean
+  subscribe(listener: () => void): () => void
+}
+
+/** Register the `terminal` target and its activation only for opted-in sessions. */
 export function apply(ctx: Context): void {
   // Cast through unknown: the 'sessions' key collides across faces in one
   // tsc program (host SessionStore vs client ISessions); see terminal-bridge.
   const sessions = ctx.get('sessions') as unknown as ISessions
 
-  ctx.effect(() => ctx.uiConversation.views.register(viewDefinition))
+  let modes: TerminalModeFace | undefined
+  let resync: (() => void) | undefined
+  // Reached by service key with a structural cast, exactly as this bundle reads
+  // the SSH and buffer seats: a composition without dshell-mode simply never
+  // registers the target instead of failing to load.
+  const modeHost = ctx as unknown as {
+    inject(keys: readonly string[], callback: (scope: { dshellTerminalMode: TerminalModeFace }) => void): unknown
+  }
+  modeHost.inject(['dshellTerminalMode'], (scope) => {
+    modes = scope.dshellTerminalMode
+    resync?.()
+  })
 
-  // The terminal target must be the active view or the shell renders the
-  // (empty) chat transcript instead: ui-conversation resolves the shell
-  // phase from active targets, and its own restore path falls back to the
-  // `chat` view whenever the preference is unset. Re-assert on every
-  // session-list and view-slot change — our subscriptions are registered
-  // after ui-conversation's, so our activation runs last and wins the
-  // tick. `activate` is idempotent (the assembler ignores a target already
-  // active).
-  //
-  // This asserts the terminal *target* (which snapshots the conversation
-  // assembles), not the user's tab choice — the strip's selection is a
-  // separate per-session preference the store owns, and `activate` never
-  // touches it. So the strip can offer `会话` / `轨迹` and a click on
-  // `轨迹` stays put: it writes the preference through the stock
-  // selectView path, and the reconcile that follows a session switch only
-  // re-adds `terminal` to a monotonic active set.
   ctx.effect(() => {
-    const reconcile = (): void => {
-      // The held Session, by the host's retention rule: `list.current` went
-      // away in 0.1.6-alpha.2 (see `mainSessionId`).
+    let stop: (() => void) | undefined
+    let held: string | undefined
+    const sync = (): void => {
       const current = mainSessionId(Object.values(sessions.list.getSnapshot().byId))
-      if (current === undefined) return
-      try {
-        ctx.uiConversation.binding(current).activate('terminal')
-      } catch {
-        // Session scope not materialized yet; retry on the next change.
+      const wanted = current !== undefined && modes?.isOn(String(current)) === true
+        ? String(current)
+        : undefined
+      if (wanted === held) return
+      stop?.()
+      stop = undefined
+      held = wanted
+      if (wanted === undefined) return
+      const disposeRegister = ctx.uiConversation.views.register(viewDefinition)
+      // The terminal target must be the active view or the shell renders the
+      // (empty) chat transcript instead. Re-assert on every session-list and
+      // view-slot change — these subscriptions are registered after
+      // ui-conversation's, so this activation runs last and wins the tick.
+      // `activate` is idempotent (the assembler ignores a target already active).
+      const disposeReconcile = ctx.effect(() => {
+        const reconcile = (): void => {
+          const now = mainSessionId(Object.values(sessions.list.getSnapshot().byId))
+          if (now === undefined || String(now) !== held) return
+          try {
+            ctx.uiConversation.binding(now).activate('terminal')
+          } catch {
+            // Session scope not materialized yet; retry on the next change.
+          }
+        }
+        const disposeList = sessions.list.subscribe(reconcile)
+        const disposeViews = ctx.slots.subscribe('conversation.view', reconcile)
+        reconcile()
+        return () => {
+          disposeList()
+          disposeViews()
+        }
+      }, 'dshell-conversation: open opted-in session into terminal view')
+      stop = () => {
+        disposeReconcile()
+        disposeRegister()
       }
     }
-    const disposeList = sessions.list.subscribe(reconcile)
-    const disposeViews = ctx.slots.subscribe('conversation.view', reconcile)
-    reconcile()
+    resync = sync
+    const disposeList = sessions.list.subscribe(sync)
+    const disposeModes = modes?.subscribe(sync)
+    sync()
     return () => {
+      resync = undefined
       disposeList()
-      disposeViews()
+      disposeModes?.()
+      stop?.()
     }
-  }, 'dshell-conversation: open into terminal view')
+  }, 'dshell-conversation: terminal target for opted-in sessions')
 }

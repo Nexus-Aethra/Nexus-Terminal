@@ -18,6 +18,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Simplified Chinese dictionary and key-set source of truth. */
 export const zh = {
   'card.title': 'SSH 设备',
+  'bind.title': '本会话运行在哪台设备',
+  'bind.local': '本机',
   'card.empty': '添加远程设备，开新会话时可以直接选择它',
   'card.summary': '{count} 台设备 · {names}',
   'card.nameSeparator': '、',
@@ -55,6 +57,8 @@ export type DshellSshKey = keyof typeof zh
 /** English dictionary, checked complete against the Chinese key set. */
 export const en = {
   'card.title': 'SSH devices',
+  'bind.title': 'Which device this session runs on',
+  'bind.local': 'This machine',
   'card.empty': 'Add a remote device to pick directly when starting a new session',
   'card.summary': '{count} devices · {names}',
   'card.nameSeparator': ', ',

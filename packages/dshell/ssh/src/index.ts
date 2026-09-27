@@ -32,7 +32,6 @@ import { sshDeviceRoot } from './paths.js'
 import { createSshRoute } from './route.js'
 import { installShellRouting, SSH_ROUTING_SERVICE, SshRouter } from './router.js'
 import { installSpawnRouting } from './spawn-routing.js'
-import { SSH_SETTINGS_NAMESPACE, SshSettingsSchema } from './ssh-settings.js'
 
 export const name = '@nexus-aethra/dshell-ssh'
 
@@ -41,6 +40,7 @@ export { harnessHome, mountBase, sshDeviceRoot } from './paths.js'
 export { SSH_ROUTING_SERVICE } from './router.js'
 export { isUnder, mountFor, toMountPath, toRemotePath, type MountMapping } from './mount.js'
 export type { SshSettings } from './ssh-settings.js'
+export { Config } from './ssh-settings.js'
 
 /**
  * Required service: dshell's settled data root.
@@ -55,9 +55,9 @@ export type { SshSettings } from './ssh-settings.js'
 export const inject = [DSHELL_DATA_ROOT_SERVICE] as const
 
 export function apply(ctx: Context): void {
-  ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.register(SSH_SETTINGS_NAMESPACE, SshSettingsSchema)
-  })
+  // rc.2 takes this plugin's configuration from the `Config` this entry
+  // exports; the settings page dispatches the device card from that entry, so
+  // there is nothing to register here.
   // The device registry is the one place in this package that READS a path
   // during composition (`SshRouter`'s constructor fills the routing cache that
   // the synchronous `targetForSession` reads). The service above is already

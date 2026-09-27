@@ -24,8 +24,10 @@ import { DSHELL_PTY_PATH } from '@nexus-aethra/dshell-std'
 // the SessionStandardProps that hand a slot its `useInput`/`inputActions`.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { useShellHelpers } from './shell-settings.js'
 import { useDshellTheme } from './theme.js'
+import type { TerminalModeClient } from './terminal-mode.js'
 
 /** How long typing pauses before the history is asked. */
 const DEBOUNCE_MS = 140
@@ -300,7 +302,11 @@ function caretBox(draft: string): CaretBox | undefined {
  * included, is where the next character would go.
  */
 export function ShellCommandHint(
-  props: { readonly hints: CommandHints } & PropsRuntime<'conversation.input.overlay'>,
+  props: {
+    readonly hints: CommandHints
+    readonly modes: TerminalModeClient
+    readonly sessionId: SessionId | undefined
+  } & PropsRuntime<'conversation.input.overlay'>,
 ): ReactElement | null {
   const theme = useDshellTheme()
   const helpers = useShellHelpers()

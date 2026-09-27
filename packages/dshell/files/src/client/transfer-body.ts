@@ -21,7 +21,7 @@
  */
 
 import { createElement, useEffect, useRef, type ReactNode } from 'react'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 // Type-only: pulls the right-Sidebar SlotMap merge (the tab-body seat + its hooks).
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -116,7 +116,7 @@ function Pane({
         title: t('reload'),
         'data-dshell-transfer-nav': `${side}:reload`,
         onClick: onReload,
-      }, createElement(IconRefreshOutline16, { size: 16 })),
+      }, createElement(IconRefreshOutlineMedium, { size: 16 })),
     ),
     createElement('div', { style: styles.panePathStyle, 'data-dshell-transfer-path': side }, crumbs),
     createElement('div', { style: styles.paneBodyStyle },
@@ -293,7 +293,7 @@ export function DshellTransferBody({
         title: t('transfer.reload'),
         'data-dshell-transfer-nav': 'reload',
         onClick: () => { for (const side of SIDES) reload(tab.id, side, state.panes[side].root, signal) },
-      }, createElement(IconRefreshOutline16, { size: 16 })),
+      }, createElement(IconRefreshOutlineMedium, { size: 16 })),
     ),
     createElement('div', { style: styles.panesStyle }, panes),
     createElement('div', { style: styles.jobsStyle, 'data-dshell-transfer-jobs': '' },

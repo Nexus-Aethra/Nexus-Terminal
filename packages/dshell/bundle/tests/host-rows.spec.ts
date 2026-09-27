@@ -3,12 +3,12 @@
  * actually ships.
  *
  * The patch is the last layer applied, and both of its moves are references
- * into a composition dshell does not own: `disabled: true` on eight stock rows
- * (the workspace group, the chat view, the jobs widget, the HMR row) and ten
- * rows of its own. If upstream renames or drops any of the eight, dshell's
- * layer becomes a no-op — and since 0.1.6 starts best-effort, a no-op is a
- * line in a log rather than a failed boot. This spec makes it a red test
- * instead.
+ * into a composition dshell does not own: `disabled: true` on the two stock
+ * rows dshell must own outright (the filesystem provider, whose service name
+ * admits one provider, and the dev-only HMR row) and rows of its own. If
+ * upstream renames or drops either, dshell's layer becomes a no-op — and since
+ * 0.1.6 starts best-effort, a no-op is a line in a log rather than a failed
+ * boot. This spec makes it a red test instead.
  *
  * The ids come from the checkout in `dsh/`, not from a list written here, so
  * the spec keeps watching the real thing. The composition it reads is the one
@@ -66,8 +66,14 @@ function findPatch(...segments: readonly string[]): string {
 }
 
 /** The bundle patches the `web` profile applies, in order. */
-const hostPatches: readonly (readonly PatchEntry[])[] = WEB_PROFILE_BUNDLES.map(bundle =>
-  readPatch(findPatch(bundle, 'cordis.patch.yml')))
+const hostPatches: readonly (readonly PatchEntry[])[] = WEB_PROFILE_BUNDLES.flatMap(bundle => {
+  const manifest = JSON.parse(readFileSync(findPatch(bundle, 'package.json'), 'utf8')) as {
+    dsh?: { bundle?: { patch?: string | readonly string[] } }
+  }
+  const declared = manifest.dsh?.bundle?.patch
+  const files = typeof declared === 'string' ? [declared] : declared ?? []
+  return files.map(file => readPatch(join(DSH_ROOT, 'packages', 'bundle', bundle, file)))
+})
 
 /** Rows the host introduces, by id. */
 const hostInserted = new Set<string>()
@@ -96,10 +102,14 @@ describe('the host row inventory', () => {
     for (const [bundle, name] of [['base', '@deepseek-ai/dsh-base'], ['web-app', '@deepseek-ai/dsh-web-app']]) {
       const manifest = JSON.parse(readFileSync(findPatch(bundle, 'package.json'), 'utf8')) as {
         name?: string
-        dsh?: { bundle?: { patch?: string } }
+        dsh?: { bundle?: { patch?: string | readonly string[] } }
       }
       expect(manifest.name).toBe(name)
-      expect(manifest.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
+      // rc.2 lets a bundle declare one patch file or an ordered list; the web
+      // app now ships its presets as extra files beside `cordis.patch.yml`.
+      const declared = manifest.dsh?.bundle?.patch
+      const files = typeof declared === 'string' ? [declared] : declared
+      expect(files?.[0]).toBe('./cordis.patch.yml')
     }
   })
 
@@ -114,9 +124,9 @@ describe('the host row inventory', () => {
 
 describe('dshell\'s bundle patch', () => {
   it('targets only rows that exist', () => {
-    // The seven `disabled: true` rows. A rename upstream — `ui-jobs` becoming
-    // something else, say — leaves dshell's row in place and the stock widget
-    // back on screen, with one warning at boot.
+    // The two `disabled: true` rows. A rename upstream — `fs-sandbox`
+    // becoming something else, say — leaves dshell's row in place and the
+    // stock backend back on screen, with one warning at boot.
     const missing = ourTargets
       .map(entry => entry.id!)
       .filter(id => !hostInserted.has(id) && !hostOverridden.has(id))
@@ -140,8 +150,10 @@ describe('dshell\'s bundle patch', () => {
   it('carries the rows it is documented to carry', () => {
     // A floor, not a ceiling: this is the count the patch is described with in
     // dshell-packages.md, so a row lost to a bad edit is visible here even
-    // though the existence checks above would not notice.
+    // though the existence checks above would not notice. The targets are
+    // exactly the two rows dshell owns (see the module doc), which is the
+    // number the design states.
     expect(ourInserts.length).toBeGreaterThanOrEqual(10)
-    expect(ourTargets.length).toBeGreaterThanOrEqual(7)
+    expect(ourTargets.length).toBe(2)
   })
 })

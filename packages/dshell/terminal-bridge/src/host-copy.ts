@@ -72,9 +72,19 @@ export function createHostCopy(ctx: Context): HostCopyService {
   let reported: HostLocaleId | undefined
   const locale = (): HostLocaleId => {
     if (reported !== undefined) return reported
+    // rc.2 has no per-namespace host read: the settings service publishes every
+    // active entry's schema AND its resolved value through `describe()`, which
+    // is what a host package uses to read another plugin's document. It becomes
+    // enumerable only once the Loader has settled the entry, so a composition
+    // that is still coming up degrades to the Chinese source of truth.
+    let durable: unknown
     const settings = ctx.get('settings')
-    const section = settings?.get(LOCALE_NAMESPACE) as { readonly [LOCALE_FIELD]?: unknown } | undefined
-    const durable = section?.[LOCALE_FIELD]
+    try {
+      durable = (settings?.describe().find(entry => entry.ns === LOCALE_NAMESPACE)?.value as
+        { readonly [LOCALE_FIELD]?: unknown } | undefined)?.[LOCALE_FIELD]
+    } catch {
+      durable = undefined
+    }
     return HOST_LOCALE_IDS.includes(durable as HostLocaleId) ? durable as HostLocaleId : 'zh'
   }
   return {

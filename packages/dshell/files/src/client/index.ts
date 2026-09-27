@@ -24,12 +24,16 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+// Type-only: pulls the sessions service merge (ctx.sessions).
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the renderer-owned slots service (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the tab registry service (ctx.sidebarRightTabs) and the slot keys.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 // Type-only: pulls the locale service (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import { mainSessionId } from '@nexus-aethra/dshell-std'
 import { createListDirectory, createMoveShell } from './client.js'
 import { dshellFilesDefinition, DSHELL_FILES_ID } from './definition.js'
 import { DshellFilesBody } from './body.js'
@@ -46,7 +50,7 @@ import { DshellTransferTitle } from './transfer-title.js'
 export const name = '@nexus-aethra/dshell-files/client'
 
 /** Required browser services: the tab registry, the keyed seat, and copy. */
-export const inject = ['slots', 'locale', 'sidebarRightTabs'] as const
+export const inject = ['slots', 'locale', 'sidebarRightTabs', 'sessions'] as const
 
 /** This package's copy namespace. */
 const NS = 'dshellFiles'
@@ -72,9 +76,10 @@ export type { DirectoryLevel, FilesState, FilesTabState, LevelState, TransferTab
  */
 export function apply(ctx: Context): void {
   const t = ctx.locale.bind(NS)
-  ctx.effect(() => ctx.sidebarRightTabs.register(dshellFilesDefinition(t)), 'dshell-files: files type')
-  ctx.effect(() => ctx.sidebarRightTabs.register(dshellTransferDefinition(t)), 'dshell-files: transfer type')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dshell-files: dictionaries')
+  // Cast through unknown: the 'sessions' key collides across faces in one
+  // tsc program (host SessionStore vs client ISessions); see terminal-bridge.
+  const sessions = ctx.get('sessions') as unknown as ISessions
 
   // One handle, two tab types: the framework mints one instance per session, so
   // both tabs read and write the same state.
@@ -91,21 +96,70 @@ export function apply(ctx: Context): void {
   const filesFace = createFilesFace(createListDirectory(), createMoveShell(), availability)
   const transferFace = createTransferFace(createTransferApi())
 
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab', key: DSHELL_FILES_ID, locale: NS, store, inject: filesFace },
-    DshellFilesBody,
-  )), 'dshell-files: files tab body')
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab.title', key: DSHELL_FILES_ID },
-    DshellFilesTitle,
-  )), 'dshell-files: files tab title')
-
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab', key: DSHELL_TRANSFER_ID, locale: NS, store, inject: transferFace },
-    DshellTransferBody,
-  )), 'dshell-files: transfer tab body')
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab.title', key: DSHELL_TRANSFER_ID },
-    DshellTransferTitle,
-  )), 'dshell-files: transfer tab title')
+  // The movable browser TAKES the shipped `files` kind (one builtin and one
+  // extension per kind, extension in force), so registering it unconditionally
+  // would replace dsh's own file pane for every session. Both tab types and
+  // their bodies therefore exist only while the current session opted into the
+  // terminal: a stock session keeps the shipped pane, chip strip and all.
+  let modes: { isOn(sessionId: string): boolean; subscribe(listener: () => void): () => void } | undefined
+  let resync: (() => void) | undefined
+  // Reached by service key with a structural cast, exactly as this bundle reads
+  // the SSH seat: a composition without dshell-mode keeps the shipped pane.
+  const modeHost = ctx as unknown as {
+    inject(keys: readonly string[], callback: (scope: {
+      dshellTerminalMode: { isOn(sessionId: string): boolean; subscribe(listener: () => void): () => void }
+    }) => void): unknown
+  }
+  modeHost.inject(['dshellTerminalMode'], (scope) => {
+    modes = scope.dshellTerminalMode
+    resync?.()
+  })
+  ctx.effect(() => {
+    let stop: (() => void) | undefined
+    let held: string | undefined
+    const sync = (): void => {
+      const current = mainSessionId(Object.values(sessions.list.getSnapshot().byId))
+      const wanted = current !== undefined && modes?.isOn(String(current)) === true
+        ? String(current)
+        : undefined
+      if (wanted === held) return
+      stop?.()
+      stop = undefined
+      held = wanted
+      if (wanted === undefined) return
+      const disposers = [
+        ctx.sidebarRightTabs.register(dshellFilesDefinition(t)),
+        ctx.sidebarRightTabs.register(dshellTransferDefinition(t)),
+        ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab', key: DSHELL_FILES_ID, locale: NS, store, inject: filesFace },
+          DshellFilesBody,
+        )),
+        ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab.title', key: DSHELL_FILES_ID },
+          DshellFilesTitle,
+        )),
+        ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab', key: DSHELL_TRANSFER_ID, locale: NS, store, inject: transferFace },
+          DshellTransferBody,
+        )),
+        ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab.title', key: DSHELL_TRANSFER_ID },
+          DshellTransferTitle,
+        )),
+      ]
+      stop = () => {
+        for (const dispose of [...disposers].reverse()) dispose()
+      }
+    }
+    resync = sync
+    const disposeList = sessions.list.subscribe(sync)
+    const disposeModes = modes?.subscribe(sync)
+    sync()
+    return () => {
+      resync = undefined
+      disposeList()
+      disposeModes?.()
+      stop?.()
+    }
+  }, 'dshell-files: tabs for opted-in sessions')
 }

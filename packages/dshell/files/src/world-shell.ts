@@ -53,7 +53,7 @@ export async function runInWorld(
       // honest for a local session and decorative for a device.
       sandboxPolicy: { mode: 'read-only', workspaceRoot: request.root },
     }))
-    return await shell.run(spec)
+    return await (await shell.execute(spec)).result()
   } catch {
     // A world that will not answer, a policy that refuses, a timeout: the caller
     // falls back to what it already knew.

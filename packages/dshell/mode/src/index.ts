@@ -32,19 +32,20 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, type MessageSource } from '@deepseek-ai/dsh-llm'
+import { join } from 'node:path'
 // Type-only: pulls the host agent Events merge (`agent/pre-step`).
 import type {} from '@deepseek-ai/dsh-agent'
-// Type-only: pulls the settings service merge (optional `ctx.settings`) and the
-// owner scope this package registers its namespace with.
-import type { SettingsScope } from '@deepseek-ai/dsh-settings'
+// Type-only: pulls the settings service merge and the entry-config types.
 import type {} from '@deepseek-ai/dsh-settings'
 // Type-only: pulls the bridge service merge (ctx.dshellTerminalBridge).
 import type {} from '@nexus-aethra/dshell-terminal-bridge'
 import type { TerminalCommandRecord, TerminalDelta, DshellTerminalBridge } from '@nexus-aethra/dshell-terminal-bridge'
 import { DSHELL_DATA_ROOT_SERVICE, type DshellDataRootPlan, type DshellDataRootSeat } from '@nexus-aethra/dshell-std'
-import { DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE, readDataDir } from './settings.js'
-import { DshellDataSettingsSchema, DshellSettingsSchema } from './settings-schema.js'
+import { readDataDir, type DshellSettings } from './settings.js'
+import { Config } from './settings-schema.js'
 import { applyDataRoot, dataRootReady, harnessHome, hostHome } from './data-root.js'
+import { createTerminalModeRoute, TerminalModeRegistry } from './terminal-mode.js'
+import { DSHELL_TERMINAL_MODE_SERVICE } from './terminal-mode-protocol.js'
 
 export const name = '@nexus-aethra/dshell-mode/host'
 
@@ -76,10 +77,18 @@ const RAW_FALLBACK_BYTES = 2 * 1024
 
 /** The context block's durable provenance. */
 const CONTEXT_SOURCE: MessageSource = {
-  kind: 'plugin',
+  kind: 'dshell-mode',
   plugin: 'dshell-mode',
   form: 'notice',
   summary: '主终端最近命令',
+}
+
+// rc.2 dropped the catch-all `plugin` kind: a plugin-sourced message declares
+// its own member of the merge-extensible source map (see dsh's tmux-context).
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dshell-mode': { kind: 'dshell-mode'; plugin: string; form: 'notice'; summary: string }
+  }
 }
 
 /** Keep the newest `maxBytes` of a UTF-8 string, marking the cut. */
@@ -184,11 +193,11 @@ function say(ctx: Context, message: string, level: 'info' | 'warn' = 'info'): vo
  * registry that exists twice.
  *
  * @param ctx - the host context, for the log lines.
- * @param scope - the registered dshell settings scope.
+ * @param config - the entry config this process resolved.
  */
-function settleDataRoot(ctx: Context, scope: SettingsScope<unknown>): DshellDataRootPlan {
+function settleDataRoot(ctx: Context, config: Partial<DshellSettings>): DshellDataRootPlan {
   const plan = applyDataRoot({
-    setting: readDataDir(scope.get()),
+    setting: readDataDir(config),
     harnessHome: harnessHome(),
     home: hostHome(),
   })
@@ -214,18 +223,91 @@ function settleDataRoot(ctx: Context, scope: SettingsScope<unknown>): DshellData
 }
 
 /**
+ * Give an opted-in session an event of its own.
+ *
+ * dsh reuses the workspace's blank session when `新会话` is pressed
+ * (`reuseOrCreateBlank` matches on `summary.blank`, and a summary is blank while
+ * `session.seq === 0`). A terminal-mode session runs commands in a PTY and never
+ * logs a turn, so it would stay that blank draft forever and `新会话` would keep
+ * selecting it instead of creating one. One `session/title` event — the
+ * vocabulary dsh itself writes for a renamed session — ends that, and names the
+ * session honestly at the same time. It is skipped when the session already has
+ * events, so a session that opted in later keeps its own history.
+ *
+ * @param ctx - host context, for the attached session registry.
+ * @param sessionId - the session that just opted into terminal mode.
+ */
+function titleTerminalSession(ctx: Context, sessionId: string): void {
+  const registry = ctx.get('sessions') as unknown as {
+    get(id: string): {
+      readonly seq: number
+      append(type: string, data: unknown): unknown
+      /** Reads the log; deprecated for new code, kept for this compatibility scan. */
+      snapshotEvents(): readonly { readonly type: string }[]
+    } | undefined
+  } | undefined
+  const session = registry?.get(sessionId)
+  if (session === undefined) return
+  // "Blank" is dsh's word for "no turn ever started here", and it is the exact
+  // condition that makes this session the workspace's reusable draft. A session
+  // that already has turns keeps its history untouched.
+  const turns = session.snapshotEvents().filter(event => event.type === 'turn/start').length
+  if (turns > 0) return
+  try {
+    // A title, so the session has a name a reader recognises.
+    // The time is part of the name on purpose: every terminal session is born
+    // the same way, so without it the section lists rows nobody can tell apart.
+    const clock = new Date()
+    const stamp = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`
+    session.append('session/title', {
+      title: hostLocale(ctx) === 'en' ? `Terminal session ${stamp}` : `终端会话 ${stamp}`,
+      messageSeqs: [],
+      source: { kind: 'user' },
+    })
+    // An EMPTY turn, because dsh clears `blank` on `turn/start` alone — in its
+    // persisted list projection and in the browser's fold alike. Without one, a
+    // terminal-mode session (which logs no turns by design) stays the
+    // workspace's reusable blank draft for its whole life, so `新会话` keeps
+    // selecting it instead of creating one — the reported bug. The turn opens
+    // and closes without a step: the log shape the docs describe for a turn
+    // that never ran, no model call, and nothing for the transcript to show.
+    session.append('turn/start', { turn: turns + 1 })
+    session.append('turn/end', { turn: turns + 1, reason: { kind: 'blocked' } })
+  } catch (error) {
+    // A refusal leaves the flag set — the session then behaves as before — but
+    // it is reported rather than swallowed: the blank-session reuse this call
+    // exists to end is invisible from the UI otherwise.
+    say(ctx, `dshell: could not seed the terminal session: ${error instanceof Error ? error.message : String(error)}`, 'warn')
+  }
+}
+
+/** The language the browser reported, for the one host-side string dshell writes. */
+function hostLocale(ctx: Context): string {
+  try {
+    const settings = ctx.get('settings') as unknown as {
+      describe(): readonly { ns: string; value?: { preference?: unknown } }[]
+    } | undefined
+    const preference = settings?.describe().find(entry => entry.ns === 'locale')?.value?.preference
+    return preference === 'en' ? 'en' : 'zh'
+  } catch {
+    return 'zh'
+  }
+}
+
+/**
  * Settle dshell's data root, then inject the terminal window before user-driven
  * steps.
  *
  * The two halves are ordered by their dependencies and by nothing else, which is
- * the point: the settlement is synchronous and waits for `settings` alone, so it
- * finishes before any sibling host package — each of which waits on a later
- * service — has captured a path. Everything below needs the bridge, so it runs
- * in the bridge's own `inject`, after the settlement is already fact.
+ * the point: the settlement is synchronous and reads the plugin's own resolved
+ * config, so it finishes before any sibling host package — each of which waits
+ * on a later service — has captured a path. Everything below needs the bridge,
+ * so it runs in the bridge's own `inject`, after the settlement is already fact.
  *
- * @param ctx - host context, with `settings` available.
+ * @param ctx - host context, carrying this entry's `settings` service.
+ * @param config - the entry config rc.2 resolved for this plugin.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Partial<DshellSettings> = {}): void {
   // The seat every path-owning dshell host package waits on before it resolves
   // anything of its own (see `std/data-root.ts` for why a service rather than an
   // environment variable: the value comes from a SETTING, so it is knowable only
@@ -239,20 +321,37 @@ export function apply(ctx: Context): void {
   let settle!: (plan: DshellDataRootPlan) => void
   const settled = new Promise<DshellDataRootPlan>((resolve) => { settle = resolve })
   ctx.provide(DSHELL_DATA_ROOT_SERVICE, { settled } satisfies DshellDataRootSeat)
-  // Two namespaces, and therefore two cards: the Plugins section dispatches one
-  // card per registered namespace, and where dshell keeps its files is not a
-  // setting about the terminal. Registration is all it takes here — the Host
-  // stores the palette id without interpreting it.
-  ctx.settings.register(DSHELL_SETTINGS_NAMESPACE, DshellSettingsSchema)
-  // The data root is settled the moment its namespace resolves, which is the
-  // earliest point the choice is readable. `applies: 'restart'` is the honest
-  // mark for it: a running process cannot move files out from under itself, so
-  // the next start does the work (see `data-root.ts`).
-  const dataScope = ctx.settings.register(DSHELL_DATA_NAMESPACE, DshellDataSettingsSchema, { applies: 'restart' })
-  settle(settleDataRoot(ctx, dataScope))
+  // rc.2 reads the schema off the entry's exported `Config`; there is nothing
+  // to register, and the page the settings section dispatches for this entry is
+  // built from it. The data root is settled from that same resolved config,
+  // which is the earliest point its value exists.
+  const plan = settleDataRoot(ctx, config)
+  settle(plan)
+  // The per-session terminal-mode flag lives under the settled root, and is
+  // provided at apply level like the root seat: siblings (the bridge, this
+  // package's own context window) gate on it, and a provider hidden inside an
+  // `inject` scope would be invisible to them.
+  // Where a terminal session starts: the user's home directory, which is where
+  // a shell starts too. It is also the workspace the sidebar section adopts, so
+  // the session's cwd — and therefore the PTY's — is that directory.
+  const terminalRoot = hostHome()
+  const terminalModes = new TerminalModeRegistry(join(plan.root, 'terminal-mode.json'), terminalRoot)
+  ctx.provide(DSHELL_TERMINAL_MODE_SERVICE, terminalModes)
+  void terminalModes.load()
+  // The route waits on `connection` in a child inject so this package's apply
+  // keeps waiting on `settings` alone — the settlement order above depends on
+  // being the earliest host package to run.
+  ctx.inject(['connection'], (routeCtx) => {
+    routeCtx.effect(
+      () => routeCtx.connection.fetch.register(createTerminalModeRoute(terminalModes, {
+        onStart: (sessionId: string) => { titleTerminalSession(routeCtx, sessionId) },
+      })),
+      'dshell-mode: terminal-mode route',
+    )
+  })
   ctx.inject(['dshellTerminalBridge'], (bridgeCtx) => {
     const bridge = bridgeCtx.dshellTerminalBridge
-    wireTerminalWindow(bridgeCtx, bridge)
+    wireTerminalWindow(bridgeCtx, bridge, terminalModes)
   })
 }
 
@@ -261,8 +360,9 @@ export function apply(ctx: Context): void {
  *
  * @param ctx - host context, with `dshellTerminalBridge` available.
  * @param bridge - the bridge service whose buffers the window reads.
+ * @param modes - the terminal-mode flag; stock sessions get no window.
  */
-function wireTerminalWindow(ctx: Context, bridge: DshellTerminalBridge): void {
+function wireTerminalWindow(ctx: Context, bridge: DshellTerminalBridge, modes: TerminalModeRegistry): void {
   /**
    * The last cursor each agent was handed.
    *
@@ -277,6 +377,12 @@ function wireTerminalWindow(ctx: Context, bridge: DshellTerminalBridge): void {
     if (downstream.kind !== 'enter') return downstream
     if (!messages.some(message => message.source.kind === 'user')) return downstream
     const sessionId = String(agent.id)
+    // A stock session has no terminal to read and must not see terminal state
+    // in its context; the flag is the whole gate.
+    if (!modes.isOn(sessionId)) return downstream
+    // The first user-driven step is the session's start: the initialization
+    // page is over, and the run location and preset are fixed from here on.
+    void modes.markStarted(sessionId)
     // The window is read from the live shell's own records, so a session that
     // never opened a terminal injects nothing (`history` never spawns).
     const window = bridge.history(sessionId, WINDOW_COMMANDS)
@@ -296,4 +402,5 @@ function wireTerminalWindow(ctx: Context, bridge: DshellTerminalBridge): void {
   })
 }
 
+export { Config }
 export default { name, inject, apply }

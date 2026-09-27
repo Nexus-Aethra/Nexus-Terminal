@@ -1,11 +1,12 @@
 /**
- * The dshell-ssh settings namespace.
+ * The dshell-ssh entry config.
  *
  * Device records and keys stay in this plugin's own directory (a settings
  * document is the wrong home for secrets), but the *preference* — which device
- * a new session offers first — is ordinary plugin configuration, and
- * registering the namespace is also what makes the Plugins settings section
- * dispatch this plugin's device card.
+ * a new session offers first — is ordinary plugin configuration. rc.2 takes it
+ * from the schema the entry exports as `Config`, keyed by the entry id in the
+ * bundle patch (`dshell-ssh`), which is also what dispatches this plugin's own
+ * settings card.
  */
 
 import z from '@deepseek-ai/schemastery'
@@ -22,10 +23,11 @@ export interface SshSettings {
   defaultDevice: string
 }
 
-/** Default when the settings document carries no override. */
+/** Default when the config carries no override. */
 export const DEFAULT_SSH_SETTINGS: SshSettings = { defaultDevice: '' }
 
-/** Schema resolving the namespace, on the Host and on the wire. */
-export const SshSettingsSchema = z.object({
+/** The entry config schema, on the Host and on the wire. */
+export const Config = z.object({
   [DEFAULT_DEVICE_FIELD]: z.string().default(''),
 }) as unknown as z<SshSettings>
+

@@ -25,7 +25,7 @@ when it contributes to model-visible state.
 
 - Each package name uses one dash-separated role token after `dshell`:
   `std`, `bundle`, `conversation`, `terminal-bridge`, `mode`, `commands`,
-  `workspace`, `ssh`, `buffer`.
+  `ssh`, `buffer`, `files`, `usage`.
 
 ## The packages
 
@@ -246,43 +246,6 @@ when it contributes to model-visible state.
 - Touches decisions: 4.5 (real commands), 4.6 (agent access to a PTY
   id), 4.10 (agent-owned shell).
 
-### `dshell-workspace`
-
-- Role: removes dsh's workspace concept from the running shell
-  (design 4.7). Two-faced Cordis package:
-  - **Host face** provides a `workspaceRegistry`-keyed stub covering
-    the surface `session-controller` consumes, so the stock row
-    `workspace` can be disabled without hanging the host boot. Its
-    *archive* half is real: `archivedSessionIds` plus
-    `archiveSession`/`unarchiveSession`, served from
-    `$DSH_HOME/dshell/tags.json`. That is what the stock
-    `workspace-controller` row — which this profile ENABLES — turns into
-    the remote commands the client's `workspaces` service is written
-    against, and so what makes dsh's own archived-session settings page
-    show and restore a real set.
-  - **Browser face** provides the `uiWorkspace`-keyed stub plus the root
-    `workspaces` hook, so the stock row `ui-workspace` can be disabled
-    without hanging ui-conversation / ui-sidebar or crashing
-    ConversationRoot. The `workspaces` service itself is upstream's now —
-    claiming that key was what used to take the whole client down, since
-    two providers for one service is a cordis error. The face also
-    occupies `sidebar.workspaces` with a flat session list (the active
-    list plus a collapsible `待删除` group for sessions whose log removal
-    is already committed and runs at the next start), adds the
-    new-session dialog (optional name + starting directory, design
-    4.7 naming paragraph), and hides the stock hero workspace chip
-    with an interim stylesheet until the Phase 4 scaffold takeover
-    (design 4.8) removes the whole hero.
-- There is no dshell archive UI. The list's 归档 row action is the only
-  writer (through upstream's command); restoring lives on the stock
-  `已归档会话` settings page. The package's own `/api/dshell/sessions`
-  route carries only the delete flow and the scheduled-purge set.
-- dsh services depended on: `workspaces` (client, upstream's). It
-  *provides* `workspaceRegistry` (host), `uiWorkspace` (client).
-- Introduced in: Phase 1.5; dialog in Phase 1.6.
-- Touches decisions: 4.7 (workspace removal) and indirectly 4.5 —
-  `/new` creates sessions via `sessions.create({ cwd })` with no
-  workspace attached.
 
 ### `dshell-ssh`
 
@@ -457,102 +420,6 @@ when it contributes to model-visible state.
   roadmap phase yet — the page exists and is verified by
   `packages/dshell/usage/tests/`, not by a phase entry.
 
-### `dshell-host-tools`
-
-- Role: the gate that decides which sessions get the machine's own
-  capabilities — the browser (an engine process here) and the desktop
-  (upstream's computer-use provider drives it). Both are upstream's
-  registries with providers behind them; what this package owns is the
-  question "does THIS session get them?".
-  - It fills `ctx.browserUse` (one provider per composition, so the stock
-    Playwright row is off) and mounts one Playwright MCP server per live
-    LOCAL agent through `agent.ctx.plugin`. The server is the pinned
-    `@playwright/mcp`; the arguments differ from upstream's in the
-    engine's output directory — `$DSH_HOME/dshell/browser`, not the
-    session's cwd, which is where the stock provider leaves a
-    `.playwright-mcp/` directory behind. The Chromium executable comes
-    from `src/chromium.ts`'s discovery (Chrome, Chromium, the snap and
-    flatpak paths, the macOS bundle) unless the row names one.
-  - A device session — the SSH router answers for it by session id, or
-    its cwd is under the mount base, which is how a session still
-    mid-bind is caught — is mounted nothing, and is given a per-agent
-    deny list instead naming the currently registered
-    `cua_driver_native__*` tools, re-applied on `tools/change` as the
-    catalog finishes discovering. The browser tools cannot be handled
-    this way: they are mounted into the agent's own scope, and a scope
-    cannot mask its own registrations. The deny list is registered
-    through a scope minted with `createScope`, because only a context
-    that injects `tools` may restrict, and it is disposed with the agent.
-  - Both halves are contained: a browser that cannot start and a deny
-    list that cannot be registered are logged and cost the session
-    nothing. dsh rejects agent creation when an `agent/created` listener
-    rejects, so an uncontained failure here would cost the SESSION.
-- dsh services depended on: `ctx.browserUse`, `ctx.tools` (read for the
-  catalog, restricted per device agent) and the `agent/created` /
-  `tools/change` events. Reads `ctx.dshellSshRouting` structurally when
-  present; a composition without dshell-ssh has no device sessions.
-- Introduced in: Phase 10.44.
-
-## Publishing, and installing from a registry
-
-The desktop shell installs a plugin through its plugin window, which is a plain
-`pnpm add <spec> --save-exact` in the reserved desktop profile followed by one
-check (`apps/desktop/src/project-manager.ts`):
-
-- the spec must be a registry name (or `name@exact-version`) — `file:`, `://`,
-  whitespace and `-`-prefixed specs are rejected, so a packed tarball path can
-  never be staged this way;
-- after install, `node_modules/<name>/package.json` must declare
-  `dsh.bundle.patch`, and that path must exist **inside** the package directory;
-- the package name is then appended to `dsh.profile.bundles`, which is what
-  makes dsh compose its patch rows.
-
-`dsh plugin --profile <p> add <spec>` runs the same pnpm step and the same
-bundle-promotion rule for a non-desktop profile. Both are why
-`dshell-bundle` — the only package declaring `dsh.bundle.patch` — is the install
-root, and why each manifest now carries:
-
-- no `private` field, and `publishConfig.access: public`;
-- `files: ["lib"]` (plus `cordis.patch.yml` for the bundle). The earlier list
-  named only `lib/index.js` and `lib/client.js`, so **every host module the
-  entry imports** — `route.js`, `stream.js`, `pty.js`, … — was missing from the
-  tarball: it installed, then failed at import time;
-- first-party dsh packages as **peerDependencies carrying the host range we
-  support** — an explicit union, `0.1.5-rc.2 || 0.1.6-alpha.2` today — plus the
-  same list in `devDependencies`, which is what the local build resolves; never
-  as plain dependencies. A plugin must share the host's single instance of a
-  first-party package: a second copy breaks `instanceof` across
-  `FsError`/`TerminalError`, gives a second `Service` base class, and splits the
-  client module table. A union rather than `^` because a prerelease range is not
-  an interval that spans channels: `^0.1.5-rc.2` does **not** satisfy
-  `0.1.6-alpha.2` (semver excludes a prerelease whose `major.minor.patch`
-  differs), and each channel's own range excludes the other. Floating the range
-  is wrong for the original reason too — it lets pnpm satisfy the peers from the
-  registry instead of the checkout, silently mixing two dsh builds in one tree.
-  The desktop app enforces this shape itself: `apps/desktop/src/profile-packages.ts`
-  fails profile preparation when an installed bundle's peer range does not
-  `satisfies()` the running host, or when it declares a runtime-owned package as
-  a dependency at all;
-- `@deepseek-ai/cordis` as a peer (`^4.0.2`), matching how dsh publishes its own
-  packages;
-- dshell-to-dshell edges as `workspace:^`, which pnpm rewrites to `^0.1.5` on
-  pack;
-- `@deepseek-ai/schemastery` as a peer for the same reason as the rest of the
-  list: despite the vendor-library look, it is one of the 241 runtime-owned
-  packages in the desktop build's `desktop-packages.json`, so a plugin that
-  calls it a dependency is exactly what the rule above rejects. The range
-  `^3.18.2` satisfies the inventory's 3.18.2 either way, so only the block
-  moves;
-- third-party libraries that are genuinely the plugin's own (`ws`, `node-pty`,
-  `@xterm/xterm`, `@xyflow/react`) as dependencies.
-
-Development still runs against the local `dsh/` checkout: the root
-`package.json` maps every first-party name to its checkout path under
-`pnpm.overrides`, so `pnpm install` links instead of fetching while the
-manifests themselves carry what a registry consumer resolves. The same shape is
-what the desktop app writes into its own profile (`desktop-packages/*.tgz` +
-matching overrides), which is also why a desktop install cannot end up with two
-copies of a core package.
 
 ### The publishing environment (this deployment)
 
@@ -634,21 +501,8 @@ so the inventory is complete; do not introduce wrappers for them.
   dshell never touches this; the session log stays where dsh puts it.
 - `dsh-compaction` and `dsh-session-title-*` — used unchanged by
   `/compact` and by session naming. dshell does not override them.
-- `dsh-browser-use` — the registry half of browser use: it owns
-  `ctx.browserUse` and the tool namespace, and is enabled as its own
-  patch row. `dshell-host-tools` fills the slot it guards; the registry
-  itself is untouched.
-- `dsh-computer-use` — the same registry shape for the desktop. Its
-  provider rows are upstream's too: `dsh-experimental-computer-use-cua-driver-native`
-  registers its catalog globally and drives this desktop through
-  `@trycua/cua-driver`. dshell neither wraps nor replaces it — it takes
-  the tools away from device agents with a deny list, which is a client
-  of the tools service, not a provider of it.
 - `xterm.js` — third-party browser dependency. Imported from
   `dshell-conversation`'s browser face; not a Cordis package.
-- `@playwright/mcp` — the MCP server dshell's browser provider drives.
-  Pinned (`0.0.80`) and started through the current Node executable; it
-  is a program, not a Cordis package.
 
 ## Dependency graph
 
@@ -666,7 +520,6 @@ dshell-bundle
   │     └── dshell-terminal-bridge
   ├── dshell-commands
   │     └── dshell-terminal-bridge
-  ├── dshell-workspace        (replaces the disabled stock rows)
   │     └── dshell-buffer     (optional: the sidebar `管道` entry)
   ├── dshell-buffer           (optional: reads dshell-ssh's routing face)
   │     └── dshell-ssh        (optional: target reachability probe)
@@ -675,10 +528,6 @@ dshell-bundle
         ├── dshell-terminal-bridge  (optional: the pane's shell jump)
         └── dshell-ssh              (optional: the device side of a transfer,
                                      read as a structural seat)
-  └── dshell-host-tools       (fills the browser provider slot; denies the
-        │                       desktop tools in device sessions)
-        └── dshell-ssh              (optional: which sessions are device
-                                     sessions, read as a structural seat)
   └── dshell-storage          (library, not a row: the SQLite medium behind
                                 dshell-std's storage contract, consumed by
                                 dshell-terminal-bridge)
@@ -692,9 +541,8 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
   `dshell-bundle` is the install root; the others are leaves or
   single-level consumers of the bridge. The optional edges exist only
   when both rows are composed — each side reads the other through a
-  structural seat, never an import. `dshell-host-tools` is the one
-  consumer of `dshell-ssh` that also depends on it at build time, for
-  the mount base a mid-bind session is recognized by.
+  structural seat, never an import. Every edge to `dshell-ssh` is
+  a runtime seat: no package depends on it at build time any more.
 
 ## Cordis `ctx` keys dshell publishes or subscribes to
 
@@ -714,50 +562,6 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
 - `ctx.agents` — `inject` (in `dshell-mode`) and session id lookup
   (in `dshell-terminal-bridge`).
 - `ctx.commands` — registers commands (in `dshell-commands`).
-- `ctx.tools` — registers `dshell_get_agent_terminal` and
-  `dshell_terminal_read` (in `dshell-commands`).
-- `ctx.uiSession` — patches `inputActions` (in `dshell-mode`).
-- `ctx.systemPrompt` — registers one section stating the pipe protocol
-  (in `dshell-buffer`, host face).
-- `ctx.sessionController` — `resolveAgent` for the target and, at
-  settlement, for the requester (in `dshell-buffer`, host face).
-- `ctx.sandboxPolicy` — resolved against the granter's session to fence a
-  granted write; optional (in `dshell-buffer`, host face).
-- `ctx.sessions` — peer labels in the pipe panel (in `dshell-buffer`,
-  browser face) and the status card's session titles / running bit
-  (in `dshell-mode`, browser face).
-- `ctx.dshellBuffer` — the pipe snapshot, its load poll, ticket cancel
-  and panel toggle, read by the status card's 中断点 / 管道任务 rows (in
-  `dshell-mode`, browser face; absent without `dshell-buffer`).
-- `ctx.connection.fetch` — registers the `/api/dshell/files` listing
-  route and the `/api/dshell/transfer` job route (in `dshell-files`, host
-  face).
-- `ctx.shell` — resolves and runs one base64-payload command per file
-  written into a device world (in `dshell-files`, host face, the
-  transfer's byte-write seam).
-- `ctx.dshellSshRouting` — the device a session runs on, for the transfer's
-  remote side; optional, read structurally (in `dshell-files`, host face).
-- `ctx.sidebarRightTabs` — registers the `files` tab definition that
-  shadows the stock kind, and the `transfer` page type beside it (in
-  `dshell-files`, browser face).
-- `ctx.dshellSsh` — whether a session is a device session with a mount,
-  which is what the transfer button's presence depends on; optional, read
-  structurally (in `dshell-files`, browser face).
-- `ctx.dshellTerminalBridge` — `feed` moves a session's shell into a
-  directory for the pane's jump button; optional, and its absence is
-  what the pane reports as `canCd: false` (in `dshell-files`, host face).
-- `ctx.tools` — reads the visible catalog for the `cua_driver_native__*`
-  names and restricts them away from each device agent (in
-  `dshell-host-tools`, host face). A restriction is registered through a
-  `createScope` scope, not through the plugin's own context, since only a
-  context that injects `tools` may register one.
-- `ctx.browserUse` — the exclusive provider slot, filled by
-  `dshell-host-tools`, whose `<provider>.sessions` registration is what
-  mounts one Playwright MCP server per live local agent.
-- `ctx.dshellSshRouting` — which sessions run on a device, which is what
-  decides whether a session gets a browser at all; optional, read
-  structurally (in `dshell-host-tools`, host face).
-
 ### Publishes
 
 - `ctx.dshellMainPty` — `Map<Agent, TerminalSessionId>`. Read by
@@ -770,20 +574,16 @@ There are no cycles. `dshell-std` has no dependency at all: it is the
   which device a session runs on and probe it before admitting a
   delegation.
 - `ctx.dshellBuffer` (client) — the pipe state and its mutations. Read by
-  dshell-workspace's sidebar `管道` entry.
+  the terminal view's status card; the sidebar `管道` entry went with
+  dshell-workspace.
 
-### Replaces (same-key providers over disabled stock rows)
+### Replaces
 
-- `workspaceRegistry` (host) — stubbed by `dshell-workspace` so
-  `session-controller` resolves after the stock `workspace` row is
-  disabled.
-- `workspaces` + `uiWorkspace` (client) + the root `workspaces` hook —
-  stubbed by `dshell-workspace` so ui-conversation / ui-sidebar
-  resolve and ConversationRoot mounts after the stock `ui-workspace`
-  row is disabled.
-- `ctx.browserUse`'s provider (host) — the stock Playwright MCP row is
-  off and `dshell-host-tools` fills the slot instead, because the
-  decision this package makes (a device session gets no browser) is not
-  one a provider can express from inside upstream's runtime.
+Nothing. dshell replaces no stock service any more: the workspace stand-ins went
+with the stock rows they stood in for (both are enabled again), and the browser
+provider went with the browser rows. The only stock row dshell still owns is
+`fs-sandbox`, and it is disabled so `dshell-ssh` can hold the single `ctx.fs`
+provider (see the bundle patch).
+
 
 No new public `ctx` key is added to dsh itself.

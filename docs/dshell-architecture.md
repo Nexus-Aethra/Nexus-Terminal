@@ -889,7 +889,7 @@ disappeared, their `devices.json` sitting intact under the old root.
 Declaring a dependency is what makes the order a fact instead of a race. The
 settlement publishes a seat (`std/src/data-root.ts`,
 `DSHELL_DATA_ROOT_SERVICE`) whose value is a promise that settles with the
-decision; `dshell-ssh` and `dshell-workspace` declare it in their `inject` lists,
+decision; `dshell-ssh` and `dshell-usage` declare it in their `inject` lists,
 so their applies do not even start until the root is known. A package that only
 reads a path LATER — a route call, a shell spawn, a file listing — needs no such
 declaration: those all happen after composition, and reading the path where it is

@@ -13,11 +13,14 @@ import { type Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the locale service (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the workspace SlotMap (`sidebar.workspaces.session.row.action`).
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Type-only: pulls the Plugins-section SlotMap (`settings.plugins.tab`).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { DshellSshCard } from './card.js'
 import { en, zh } from './locales.js'
 import { SshClientService } from './service.js'
+import { DshellSessionDeviceButton } from './session-bind.js'
 
 export const name = '@nexus-aethra/dshell-ssh/client'
 
@@ -49,5 +52,18 @@ export function apply(ctx: Context): void {
       inject: () => ({ ssh }),
     },
     DshellSshCard,
+  ))
+  // The per-session device binding rides the stock session row's hover strip:
+  // dshell's own session list, which carried the old picker, is gone with the
+  // stock workspace UI restored.
+  ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register(
+    {
+      name: 'sidebar.workspaces.session.row.action',
+      id: 'dshell-device',
+      order: 50,
+      locale: NS,
+      inject: () => ({ ssh }),
+    },
+    DshellSessionDeviceButton,
   ))
 }

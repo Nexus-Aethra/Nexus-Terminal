@@ -27,7 +27,6 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 - [Input assists: Tab, ↑, →](#input-assists-tab--)
 - [**Cross-session collaboration: pipes and the buffer**](#cross-session-collaboration-pipes-and-the-buffer)
 - [SSH device sessions](#ssh-device-sessions)
-- [Browser and desktop control](#browser-and-desktop-control)
 - [Settings](#settings)
 - [The status card](#the-status-card)
 - [Gesture cheat sheet](#gesture-cheat-sheet)
@@ -47,7 +46,6 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 | The AI's own shell | The AI gets a separate PTY, so it never blocks your foreground program and never steals your terminal |
 | Cross-session work | Sessions form **pipes** to delegate tasks to each other and share files by name (the **buffer**) — including across SSH devices |
 | Device sessions | Open a session directly on a remote machine: commands, files and the visible terminal all run there |
-| Browser and desktop | A local session's AI can drive a headless browser and this machine's desktop; a device session gets neither (see [Browser and desktop control](#browser-and-desktop-control)) |
 | Context without retelling | Switching to `✦ agent` automatically carries your last few commands and their output to the AI |
 
 ---
@@ -64,14 +62,13 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 
 ```sh
 # 1) dshell itself. One package: the bundle is the patch layer, and it depends
-#    on the other twelve.
+#    on the other eleven.
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.5
 
 # 2) the upstream rows the patch names that a stock profile does not ship:
-#    the browser-use and computer-use registries, and the desktop driver.
-dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.2
-dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.2
-dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.2
+#    the SSH execution provider and the terminal tool.
+dsh plugin --profile web add -w @deepseek-ai/dsh-ssh@0.1.7-rc.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-tool-terminal@0.1.7-rc.2
 
 # 3) run
 dsh web
@@ -82,9 +79,9 @@ dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Ope
 In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
 `@nexus-aethra/dshell-bundle@0.1.5` (it installs from npmjs and pins the version exactly).
 
-> Skipping step 2 is not fatal — dsh boots and reports `2 entries did not activate` for the two
-> computer-use rows, and everything else works. It is listed because the browser and desktop
-> capabilities are half of what this release adds.
+> Skipping step 2 is not fatal — dsh boots and reports the two rows as `did not activate`, and the
+> rest of dshell works. It is listed because the SSH device sessions and the agent's terminal tool
+> both resolve those names from the profile.
 
 The bundle carries every dshell package and its own `cordis.patch.yml`, so dsh composes the dshell
 rows the moment the package is installed: no profile edit, no config file. `dsh plugin --profile web
@@ -387,34 +384,6 @@ exists. (32 MB per file, 20 000 entries or 2 GiB per plan.)
 
 ---
 
-## Browser and desktop control
-
-A local session's AI can open pages and read them, and — through dsh's computer-use provider — look at
-and drive this machine's own screen and input. Both are **local-session only**, and that is the point
-of the rule rather than a limitation to work around:
-
-- A device session runs its shell, its files and its working directory on the remote machine. A
-  browser or a desktop living *here* would be operating the wrong machine while claiming to work on
-  the session, so a device session gets no browser at all and has the desktop tools taken away.
-- The same goes for a session that is still being created for a device: it is treated as a device
-  session from the start, never promoted to local.
-
-What that means in practice:
-
-| | |
-|---|---|
-| The browser | A headless Chromium driven over the pinned Playwright MCP server, one per local session. Page snapshots and console logs are written under `$DSH_HOME/dshell/browser` — not into your working directory |
-| Your profile | Untouched: the browser starts `--isolated`, so it never opens your own Chrome profile or its cookies |
-| The desktop | dsh's computer-use provider, driving this machine's real screen, windows and input |
-| If the browser cannot start | That session simply has no browser tools, and dsh logs why. It is deliberately not a session failure — a missing browser must not cost you the session |
-| If the tools are taken away | Applying to a device session at the moment it is created, and again if the desktop's tool catalogue finishes loading later |
-
-Nothing is installed for this beyond step 2 of the install above; the two registries and the desktop
-driver are ordinary upstream packages, and dshell supplies the browser provider and the per-session
-gating.
-
----
-
 ## Settings
 
 **Settings → Plugins** holds two dshell cards:
@@ -539,8 +508,8 @@ This is exactly what produced the two screenshots above — the run is real, not
 
 Twelve packages (`@nexus-aethra/dshell-*`), published together: `std` (contracts), `storage` (storage
 engines), `bundle` (the single patch layer), `conversation`, `terminal-bridge`, `mode`, `commands`,
-`workspace`, `files`, `ssh`, `buffer`, `host-tools` (the browser provider and the per-session gating of
-the machine's own capabilities).
+`files`, `ssh`, `buffer` and the settings pages, including the per-session
+gating of the machine's own capabilities).
 
 ## License
 

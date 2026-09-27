@@ -10,7 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the `sidebar.brand.*` SlotMap so `sidebar.brand.name` is
 // accepted as a registration name string.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-// Type-only: pulls the settings SlotMap and the ctx.settingsScope merge.
+// Type-only: pulls the settings SlotMap and the ctx.configForms merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the Plugins-section SlotMap (`settings.plugins.tab`).
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
@@ -30,24 +30,27 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
-  DATA_DIR_FIELD, DSHELL_DATA_NAMESPACE, DSHELL_SETTINGS_NAMESPACE,
-  type DshellDataSettings, type DshellSettings,
+  DATA_DIR_FIELD, DSHELL_ENTRY_ID, THEME_FIELD, readDataSettings, type DshellSettings,
 } from '../settings.js'
 import { type SshSeat } from './block-view.js'
+import { createElement, type ReactElement } from 'react'
 import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
 import { injectTuiCss } from './tui-css.js'
+import { applyTabLock } from './terminal-mode-lock.js'
 import { type TuiChoice } from './tui.js'
 import type { PipeSeat, PipeTicket } from './status-card.js'
-import { injectSidebarCompactCss } from './sidebar-compact.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
-import { DshellComposerStats } from './composer-stats.js'
 import { DshellSettingsCard } from './settings-card.js'
 import { DshellDataCard } from './data-card.js'
 import { adoptTheme, connectThemeSettings } from './theme.js'
 import { adoptShellHelperSettings, connectShellHelperSettings } from './shell-settings.js'
 import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
+import { TerminalModeClient } from './terminal-mode.js'
+import { useTerminalModeOn, type DeviceChoiceSeat } from './terminal-mode-switch.js'
+import { mountTerminalSection } from './terminal-section.js'
+import type { PresetSeat } from './creation-panel.js'
 import type { DshellModeKey } from './locales.js'
 import { en, zh } from './locales.js'
 import type { ModelChipFace, ModelDirectoryFace, SessionMode } from './types.js'
@@ -57,7 +60,7 @@ const EMPTY_PIPE_STATE = { links: [], tickets: [] } as const
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
-export const inject = ['slots', 'locale', 'sessions', 'dshellPtyStream', 'modelDirectories', 'uiConversation', 'settingsScope'] as const
+export const inject = ['slots', 'locale', 'sessions', 'dshellPtyStream', 'modelDirectories', 'uiConversation', 'configForms'] as const
 
 /** This package's copy namespace. */
 const NS = 'dshellMode'
@@ -76,6 +79,38 @@ const MODE_ALIASES = new Map<string, SessionMode>([
 ])
 
 /**
+ * Hide one composer surface from stock sessions.
+ *
+ * The wrapper owns the only hook the gate needs, so the gated component keeps
+ * its own hook order untouched and a session without the flag renders nothing
+ * at all — no chip, no completion list, no ghost hint.
+ * @param Real - the surface, which receives the flag seat like everything else.
+ * @returns the registration-ready component.
+ */
+function gated<S extends { modes: TerminalModeClient; sessionId: SessionId | undefined }>(
+  Real: (props: S) => ReactElement | null,
+): (props: S) => ReactElement | null {
+  return function Gated(props: S) {
+    // Real must render as a CHILD component: calling it as a function would
+    // inline its hooks into this one, and the gate flipping would then change
+    // this component's hook count (React #310).
+    return useTerminalModeOn(props.modes, props.sessionId) ? createElement(Real, props) : null
+  }
+}
+
+/**
+ * Point one session's stored view preference at a view id, read-modify-write,
+ * so the session opens on the terminal instead of dsh's chat fallback.
+ *
+ * The key and document shape are ui-conversation's own persistence format
+ * (`dsh.conversation.<sessionId>`, a JSON object with a `view` member); the
+ * store materializes from it after this write, which is what makes the choice
+ * stick for a session the reader switches back into.
+ * @param sessionId - session whose preference moves.
+ * @param view - view id to prefer.
+ */
+
+/**
  * `/shell` and `/agent` as first-class client commands. They are NOT host
  * commands: the per-session mode store lives in this browser module, so the
  * handler has to run here. The input-trigger pipeline is the supported
@@ -92,6 +127,7 @@ function modeSwitchSource(deps: {
   modeFor(sessionId: SessionId): SnapshotStore<SessionMode>
   sendShell(text: string): void
   t: TranslateNS<'dshellMode'>
+  isOn(sessionId: SessionId): boolean
 }): InputTriggerSource {
   const { t } = deps
   /** Resolve a typed/picked name to its canonical mode (`/terminal` → shell). */
@@ -129,6 +165,7 @@ function modeSwitchSource(deps: {
     showGroupTitle: true,
     candidates: async (_session, req) => {
       if (req.position !== 'leading') return []
+      if (!deps.isOn(_session.sessionId)) return []
       const query = req.query.trim().toLowerCase()
       return MODE_MENU_ROWS
         .filter(row => row.name.startsWith(query))
@@ -153,6 +190,7 @@ function modeSwitchSource(deps: {
       const token = ws === -1 ? trimmed : trimmed.slice(0, ws)
       const name = token.slice(1).toLowerCase()
       if (canonicalOf(name) === undefined) return undefined
+      if (!deps.isOn(session.sessionId)) return undefined
       if (envelope.attachments > 0) throw new Error(t('mode.attachmentsUnsupported', { name }))
       return claimFor(name, session)
     },
@@ -173,6 +211,10 @@ export function apply(ctx: Context): void {
   const sessions = ctx.get('sessions') as unknown as ISessions
   const pty = ctx.get('dshellPtyStream') as PtyStreamService
   const t = ctx.locale.bind(NS)
+  // The per-session terminal-mode flag: every dshell composer and view
+  // contribution gates on it, so a stock session never sees dshell chrome.
+  const modes = new TerminalModeClient(ctx)
+  void modes.load()
   // The dictionaries are registered through an effect so a composition that
   // unloads this plugin takes its copy with it.
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dshell-mode: dictionaries')
@@ -198,7 +240,11 @@ export function apply(ctx: Context): void {
     inject(keys: readonly string[], callback: (scope: {
       /** The SSH client service, reduced to what the block view asks of it. */
       dshellSsh: SshSeat & {
-        getSnapshot(): { devices: readonly { id: string; name: string }[] }
+        getSnapshot(): {
+          devices: readonly { id: string; name: string }[]
+          bindings: readonly { sessionId: string; deviceId: string }[]
+        }
+        bind(sessionId: string, deviceId: string | null): Promise<void>
       }
     }) => void): unknown
   }
@@ -212,16 +258,41 @@ export function apply(ctx: Context): void {
   // inert instead of failing to load.
   const navigationHost = ctx as unknown as {
     inject(keys: readonly string[], callback: (scope: {
-      uiWorkspace: { openSession(target: SessionTarget): void }
+      uiWorkspace: { openSession(target: SessionTarget): void; startSession(workspaceId: string): void }
     }) => void): unknown
   }
   let openConversation: ((target: SessionTarget) => void) | undefined
+  let startWorkspaceSession: ((workspaceId: string) => void) | undefined
   navigationHost.inject(['uiWorkspace'], (scope) => {
     openConversation = (target) => { scope.uiWorkspace.openSession(target) }
+    startWorkspaceSession = (workspaceId) => { scope.uiWorkspace.startSession(workspaceId) }
   })
   let sshSeat: SshSeat | undefined
+  // The device seat is built ONCE: `useSyncExternalStore` demands a stable
+  // `snapshot` identity AND a cached return value, so the projection of the
+  // ssh service's own snapshot is memoized by that snapshot's identity.
+  let deviceSeat: DeviceChoiceSeat | undefined
   sshHost.inject(['dshellSsh'], (scope) => {
     const ssh = scope.dshellSsh
+    let cachedRaw: unknown
+    let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
+    deviceSeat = {
+      snapshot: () => {
+        const raw = ssh.getSnapshot()
+        if (raw !== cachedRaw) {
+          cachedRaw = raw
+          cachedProjection = {
+            devices: raw.devices.map(row => ({ id: row.id, name: row.name })),
+            bindings: raw.bindings.map(row => ({ sessionId: row.sessionId, deviceId: row.deviceId })),
+          }
+        }
+        return cachedProjection
+      },
+      // The refusal travels to the caller: the creation page reports it, and
+      // the session row's own button only needs the republish.
+      bind: (sessionId: string, deviceId: string | null) => ssh.bind(sessionId, deviceId),
+      subscribe: listener => ssh.subscribe(listener),
+    }
     sshSeat = {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
@@ -323,59 +394,56 @@ export function apply(ctx: Context): void {
   }
 
   /** Send one line (or a bare Enter) to the bridge-owned main shell. */
-  const sendShell = (text: string): void => { pty.send(text.length === 0 ? '\r' : `${text}\r`) }
+  const sendShell = (text: string): void => {
+    // A shell line is the session's start as much as a message is: the page
+    // that offers the run location and the preset belongs to the moment before
+    // either exists.
+    const current = currentSession.get()
+    if (current !== undefined) void modes.markStarted(String(current))
+    pty.send(text.length === 0 ? '\r' : `${text}\r`)
+  }
 
-  // The durable half of the dshell settings — the palette and the shell-helper
-  // switches, one document. The scope is the Host settings document's mirror:
-  // its value wins over the localStorage pre-paint caches on arrival (another
-  // browser's change, or this user's earlier session), and each local change is
-  // written back through it. Writing is skipped while the transport reports the
-  // namespace unwritable — the store has already moved, so the choice works for
-  // this browser until the mirror next publishes, at which point the Host's value
-  // wins, the same precedence the cache has everywhere else.
-  const dshellSettings = ctx.settingsScope.bind<DshellSettings>({ namespace: DSHELL_SETTINGS_NAMESPACE })
+  // The durable half of the dshell settings — the palette, the shell-helper
+  // switches and the data root, one entry config. rc.2 keys a config form by
+  // the plugin's profile entry id and resolves the value through the entry's
+  // exported schema, so this is the same document the Host settled its data
+  // root from, seen from the browser: its value wins over the localStorage
+  // pre-paint caches on arrival (another browser's change, or this user's
+  // earlier session), and each local change is written back through it.
+  // Writing is skipped while the Host reports the document unwritable — the
+  // store has already moved, so the choice works for this browser until the
+  // mirror next publishes, at which point the Host's value wins, the same
+  // precedence the cache has everywhere else.
+  const dshellSettings = ctx.configForms.get<DshellSettings>(DSHELL_ENTRY_ID)
   connectThemeSettings((id) => {
     if (!dshellSettings.getSnapshot().writable) return
-    void dshellSettings.set('theme', id).catch(() => { /* the scope republishes on failure */ })
+    void dshellSettings.set(THEME_FIELD, id).catch(() => { /* the form republishes on failure */ })
   })
   connectShellHelperSettings((field, next) => {
     if (!dshellSettings.getSnapshot().writable) return
-    void dshellSettings.set(field, next).catch(() => { /* the scope republishes on failure */ })
+    void dshellSettings.set(field, next).catch(() => { /* the form republishes on failure */ })
   })
   const syncSettings = (): void => {
     const snapshot = dshellSettings.getSnapshot()
     if (snapshot.status !== 'ready') return
     adoptTheme(snapshot.value?.theme)
     adoptShellHelperSettings(snapshot.value)
+    adoptDataDir(readDataSettings(snapshot.value))
   }
   ctx.effect(() => dshellSettings.subscribe(syncSettings), 'dshell-mode: dshell settings mirror')
   syncSettings()
 
-  // Where dshell keeps its files is its own document, and its own card: the
-  // scope is bound separately so a write to one namespace can never queue
-  // behind (or be refused with) a revision of the other.
-  const dataSettings = ctx.settingsScope.bind<DshellDataSettings>({ namespace: DSHELL_DATA_NAMESPACE })
+  // Where dshell keeps its files is a section of the same document, written
+  // through the same form: the Host reads it at apply (before it writes
+  // anything), so a change is honest only for the next start, and the card says
+  // so.
   connectDataDirSettings((next) => {
-    if (!dataSettings.getSnapshot().writable) return
-    void dataSettings.set(DATA_DIR_FIELD, next).catch(() => { /* the scope republishes on failure */ })
+    if (!dshellSettings.getSnapshot().writable) return
+    void dshellSettings.set(DATA_DIR_FIELD, next).catch(() => { /* the form republishes on failure */ })
   })
-  const syncDataSettings = (): void => {
-    const snapshot = dataSettings.getSnapshot()
-    if (snapshot.status !== 'ready') return
-    adoptDataDir(snapshot.value)
-  }
-  ctx.effect(() => dataSettings.subscribe(syncDataSettings), 'dshell-mode: dshell data settings mirror')
-  syncDataSettings()
 
-  // Inject once per page load: the rule that suppresses the workspace
-  // sidebar's section labels ("会话 (6)", "已归档") in the compact rail
-  // state. The rail still draws its icons; the rotated text that would
-  // otherwise crowd them is gone. Safe to run before the AppFrame mounts
-  // — the rule is scoped by the sidebar root's collapsed class, which is
-  // applied on toggle.
-  injectSidebarCompactCss()
-  // The rule that puts dsh's composer away while a full-screen program owns the
-  // screen. Injected once, like the rail's: the decision is per-session and
+  // Inject once per page load: the rule that puts dsh's composer away while a
+  // full-screen program owns the screen. The decision is per-session and
   // arrives later, as a body attribute.
   injectTuiCss()
 
@@ -383,11 +451,8 @@ export function apply(ctx: Context): void {
   // the composer surface, so the user gets stock features out of the box:
   // the `/` | `@` trigger popup (commands / skills / files / sessions),
   // context-occupancy ring, model select, attachment surface, subagent bar,
-  // and send / stop button. dshell contributes exactly two entries:
-  //  - `conversation.input.left`  the dual-mode chip + submit router
-  //  - `conversation.view` (id `chat`)  the block view
-  // The view is the content column above the composer, while
-  // `conversation.composer.dock` lives inside the composer card.
+  // and send / stop button. dshell contributes exactly one entry, gated on the
+  // terminal-mode flag: the dual-mode chip + submit router.
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
     {
       // Own id so dshell can be addressed individually by future owners.
@@ -404,20 +469,21 @@ export function apply(ctx: Context): void {
         completion: shellCompletion,
         hints: commandHints,
         tui: sessionId === undefined ? undefined : tuiFor(sessionId),
+        modes,
         setMode: (next: SessionMode) => {
           if (sessionId !== undefined) modeFor(sessionId).set(next)
         },
         submitShell: sendShell,
       }),
     },
-    DshellLeftControls,
+    gated(DshellLeftControls),
   ))
   // `/shell` and `/agent` live in the client-side slash pipeline, not on
   // `ctx.commands`: they flip a browser store, which no host handler can
   // reach. Registered once; each session controller polls it.
   ctx.inject(['inputTriggers'], (scope) => {
     scope.effect(
-      () => scope.inputTriggers.registerSource(modeSwitchSource({ modeFor, sendShell, t })),
+      () => scope.inputTriggers.registerSource(modeSwitchSource({ modeFor, sendShell, t, isOn: id => modes.isOn(id) })),
       'dshell-mode: /shell + /agent source',
     )
   })
@@ -448,46 +514,205 @@ export function apply(ctx: Context): void {
     },
     DshellDataCard,
   ))
-  // The block view owns the stock `chat` cell (same id, lower priority
-  // shadows it). `chat` is dsh's DEFAULT_VIEW_ID, so taking that cell — not a
-  // sibling tab — is what makes it the surface every session opens with; a
-  // sibling is only reachable through a stored view selection, so a fresh
-  // session would silently fall back to whatever else holds `chat`.
-  //
-  // The tab strip is visible again (dsh shows it whenever more than one view
-  // is registered), and it is built from the RAW entry list rather than the
-  // shadowed one — so the stock `ui-chat` entry would appear beside this one,
-  // both named `chat`. That row is therefore disabled in the bundle patch
-  // (packages/dshell/bundle/cordis.patch.yml): dshell's block view replaces
-  // it, and leaving it registered only duplicated the tab. Its two child
-  // slots went with it, which costs nothing here — dshell's view renders
-  // neither a chat turn node nor `conversation.message.images`, so the
-  // plugins that register into them (`ui-goal`, `ui-workflow-run`,
-  // `ui-attachment`) would never have been asked to draw anything.
-  ctx.slots.inject('conversation.view', () => ctx.slots.register(
-    {
-      id: 'chat',
-      name: 'conversation.view',
-      priority: -1,
-      locale: NS,
-      label: () => t('view.tab'),
-      inject: (sessionId: SessionId | undefined): TerminalViewSeat => ({
-        sessionId,
-        pty,
-        sessions,
-        ssh: sshSeat,
-        pipe: pipeSeat,
-        // Attachments arrive as opaque refs; the conversation service owns the
-        // only sanctioned way to turn one into a URL.
-        loadImage: sessionId === undefined
-          ? undefined
-          : (attachment) => uiConversation.imageUrl(sessionId, attachment),
-        openConversation,
-        tui: sessionId === undefined ? noSessionTui : tuiFor(sessionId),
-      }),
+  // The block view owns the stock `chat` cell no more. The integrated terminal
+  // is an ADDITIVE `conversation.view` entry that exists only while the
+  // CURRENT session opted in: a stock session keeps dsh's own tab strip and
+  // renderer untouched, and an opted-in one gains 智能终端 beside 会话, with
+  // the stored per-session view preference pointed at it so the session opens
+  // on the terminal. Shadowing `chat` (the old approach) also forced the
+  // bundle patch to disable dsh's `ui-chat` row, which took the stock
+  // transcript, its stats pills and its child slots with it.
+  // The framework's current session, not a guess: ui-session publishes the
+  // binding source the conversation itself renders from, so the flag, the view
+  // and the tab lock all speak about the session on screen.
+  const currentSession = {
+    get: (): SessionId | undefined => {
+      const holder = ctx.get('uiSession') as unknown as {
+        adapter?: { current?: { value?: { key?: SessionId } } }
+      } | undefined
+      return holder?.adapter?.current?.value?.key
     },
-    DshellTerminalView,
-  ))
+    subscribe: (listener: () => void): (() => void) => {
+      const holder = ctx.get('uiSession') as unknown as {
+        adapter?: { current?: { subscribe?: (l: () => void) => () => void } }
+      } | undefined
+      const source = holder?.adapter?.current
+      return typeof source?.subscribe === 'function' ? source.subscribe(listener) : () => {}
+    },
+  }
+  /** dsh's own default view id: taking it is what makes the terminal the view. */
+  // The preset roster, reached through the remote face the same way this package
+  // reaches every other host service; read structurally so a composition
+  // without it leaves the page's preset group empty instead of failing.
+  const remotePresets = (): {
+    list(): Promise<{ ok: boolean; value?: { presets?: readonly Record<string, unknown>[] }; error?: { message?: string } }>
+    select(sessionId: string, preset: string): Promise<{ ok: boolean; error?: { message?: string } }>
+  } | undefined => {
+    // The face is a service of its own (`remote.agentPresets`) as well as a
+    // member of `remote`; ui-agent-preset injects the dotted key, so read that
+    // first and fall back to the parent.
+    const direct = ctx.get('remote.agentPresets') as unknown as {
+      list(): Promise<{ ok: boolean; value?: { presets?: readonly Record<string, unknown>[] }; error?: { message?: string } }>
+      select(sessionId: string, preset: string): Promise<{ ok: boolean; error?: { message?: string } }>
+    } | undefined
+    if (direct !== undefined) return direct
+    return (ctx.get('remote') as unknown as {
+      agentPresets?: {
+        list(): Promise<{ ok: boolean; value?: { presets?: readonly Record<string, unknown>[] }; error?: { message?: string } }>
+        select(sessionId: string, preset: string): Promise<{ ok: boolean; error?: { message?: string } }>
+      }
+    } | undefined)?.agentPresets
+  }
+  const presets: PresetSeat = {
+    list: async () => {
+      const face = remotePresets()
+      if (face === undefined) return []
+      const result = await face.list()
+      if (!result.ok) throw new Error(result.error?.message ?? 'the preset roster is unavailable')
+      return (result.value?.presets ?? []).map(row => ({
+        id: String(row['id'] ?? row['name'] ?? ''),
+        name: String(row['name'] ?? row['id'] ?? ''),
+      })).filter(row => row.id.length > 0)
+    },
+    select: async (sessionId, id) => {
+      const face = remotePresets()
+      if (face === undefined) throw new Error('the preset service is not composed')
+      const result = await face.select(sessionId, id)
+      // A refusal is the answer, not a no-op: only a session that has not
+      // started can take a preset, and the caller shows the host's reason.
+      if (!result.ok) throw new Error(result.error?.message ?? 'the preset was refused')
+    },
+  }
+  const TERMINAL_VIEW_ID = 'chat'
+  let disposeView: (() => void) | undefined
+  let viewSession: string | undefined
+  ctx.effect(() => {
+    const sync = (): void => {
+      const current = currentSession.get()
+      // A session created in the terminal block (its cwd is the block's
+      // directory) is a terminal session by construction: the sidebar carried
+      // the choice, so nothing has to ask. Opting in here also seeds the
+      // session host-side (title + empty turn), which is what stops dsh from
+      // reusing it as a blank draft.
+      const root = modes.root()
+      if (current !== undefined && root.length > 0 && !modes.isOn(current)
+        && sessions.list.getSnapshot().byId[current]?.cwd === root) {
+        void modes.set(String(current), true)
+      }
+      const wanted = current !== undefined && modes.isOn(current) ? String(current) : undefined
+      // Re-assert the lock on every pass: the strip may have rendered after the
+      // previous one, and this runs on session, flag and slot-ledger changes.
+      const locked = wanted !== undefined
+      applyTabLock(ctx, locked, t('view.terminal'))
+      if (typeof requestAnimationFrame === 'function') {
+        // React commits the strip after this listener returns; one frame later
+        // the element the lock needs is in the document.
+        requestAnimationFrame(() => { applyTabLock(ctx, locked, t('view.terminal')) })
+      }
+      if (wanted === viewSession) return
+      disposeView?.()
+      disposeView = undefined
+      viewSession = wanted
+      if (wanted === undefined) return
+      disposeView = ctx.slots.register(
+        {
+          // The SAME id as dsh's chat view, one priority lower: rendering
+          // resolves the shadowing winner, so an opted-in session renders the
+          // terminal without writing any view preference — the per-session
+          // selection store belongs to ui-conversation and cannot be reached
+          // from here, and a preference written after it materialized is too
+          // late (which is why a freshly created session used to open on the
+          // stock conversation). The stock entry's tab is hidden by the lock.
+          id: TERMINAL_VIEW_ID,
+          name: 'conversation.view',
+          priority: -1,
+          order: 1,
+          locale: NS,
+          label: () => t('view.terminal'),
+          inject: (sessionId: SessionId | undefined): TerminalViewSeat => ({
+            sessionId,
+            pty,
+            sessions,
+            ssh: sshSeat,
+            pipe: pipeSeat,
+            // Attachments arrive as opaque refs; the conversation service owns the
+            // only sanctioned way to turn one into a URL.
+            loadImage: sessionId === undefined
+              ? undefined
+              : (attachment) => uiConversation.imageUrl(sessionId, attachment),
+            openConversation,
+            device: {
+              snapshot: () => deviceSeat?.snapshot() ?? { devices: [], bindings: [] },
+              bind: (id: string, deviceId: string | null) => deviceSeat?.bind(id, deviceId) ?? Promise.reject(new Error('dshell-ssh is not composed')),
+              subscribe: (listener: () => void) => deviceSeat?.subscribe(listener) ?? (() => {}),
+            },
+            presets,
+            modes,
+            tui: sessionId === undefined ? noSessionTui : tuiFor(sessionId),
+          }),
+        },
+        DshellTerminalView,
+      )
+      // The Host titled this session when it opted in, so its summary is no
+      // longer blank there; the browser's own fold only clears `blank` on a
+      // turn/start, so without a list refresh the workspace would keep treating
+      // this session as its reusable blank draft and `新会话` would keep
+      // selecting it. Refreshing once, right after the opt-in, is what makes
+      // `新会话` mint a new session again.
+      void sessions.refresh().catch(() => { /* the next list read retries */ })
+    }
+    const disposeList = sessions.list.subscribe(sync)
+    const disposeModes = modes.subscribe(sync)
+    // The displayed session is what this whole effect is about, so the
+    // framework's own binding is the primary trigger; the slot ledger is
+    // watched too because the strip re-renders when entries change and the
+    // chat tab must be re-hidden each time it does.
+    const disposeCurrent = currentSession.subscribe(sync)
+    const disposeSlots = ctx.slots.subscribe('conversation.view', () => {
+      applyTabLock(ctx, viewSession !== undefined, t('view.terminal'))
+    })
+    sync()
+    return () => {
+      disposeList()
+      disposeModes()
+      disposeCurrent()
+      disposeSlots()
+      disposeView?.()
+      disposeView = undefined
+      viewSession = undefined
+      applyTabLock(ctx, false, t('view.terminal'))
+    }
+  }, 'dshell-mode: terminal view for opted-in sessions')
+
+  // The sidebar's terminal block: one icon in the 「工作区」 header row that
+  // adopts dshell's terminal directory as a workspace and opens a session in
+  // it. Sessions created there carry that directory as their cwd, which is what
+  // makes them terminal sessions — no per-session switch, and the distinction
+  // is visible in the sidebar.
+  ctx.effect(() => {
+    const workspaces = ctx.get('workspaces') as unknown as {
+      create(input: { path: string }): Promise<{ workspaceId: string }>
+      list: {
+        getSnapshot(): { items: readonly { workspaceId: string; path: string }[] }
+        subscribe(listener: () => void): () => void
+      }
+    } | undefined
+    if (workspaces === undefined) return () => {}
+    try {
+      return mountTerminalSection({
+        modes,
+        sessions,
+        currentSession,
+        workspaces,
+        openWorkspaceSession: (workspaceId: string) => { startWorkspaceSession?.(workspaceId) },
+        openSession: (sessionId: SessionId) => { openConversation?.(sessionId as unknown as SessionTarget) },
+        t,
+      })
+    } catch (error) {
+      console.warn('dshell: mounting the terminal block button failed', error)
+      return () => {}
+    }
+  }, 'dshell-mode: sidebar terminal block')
   // Shell-mode path completion's list. It rides the same floating layer inside
   // the composer card as dsh's own trigger menu (the one wildcard-free seat for
   // something that appears above the input line without pushing the layout);
@@ -498,9 +723,9 @@ export function apply(ctx: Context): void {
       id: 'dshell-completion',
       order: 10,
       locale: NS,
-      inject: () => ({ completion: shellCompletion }),
+      inject: (sessionId: SessionId | undefined) => ({ completion: shellCompletion, modes, sessionId }),
     },
-    ShellCompletionList,
+    gated(ShellCompletionList),
   ))
   // The command hint, in the same floating layer. The seat is a `list`, so a
   // second occupant is additive rather than a collision, and the two readings
@@ -513,40 +738,11 @@ export function apply(ctx: Context): void {
       id: 'dshell-command-hint',
       order: 11,
       locale: NS,
-      inject: () => ({ hints: commandHints }),
+      inject: (sessionId: SessionId | undefined) => ({ hints: commandHints, modes, sessionId }),
     },
-    ShellCommandHint,
+    gated(ShellCommandHint),
   ))
-  // The composer dock's readings — turn/step counts with output speed, token
-  // total with cache-hit share — ride `conversation.composer.dock`, the row
-  // under the composer card. Stock ui-chat owned it (`StatsPills`); disabling
-  // that client row to stop it duplicating the view tab took the row with it,
-  // so dshell re-registers the same readings from their own packages'
-  // projections (`sessionStats`, `tokenUsage`) rather than re-enabling a row
-  // that would bring the duplicate tab back. See `composer-stats.ts`.
-  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register(
-    { name: 'conversation.composer.dock', id: 'dshell-stats', order: 0, locale: NS },
-    DshellComposerStats,
-  ))
-  // Hide the dsh local-build product label + version pill that sit to the
-  // right of the logo in the expanded brand row. The slot is `kind: 'single'`,
-  // and the official brand plugin (`ui-brand-official`) registers its own
-  // occupant for it, so this must shadow that entry rather than merely add one:
-  // a `single` slot throws when a second registration lands on the *same*
-  // priority, and only a different priority shadows it (lowest renders). Our
-  // `-1` therefore wins over the stock `0`, and the priority is what makes the
-  // shadow deterministic — without it we were relying on registration order,
-  // which rc.2 was free to change (and did: the plugin then failed to apply
-  // with "single slot sidebar.brand.name already has a registration").
-  // Rendering an empty
-  // fragment leaves just the mark, since `.brandIdentity` is `inline-flex` and
-  // collapses cleanly when the name child is empty. We do not migrate the
-  // metadata into Settings: the product name and the build SHA live in the
-  // same place the user already knows about (the dsh web footer and the
-  // package version), and the user only asked to remove them from the
-  // sidebar's most prominent row.
-  ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register(
-    { name: 'sidebar.brand.name', priority: -1, locale: NS },
-    function DshellBrandNamePlaceholder() { return null },
-  ))
+  // The composer dock's stats pills are stock ui-chat's again: dshell no
+  // longer disables that row, so re-registering the same readings here would
+  // draw them twice.
 }

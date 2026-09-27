@@ -25,7 +25,6 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 - [输入辅助：Tab、↑、→](#输入辅助tab--)
 - [**多会话协作：管道与缓冲区**](#多会话协作管道与缓冲区)
 - [SSH 设备会话](#ssh-设备会话)
-- [浏览器与桌面操作](#浏览器与桌面操作)
 - [设置](#设置)
 - [状态卡](#状态卡)
 - [手势速查](#手势速查)
@@ -45,7 +44,6 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 | AI 自己的 shell | AI 有独立的 PTY，不会被你的前台程序挡住，也不会抢你的终端 |
 | 跨会话协作 | 会话之间可以建立**管道**，互相委派任务、按名字共享文件（**缓冲区**），包括隔着 SSH 设备 |
 | 设备会话 | 直接把一个会话开到远程机器上；命令、文件、终端都在设备上执行 |
-| 浏览器与桌面 | 本机会话里的 AI 可以驱动一个无头浏览器，也能操作这台机器的桌面；设备会话两者都拿不到（见[浏览器与桌面操作](#浏览器与桌面操作)） |
 | 本地可读的上下文 | 切到 `✦ agent` 时，AI 自动带上你终端里最近几条命令及输出，不用你复述 |
 
 ---
@@ -61,13 +59,12 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 （`dsh plugin` 是转发给 pnpm 执行的）。
 
 ```sh
-# 1) dshell 本体。只装一个包：bundle 就是 patch 层，另外十二个由它依赖带入。
+# 1) dshell 本体。只装一个包：bundle 就是 patch 层，另外十一个由它依赖带入。
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.5
 
-# 2) patch 里点名、但原版 profile 不带的上游包：浏览器与计算机使用的注册表，以及桌面驱动。
-dsh plugin --profile web add -w @deepseek-ai/dsh-browser-use@0.1.6-alpha.2
-dsh plugin --profile web add -w @deepseek-ai/dsh-computer-use@0.1.6-alpha.2
-dsh plugin --profile web add -w @deepseek-ai/dsh-experimental-computer-use-cua-driver-native@0.1.6-alpha.2
+# 2) patch 里点名、但原版 profile 不带的上游包：SSH 执行 provider 与终端工具。
+dsh plugin --profile web add -w @deepseek-ai/dsh-ssh@0.1.7-rc.2
+dsh plugin --profile web add -w @deepseek-ai/dsh-tool-terminal@0.1.7-rc.2
 
 # 3) 启动
 dsh web
@@ -78,9 +75,8 @@ dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/
 **桌面版**里同样的事情有一个窗口入口：`设置 → 插件`，填
 `@nexus-aethra/dshell-bundle@0.1.5`（它从 npmjs 安装，并精确锁定版本）。
 
-> 跳过第 2 步不会致命——dsh 照样启动，只是为两条 computer-use 行报
-> `2 entries did not activate`，其余功能都在。之所以列出来，是因为浏览器与桌面能力正是这次发布的
-> 一半内容。
+> 跳过第 2 步不会致命——dsh 照样启动，只是那两行报 `did not activate`，其余功能都在。之所以
+> 列出来，是因为 SSH 设备会话与 AI 的终端工具都要从 profile 里解析这两个包名。
 
 bundle 里带着全部 dshell 包和它自己的 `cordis.patch.yml`，所以包装好的那一刻 dsh 就把它组装进去了：
 不用改 profile、不用写配置文件。`dsh plugin --profile web list` 能看到最终的层叠结果。
@@ -361,30 +357,6 @@ flowchart LR
 
 ---
 
-## 浏览器与桌面操作
-
-本机会话里的 AI 可以打开网页并读取内容；经由 dsh 的 computer-use provider，它还能看和操作这台
-机器真实的屏幕与输入。两者都**只给本机会话**，这是一条规则而不是待绕过的限制：
-
-- 设备会话的 shell、文件和工作目录都在远端机器上。一个长在**这里**的浏览器或桌面，会在声称服务于
-  该会话的同时操作错误的机器——所以设备会话干脆没有浏览器，桌面工具也会被逐会话收回。
-- 正在为某台设备创建中的会话同样算设备会话：从创建那一刻起就按设备处理，不会先当成本机。
-
-具体表现：
-
-| | |
-|---|---|
-| 浏览器 | 无头 Chromium，经由钉住版本的 Playwright MCP server 驱动，每个本机会话一个。页面快照与控制台日志写在 `$DSH_HOME/dshell/browser` 下，不会落到你的工作目录里 |
-| 你的浏览器配置 | 不受影响：浏览器以 `--isolated` 启动，不会打开你自己的 Chrome 配置或其 cookie |
-| 桌面 | dsh 的 computer-use provider，操作这台机器真实的屏幕、窗口与输入 |
-| 浏览器起不来时 | 那个会话就没有浏览器工具，dsh 会记下原因。这里刻意不当作会话失败——装不上浏览器不该让你丢掉会话 |
-| 工具是怎么被收回的 | 在会话创建的那一刻就施加；若桌面工具清单加载得更晚，加载完会再施加一次 |
-
-除了上面安装的第 2 步，这里不需要额外装什么：两张注册表和桌面驱动都是普通的上游包，dshell 提供的
-是浏览器 provider 和「按会话决定给不给」这件事。
-
----
-
 ## 设置
 
 **设置 → 插件** 里有 dshell 的两张卡：
@@ -474,8 +446,6 @@ flowchart LR
   期间可以 `取消` 撤销。
 - **一个会话一个浏览器连接。** 同时开两个 ws 连同一个会话会被拒绝。
 - **归档 ≠ 删除。** 归档的会话仍在管道图里（它可能还是一条合法管道的一端），删除才会把它摘掉。
-- **浏览器与桌面只给本机会话。** 设备会话两者都没有，这是刻意的：两者都会作用在这台机器上，而会话
-  的活干在另一台。桌面这一半能不能用，取决于安装第 2 步里那两个上游包。
 - **全屏模式只在本机读前台进程。** 设备会话只能靠备用屏幕判断，所以不切备用屏幕的全屏程序在那里
   要用 `全屏` 按钮进入。这个读数也只适用于 Linux：在 macOS 或 Windows 上跑 `dsh web` 只有按钮可用。
 - 管道面板靠轮询刷新（约 3 秒一次），没有推送通道；正在传输的文件会以 1 秒的节奏刷新状态卡。
@@ -495,7 +465,7 @@ flowchart LR
 
 插件共 12 个包（`@nexus-aethra/dshell-*`），一起发布：`std`（契约）、`storage`（存储引擎）、
 `bundle`（唯一的 patch 层）、`conversation`、`terminal-bridge`、`mode`、`commands`、`workspace`、
-`files`、`ssh`、`buffer`、`host-tools`（浏览器 provider，以及「本机能力按会话发放」这件事）。
+`files`、`ssh`、`buffer` 与设置页，包括「按会话发放」。
 
 ## 许可
 

@@ -1,28 +1,34 @@
 /**
- * The Host-side schema for dshell's settings section.
+ * The Host-side schema for dshell's entry config.
  *
  * Split from `settings.ts` because schema construction must not reach the
  * browser bundle: the client build resolves only the platform module table, and
  * pulling schemastery in through a shared import breaks the whole client
  * plugin load with a missing-module error.
+ *
+ * rc.2 reads a plugin's configuration from the schema its entry EXPORTS as
+ * `Config`; the entry id in the bundle patch (`dshell-mode`) is the namespace
+ * the settings section and the browser's `ctx.configForms` key on. The two
+ * documents dshell kept in alpha.2 (terminal preferences, data root) are now
+ * sections of this one object, which is why the settings page dispatches one
+ * dshell card from it.
  */
 
 import z from '@deepseek-ai/schemastery'
 import {
-  COMMAND_HINT_FIELD, DATA_DIR_DEFAULT, DATA_DIR_FIELD, DEFAULT_THEME_ID, DSHELL_SETTINGS_NAMESPACE,
+  COMMAND_HINT_FIELD, DATA_DIR_DEFAULT, DATA_DIR_FIELD, DEFAULT_THEME_ID,
   HISTORY_LIST_FIELD, SHELL_HELPER_DEFAULT, SHELL_ORACLE_FIELD, TAB_COMPLETION_FIELD, THEME_FIELD, THEME_IDS,
+  type DshellSettings,
 } from './settings.js'
 
-export { DSHELL_SETTINGS_NAMESPACE, THEME_FIELD }
-
 /**
- * Schema resolving the namespace, on the Host and on the wire.
+ * The entry config schema, on the Host and on the wire.
  *
  * Each helper switch is a plain boolean with the shared default, so an empty or
  * older document resolves to the assists being ON — the composer those settings
  * govern is built around them.
  */
-export const DshellSettingsSchema: z<Record<string, unknown>> = z.object({
+export const Config = z.object({
   [THEME_FIELD]: z.union([...THEME_IDS]).default(DEFAULT_THEME_ID),
   [TAB_COMPLETION_FIELD]: z.boolean().default(SHELL_HELPER_DEFAULT),
   [HISTORY_LIST_FIELD]: z.boolean().default(SHELL_HELPER_DEFAULT),
@@ -31,17 +37,9 @@ export const DshellSettingsSchema: z<Record<string, unknown>> = z.object({
   // stored but dropped from the RESOLVED value, so the mirror this card reads
   // back (and any second browser) would see the default instead of the choice.
   [SHELL_ORACLE_FIELD]: z.boolean().default(SHELL_HELPER_DEFAULT),
-})
-
-/**
- * Schema for the `dshell-data` namespace: where dshell keeps its own files.
- *
- * Registered as its own namespace so it is its own card — see
- * `DSHELL_DATA_NAMESPACE` — and marked `applies: 'restart'`, which is the
- * honest answer for a directory a running process cannot move out from under
- * itself. (The terminal namespace stays `live`: its palette and switches take
- * effect on the click that sets them.)
- */
-export const DshellDataSettingsSchema: z<Record<string, unknown>> = z.object({
+  // The data root is a section of the same object now, and it is the one field
+  // the Host settles for itself at apply. Its change is not live: a running
+  // process cannot move its own data root out from under files it is writing,
+  // so the card labels it as next-start and says so in its own copy.
   [DATA_DIR_FIELD]: z.string().default(DATA_DIR_DEFAULT),
-})
+}) as unknown as z<DshellSettings>

@@ -19,8 +19,19 @@
  * `client/`.
  */
 
-/** Settings namespace owned by dshell. */
-export const DSHELL_SETTINGS_NAMESPACE = 'dshell'
+/**
+ * The plugin's own configuration, as rc.2 models it.
+ *
+ * A settings namespace is no longer registered under a free string: it IS the
+ * profile entry id of the plugin that declares the schema (see the bundle
+ * patch's `id: dshell-mode`), and the schema is the entry's exported `Config`.
+ * Both halves below therefore name that entry rather than a namespace of their
+ * own, and the two documents dshell used to keep (the terminal palette and
+ * where it stores files) are sections of the one entry config.
+ */
+
+/** The profile entry whose config carries dshell's settings. */
+export const DSHELL_ENTRY_ID = 'dshell-mode'
 
 /** Field carrying the selected terminal palette. */
 export const THEME_FIELD = 'theme'
@@ -45,18 +56,6 @@ export const COMMAND_HINT_FIELD = 'commandHint'
 export const SHELL_ORACLE_FIELD = 'completionShellOracle'
 
 /**
- * Settings namespace for where dshell KEEPS its files.
- *
- * A namespace of its own, and therefore a card of its own, because it is not a
- * setting about the terminal: dsh's plugin settings section dispatches one card
- * per registered namespace, and the terminal card's subject is the composer and
- * the shell's helpers. A reader looking for "where does this thing write my
- * transcripts" is not looking inside 终端与输入辅助, and a control that moves
- * gigabytes belongs to a card whose title says so.
- */
-export const DSHELL_DATA_NAMESPACE = 'dshell-data'
-
-/**
  * Field naming dshell's own data root — the directory its `dshell/` and
  * `dshell-pty/` trees are resolved under.
  *
@@ -64,8 +63,8 @@ export const DSHELL_DATA_NAMESPACE = 'dshell-data'
  * travels to the browser and stops there, while this one is settled into the
  * process before any path helper asks (see `data-root.ts`). It is also the one
  * field whose change is not live — a process cannot move its own data root out
- * from under files it is writing, so the next start applies it and the card says
- * so.
+ * from under files it is writing, so a config change that moves it is only
+ * honoured by the next start, and the card says so.
  *
  * The empty string means "follow the harness home", which is why the default is
  * empty rather than a path: a default spelling out `~/.dsh` would be a decision
@@ -107,7 +106,7 @@ export const SHELL_HELPER_FIELDS: readonly DshellShellHelper[] = [
   'tabCompletion', 'historyList', 'commandHint', 'completionShellOracle',
 ]
 
-/** The durable dshell section. */
+/** The durable dshell section (the entry config). */
 export interface DshellSettings {
   /** Selected terminal palette. */
   theme: DshellThemeId
@@ -119,9 +118,11 @@ export interface DshellSettings {
   commandHint: boolean
   /** Whether completion may ask the session's own shell for the rest. */
   completionShellOracle: boolean
+  /** Directory dshell's own files live under; empty follows the harness home. */
+  dir: string
 }
 
-/** The durable dshell-data section: where dshell keeps its own files. */
+/** The data-root section of the entry config. */
 export interface DshellDataSettings {
   /** Directory dshell's own files live under; empty follows the harness home. */
   dir: string

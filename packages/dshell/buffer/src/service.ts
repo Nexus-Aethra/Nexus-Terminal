@@ -28,6 +28,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
+
+// rc.2 dropped the catch-all `plugin` kind: a plugin-sourced message declares
+// its own member of the merge-extensible source map.
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dshell-buffer': { kind: 'dshell-buffer'; plugin: string; form: 'notice'; summary: string }
+  }
+}
 // Type-only: pulls the shell service merge (`ctx.shell`), the byte-transport
 // seam a cross-world transfer writes through.
 import type {} from '@deepseek-ai/dsh-shell'
@@ -1062,7 +1070,7 @@ export class BufferService {
       ...policy === undefined ? {} : { sandboxPolicy: policy },
       ...signal === undefined ? {} : { signal },
     }))
-    const result = await shell.run({ ...spec, stdin: undefined })
+    const result = await (await shell.execute({ ...spec, stdin: undefined })).result()
     if (result.exitCode !== 0) {
       const detail = result.stderr.text.trim()
       throw new Error(
@@ -1100,7 +1108,7 @@ export class BufferService {
       ...policy === undefined ? {} : { sandboxPolicy: policy },
       ...signal === undefined ? {} : { signal },
     }))
-    const result = await shell.run(spec)
+    const result = await (await shell.execute(spec)).result()
     if (result.exitCode !== 0) return ''
     return (result.stdout.text.trim().split(/\s+/u)[0] ?? '')
   }
@@ -1394,7 +1402,7 @@ export class BufferService {
       const agent = resolved.agent
       const message = createUserMessage({
         content: [{ type: 'text', text }],
-        source: { kind: 'plugin', plugin: BUFFER_PLUGIN, form: 'notice', summary },
+        source: { kind: 'dshell-buffer', plugin: BUFFER_PLUGIN, form: 'notice', summary },
       })
       if (agent.status === 'idle') agent.followup(message)
       else agent.inject(message)

@@ -368,14 +368,12 @@ export function StatusCard(props: {
   // would take the whole view down with it.
   useEffect(() => {
     if (sessionId === undefined) return
-    const parent = sessionId as SessionId
-    const catalog = sessions.setSubagentCatalogOpen
-    const refresh = sessions.refreshSubagents
-    if (typeof catalog !== 'function' || typeof refresh !== 'function') return
-    const open = openRow === 'agents'
-    catalog.call(sessions, parent, open)
-    if (open) void refresh.call(sessions, parent)
-    return () => { catalog.call(sessions, parent, false) }
+    if (openRow !== 'agents') return
+    // rc.2 serves the subagent catalog inside the session projections: opening
+    // the row asks for a fresh projection, and the list store pushes the rows.
+    void sessions.refreshProjections(sessionId as SessionId).catch(() => {
+      // A host without the projection half leaves the row at its count line.
+    })
   }, [openRow, sessionId, sessions])
 
   // The pipe's state is pulled, not pushed, and its own poll only runs while
@@ -406,8 +404,8 @@ export function StatusCard(props: {
   const linkBroken = linkHere && (link.status === 'closed' || link.status === 'error')
   const children = sessionId === undefined
     ? []
-    : (list.subagentsByParent?.[sessionId as SessionId]?.entries ?? []).filter(entry => entry.kind === 'child')
-  const runningChildren = children.filter(entry => entry.activity === 'running').length
+    : Object.values(byId).filter(row => row.parentId === sessionId && row.origin === 'subagent')
+  const runningChildren = children.filter(entry => entry.running === true).length
 
   // This session's chunked buffer transfers. One progresses per tick of the
   // card; the poll that feeds it lives on the pipe service (it keeps its own
@@ -542,11 +540,11 @@ export function StatusCard(props: {
             },
           },
             createElement('span', {
-              style: { color: entry.activity === 'running' ? theme.accent : theme.borderStrong },
+              style: { color: entry.running === true ? theme.accent : theme.borderStrong },
             }, '●'),
             createElement('span', {
               style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-            }, entry.label ?? String(entry.id)),
+            }, entry.displayTitle || String(entry.id)),
           )),
         ),
     })

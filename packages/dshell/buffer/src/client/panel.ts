@@ -19,7 +19,7 @@ import {
   type CSSProperties, type ReactElement,
 } from 'react'
 import {
-  FileTypeIcon, IconChevronLeftOutline14, IconFolderClose16, IconRefreshOutline16, classifyFileType,
+  FileTypeIcon, IconChevronLeftOutlineRegular, IconFolderCloseMedium, IconRefreshOutlineMedium, classifyFileType,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { BufferGrant, BufferTicket, BufferUserEntry } from '../protocol.js'
@@ -711,7 +711,7 @@ function BufferBrowser(props: {
           title: atNamespaceRoot ? t('browser.atRoot') : t('browser.up'),
           'data-dshell-buffer-nav': 'up',
           onClick: back,
-        }, createElement(IconChevronLeftOutline14, { size: 14 })),
+        }, createElement(IconChevronLeftOutlineRegular, { size: 14 })),
         createElement('button', {
           type: 'button',
           style: loading ? navButtonOffStyle : navButtonStyle,
@@ -719,7 +719,7 @@ function BufferBrowser(props: {
           title: t('browser.refresh'),
           'data-dshell-buffer-nav': 'refresh',
           onClick: refresh,
-        }, createElement(IconRefreshOutline16, { size: 16 })),
+        }, createElement(IconRefreshOutlineMedium, { size: 16 })),
         createElement('div', {
           style: crumbStripStyle,
           'data-dshell-buffer-crumbs': '',
@@ -742,7 +742,7 @@ function BufferBrowser(props: {
             'data-dshell-buffer-entry': 'parent', title: t('browser.up'),
             onClick: back, onDoubleClick: back,
           },
-            createElement('span', { style: rowIconStyle }, createElement(IconFolderClose16, { size: 16 })),
+            createElement('span', { style: rowIconStyle }, createElement(IconFolderCloseMedium, { size: 16 })),
             createElement('span', { style: parentNameStyle }, '..'),
           ),
         )]),
@@ -780,7 +780,7 @@ function BufferBrowser(props: {
                 ? null
                 : createElement('span', { style: rowIconStyle },
                   isRoot || entry.kind === 'directory'
-                    ? createElement(IconFolderClose16, { size: 16 })
+                    ? createElement(IconFolderCloseMedium, { size: 16 })
                     : createElement(FileTypeIcon, { kind: classifyFileType(entry.name), size: 16 })),
               createElement('span', { style: rowNameStyle }, entry.name),
               meta === undefined ? null : createElement('span', { style: isRoot ? rowMetaStyle : sizeStyle }, meta),

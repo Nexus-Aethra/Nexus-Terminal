@@ -17,6 +17,7 @@ import type { CompletionState, ShellCompletion } from './completion.js'
 import type { CommandHints } from './command-hint.js'
 import { useShellHelpers } from './shell-settings.js'
 import { useDshellTheme } from './theme.js'
+import type { TerminalModeClient } from './terminal-mode.js'
 import { toggledChoice, tuiFullScreen, type TuiChoice } from './tui.js'
 import type { SessionMode } from './types.js'
 
@@ -92,6 +93,8 @@ export function DshellLeftControls(props: {
   sessionId: SessionId | undefined
   mode: SnapshotStore<SessionMode> | undefined
   pty: PtyStreamService | undefined
+  /** The terminal-mode flag; the wrapper gates on it, the chip never sees off. */
+  modes: TerminalModeClient
   setMode(next: SessionMode): void
   submitShell(text: string): void
   /** The reader's full-screen decision for this session (see `tui.ts`). */
@@ -370,8 +373,9 @@ export function DshellLeftControls(props: {
        * shell line wants there. The trigger pass runs after this write, so the
        * dismiss is deferred one task rather than fired inline.
        */
-      const writeDraft = (text: string): void => {
-        clearDraft(text)
+      const writeDraft = (text: string | undefined): void => {
+        // Never hand the editor an undefined draft: it calls `text.replace`.
+        clearDraft(typeof text === 'string' ? text : '')
         window.setTimeout(dismissStock, 0)
       }
       /**

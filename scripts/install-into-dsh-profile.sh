@@ -27,8 +27,7 @@ PLUGINS=(
   terminal-bridge
   mode
   commands
-  host-tools
-  workspace
+
   ssh
   buffer
   files
@@ -50,15 +49,15 @@ done
 echo "  + dshell-bundle (as patch layer)"
 ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/packages/dshell/bundle" )
 
-# Row names are resolved from the profile's own dependencies, so the three
+# Row names are resolved from the profile's own dependencies, so the two
 # upstream packages the patch names have to be installed there. They come from
 # the checkout like every other @deepseek-ai package in this profile, not from
 # npm: the profile pins one version of the tree, and a package resolved from the
-# registry would be the second.
+# registry would be the second. dshell adds no browser-use or computer-use row,
+# so nothing of dsh's is installed on dshell's behalf.
 for upstream in \
-  packages/browser-use/browser-use \
-  packages/computer-use/computer-use \
-  packages/experimental/computer-use-cua-driver-native
+  packages/ssh/ssh \
+  packages/terminal/tool-terminal
 do
   echo "  + @deepseek-ai/$(basename "$upstream") (upstream)"
   ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/dsh/$upstream" )

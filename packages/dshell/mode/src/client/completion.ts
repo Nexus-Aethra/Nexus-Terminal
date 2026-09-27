@@ -29,7 +29,9 @@ import { FileTypeIcon, classifyFileType, useAnchoredMaxHeight } from '@deepseek-
 // the SessionStandardProps that hand a slot its `useInput`/`inputActions`.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { useDshellTheme } from './theme.js'
+import type { TerminalModeClient } from './terminal-mode.js'
 import { NOTE_KEYS, type DshellModeKey } from './locales.js'
 
 /** The files route, from the shared contract: dshell-files owns it. */
@@ -500,7 +502,11 @@ function row(
  * without pushing the layout.
  */
 export function ShellCompletionList(
-  props: { readonly completion: ShellCompletion } & PropsRuntime<'conversation.input.overlay'> & PropsLocale<'dshellMode'>,
+  props: {
+    readonly completion: ShellCompletion
+    readonly modes: TerminalModeClient
+    readonly sessionId: SessionId | undefined
+  } & PropsRuntime<'conversation.input.overlay'> & PropsLocale<'dshellMode'>,
 ): ReactElement | null {
   const { t } = props
   const theme = useDshellTheme()
@@ -530,7 +536,10 @@ export function ShellCompletionList(
   const pick = (index: number): void => {
     const next = props.completion.apply(state, index, draft)
     if (next === undefined) return
-    props.inputActions.setDraft(next.text)
+    // dsh's draft editor calls `text.replace`, so an undefined answer would
+    // crash the whole session slot (and blank the view) instead of doing
+    // nothing — the guard is the difference between a no-op and a crash.
+    if (typeof next.text === 'string') props.inputActions.setDraft(next.text)
     props.completion.store.set(next.state)
   }
   return createElement('div', {

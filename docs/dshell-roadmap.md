@@ -4304,7 +4304,7 @@ The probe that found it: a temporary hook in dshell's own client entry
 (never in dsh's read-only `boot-client.ts`) that exposed the loader and
 printed every non-active entry's `fiber._error`. The message was
 `service "workspaces" has been registered at
-<@nexus-aethra/dshell-workspace/client>`.
+<@nexus-aethra/dshell-workspace (later removed)/client>`.
 
 The earlier suspicion — that the row's manifest inject
 `['@deepseek-ai/dsh-api-gateway', '@deepseek-ai/dsh-client-connection']`
