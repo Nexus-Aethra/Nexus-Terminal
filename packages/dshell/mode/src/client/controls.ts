@@ -8,6 +8,7 @@ import {
   type ReactElement,
 } from 'react'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import { IconFullscreenOutlineRegular, IconQuestionOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import { readShellCaret, type ShellCaret } from '@nexus-aethra/dshell-std'
 import { shellReportCwd } from './shell-report.js'
@@ -16,12 +17,30 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CompletionState, ShellCompletion } from './completion.js'
 import type { CommandHints } from './command-hint.js'
 import { useShellHelpers } from './shell-settings.js'
-import { useDshellTheme } from './theme.js'
 import type { TerminalModeClient } from './terminal-mode.js'
 import { toggledChoice, tuiFullScreen, type TuiChoice } from './tui.js'
 import type { SessionMode } from './types.js'
 
-const controlsRowStyle: CSSProperties = { position: 'relative', display: 'flex', alignItems: 'center' }
+const controlsRowStyle: CSSProperties = { position: 'relative', display: 'flex', alignItems: 'center', gap: 8 }
+
+/**
+ * An icon control in the composer row, in dsh's own grammar: a bare 28px glyph
+ * whose fill appears only under the pointer, which is why the resting fill lives
+ * in `composer-css.ts` — an inline `background` would outrank that `:hover` rule.
+ */
+const controlStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 28,
+  height: 28,
+  padding: 0,
+  border: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
+  cursor: 'pointer',
+  borderRadius: 'var(--dsw-radius-sm)',
+  fontFamily: 'inherit',
+}
 
 /**
  * How long the reader has to stop typing before the host is sent to look.
@@ -100,7 +119,6 @@ export function DshellLeftControls(props: {
   tui: SnapshotStore<TuiChoice | undefined> | undefined
 } & DshellInputStandardProps & DshellInputCompletion & PropsLocale<'dshellMode'>): ReactElement | null {
   const { t } = props
-  const theme = useDshellTheme()
   const mode = useSyncExternalStore(
     props.mode?.subscribe ?? (() => () => {}),
     props.mode?.getSnapshot ?? (() => 'shell' as SessionMode),
@@ -641,23 +659,6 @@ export function DshellLeftControls(props: {
   }, [pty, sendShell, clearDraft, completion, sessionIdRef])
 
   if (props.sessionId === undefined) return null
-  const fullScreenStyle: CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 28,
-    height: 28,
-    padding: 0,
-    border: 'none',
-    // No resting fill here: an inline `background` would outrank the hover rule
-    // in `composer-css.ts`, which is the only thing that makes this icon read as
-    // a control at all.
-    color: 'var(--dsw-alias-label-secondary)',
-    cursor: 'pointer',
-    borderRadius: 'var(--dsw-radius-sm)',
-    marginLeft: 8,
-    fontFamily: 'inherit',
-  }
   /** The legend, naming each assist only while it is switched on: promising a
    * key the settings card has turned off is a worse answer than a shorter line. */
   const legendFor = (...leading: readonly string[]): string => [
@@ -666,58 +667,50 @@ export function DshellLeftControls(props: {
     ...helpers.historyList ? [t('composer.legend.history')] : [],
     t('composer.legend.ctrlC'),
   ].join(' · ')
-  // No mode chip: switching is a command (`/shell`, `/agent`), and the legend
-  // below already says which mode is in force. The chip was a second entry for
-  // one capability, charging the composer row for the duplicate.
+  /**
+   * What the `?` reveals: the legend for the mode in force, live — a completion
+   * mid-gesture names its own keys, an attachment says why the line will not run.
+   */
+  const legend = mode === 'shell'
+    ? (attachmentCount > 0
+      ? t('composer.legend.attachments')
+      : completeOpen
+        ? t('composer.legend.completionOpen')
+        // The ghost is the one gesture with no visible affordance of its own,
+        // so the legend names its key while a ghost is actually drawn — and
+        // only then, since → is an ordinary caret move the rest of the time.
+        : hintVisible
+          ? legendFor(t('composer.legend.acceptWord'), t('composer.legend.continueHint'))
+          : legendFor(t('composer.legend.idle')))
+    : t('composer.legend.agent')
+  // One `?` in place of the legend: the row it costs is the row the model
+  // selector and the send button need, and the legend is read once, not every
+  // time. It is a button so the keyboard can reach it, wrapped in dsh's own
+  // tooltip — the same 500ms hover the composer's other controls use.
+  // Typed as a plain element on purpose: Tooltip's anchor contract is a weak
+  // type (every field optional), and the `?` carries no handler for the check to
+  // match on — the tooltip supplies the ones it needs.
+  const legendButton: ReactElement = createElement('button', {
+    type: 'button',
+    'data-dshell-control': '',
+    style: controlStyle,
+    'aria-label': legend,
+  }, createElement(IconQuestionOutlineRegular, { size: 14 }))
+  // The way INTO full screen, for a program the host's reading misses. Not
+  // drawn while the surface is already the program's: that mode hides the whole
+  // composer, so the way out is the one the surface itself carries.
+  const fullScreenButton = createElement('button', {
+    type: 'button',
+    'data-dshell-control': '',
+    style: controlStyle,
+    'aria-label': t('tui.enterTitle'),
+    onClick: () => { props.tui?.set(toggledChoice(tuiReading, tuiChoice)) },
+  }, createElement(IconFullscreenOutlineRegular, null))
   return createElement('div', { style: controlsRowStyle },
-    createElement('div', { style: { color: theme.muted, fontSize: 12 } },
-      mode === 'shell'
-        ? (attachmentCount > 0
-          ? t('composer.legend.attachments')
-          : completeOpen
-            ? t('composer.legend.completionOpen')
-            // The ghost is the one gesture with no visible affordance of its own,
-            // so the legend names its key while a ghost is actually drawn — and
-            // only then, since → is an ordinary caret move the rest of the time.
-            : hintVisible
-              ? legendFor(t('composer.legend.acceptWord'), t('composer.legend.continueHint'))
-              : legendFor(t('composer.legend.idle')))
-        : t('composer.legend.agent')),
-    // The way INTO full screen, for a program the host's reading misses. Drawn
-    // as the icon button dsh puts in this row — a bare glyph until it is
-    // hovered — because the label it used to carry cost the width the command
-    // row needs. Not drawn while the surface is already the program's: that
-    // mode hides the whole composer, so the way out is the one the surface
-    // itself carries.
+    createElement(Tooltip, { label: legend, side: 'top', delayMs: 500, children: legendButton }),
     mode === 'shell' && !fullScreen
-      ? createElement('button', {
-        type: 'button',
-        'data-dshell-fullscreen': '',
-        style: fullScreenStyle,
-        title: t('tui.enterTitle'),
-        'aria-label': t('tui.enterTitle'),
-        onClick: () => { props.tui?.set(toggledChoice(tuiReading, tuiChoice)) },
-      }, FullscreenGlyph())
+      ? createElement(Tooltip, { label: t('tui.enterTitle'), side: 'top', delayMs: 500, children: fullScreenButton })
       : null,
-  )
-}
-
-/**
- * dsh's own fullscreen artwork (`IconFullscreenOutline`), copied verbatim: a
- * client plugin has no icon set, and a hand-drawn corner glyph would read as a
- * different control beside dsh's own buttons.
- */
-function FullscreenGlyph(): ReactElement {
-  return createElement('svg', {
-    width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none',
-    xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, strokeWidth: 1,
-  },
-    createElement('path', {
-      d: 'M2.33154 9.40576V13.1685C2.3318 13.4444 2.55556 13.6685 2.83154 13.6685H6.49463V14.6685H2.83154C2.00328 14.6685 1.3318 13.9967 1.33154 13.1685V9.40576H2.33154ZM13.1685 1.33154C13.9964 1.33199 14.6683 2.00352 14.6685 2.83154V6.40576H13.6685V2.83154C13.6683 2.5558 13.4441 2.33199 13.1685 2.33154H9.49463V1.33154H13.1685Z',
-      fill: 'currentColor',
-    }),
-    createElement('path', { d: 'M9.4292 6.57077L13.914 2.08594', stroke: 'currentColor' }),
-    createElement('path', { d: 'M6.57077 9.4292L2.08594 13.914', stroke: 'currentColor' }),
   )
 }
 

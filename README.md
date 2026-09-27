@@ -130,7 +130,7 @@ the top right, and the input line sits at the bottom.
 | **Left sidebar** | Create and switch sessions; `归档` files one away into the `已归档` group; `多选` then batches `恢复` / `删除`; a deleted session first moves to `待删除 · 重启后清除` |
 | **Right sidebar: files** | The `文件` tab browses the session's working directory with back/forward; double-clicking a directory makes it the root; **drag a directory onto the terminal** to `cd` there; device sessions also get `打开文件传输` |
 | **Status card** | Always in the top right, collapsed to one line; expand it for the AI terminal, subagents, background jobs, buffer transfers and delegation replies |
-| **Input line** | The text tells you which gestures are live, and which mode is in force; `/shell` / `/agent` switch modes |
+| **Input line** | `?` names the gestures that are live and the mode in force, on hover; `/shell` / `/agent` switch modes |
 
 The **timeline** is the point: a stretch of shell output occupies one region (a real mini terminal
 that scrolls horizontally), and one AI turn occupies one task block. The block's header line says what
@@ -213,9 +213,10 @@ All three live in the `$ shell` input line and each can be switched off independ
 | `↑` | Opens this session's history (`↑↓` to move, `Enter` to take), listing only commands that share a prefix with what you have typed |
 | `→` | Shows a **ghost hint** after the caret: the newest command that exactly extends your draft. Each `→` takes **one word** of it, and the ghost disappears with the last word |
 
-The legend to the right of the input line changes with the state, e.g. `→ 采纳一个词 · 继续` or
-`Tab 下一个 · ↑↓ 选择 · Enter 填入 · Esc 关闭`. Turn an assist off and its key reverts to the
-browser's behaviour (`Tab` moves focus, `→` moves the caret).
+The `?` in the input line shows the same legend for the current state — `→ 采纳一个词 · 继续` while a
+ghost is showing, `Tab 下一个 · ↑↓ 选择 · Enter 填入 · Esc 关闭` while a list is open — and names the
+mode in force. Hover it (or focus it with the keyboard) to read it. Turn an assist off and its key
+reverts to the browser's behaviour (`Tab` moves focus, `→` moves the caret).
 
 ---
 
@@ -421,6 +422,7 @@ have something to say:
 | Where | Action | What it does |
 |---|---|---|
 | Input line | `/shell` / `/agent` | switch modes |
+| Input line | hover `?` | the key legend for the current state |
 | Input line | `Tab` | completion: commands in the command position, directories after `cd`, paths elsewhere (case-insensitive match, real spelling applied) |
 | Input line | `↑` | command history list |
 | Input line | `→` | take one word of the ghost hint |

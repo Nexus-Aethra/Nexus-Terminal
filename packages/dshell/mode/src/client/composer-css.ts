@@ -13,10 +13,10 @@
  * replaced: the stop square dsh swaps in during a turn keeps its own artwork,
  * which is what the artwork selector keys on.
  *
- * The composer's own controls are styled from here too: the fullscreen button
- * is an icon with no label, so its hover is the only thing that says it is a
- * control — and it is dsh's hover token, not one of ours, because the button
- * sits in a row of dsh's own.
+ * The composer's own controls are styled from here too: the legend and full
+ * screen buttons are icons with no labels, so their hover is the only thing that
+ * says they are controls — and it is dsh's hover token, not one of ours, because
+ * they sit in a row of dsh's own.
  *
  * Scoped to terminal sessions only, by a body attribute this package sets while
  * one is on screen: a stock session's composer keeps dsh's own card and arrow.
@@ -70,13 +70,13 @@ body[${BODY_ATTR}='on'] ${SEND}::after {
   -webkit-mask: ${RETURN_GLYPH} center / 16px 16px no-repeat;
   mask: ${RETURN_GLYPH} center / 16px 16px no-repeat;
 }
-body[${BODY_ATTR}='on'] [data-dshell-fullscreen] {
+body[${BODY_ATTR}='on'] [data-dshell-control] {
   background: transparent;
 }
-body[${BODY_ATTR}='on'] [data-dshell-fullscreen]:hover {
+body[${BODY_ATTR}='on'] [data-dshell-control]:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
-body[${BODY_ATTR}='on'] [data-dshell-fullscreen]:focus-visible {
+body[${BODY_ATTR}='on'] [data-dshell-control]:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: 1px;
 }
