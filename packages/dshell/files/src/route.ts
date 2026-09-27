@@ -34,6 +34,7 @@
  */
 
 import { homedir } from 'node:os'
+import { isAbsolute, relative, sep } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import type { Context } from '@deepseek-ai/cordis'
@@ -107,19 +108,23 @@ function respond(body: DshellFilesResponse, status = 200): Response {
  * a directory" are stated once. The resolved target is canonical, and its key is
  * the absolute path in that world — the string both the listing and the shell
  * command are built from.
+ *
+ * @param routing - the ssh routing seat, which decides what "no directory named"
+ *   means for a session that runs on a device (see {@link sessionDirectory}).
  */
 async function openDirectory(
   ctx: Context,
+  routing: () => TransferRoutingSeat | undefined,
   sessionId: string,
   path: string | undefined,
 ): Promise<{ agent: Agent; target: FsTarget }> {
   const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
   if ('error' in resolved) throw new Error(`会话不可用：${resolved.error.code}`)
   const agent = resolved.agent
-  const cwd = agent.session.header.cwd
-  const start = path === undefined || path.trim().length === 0 ? cwd : path.trim()
+  const home = sessionDirectory(routing, sessionId, agent.session.header.cwd)
+  const start = path === undefined || path.trim().length === 0 ? home : path.trim()
   if (start === undefined) throw new Error('这个会话没有工作目录，且请求没有给出路径')
-  const options = cwd === undefined ? {} : { cwd }
+  const options = home === undefined ? {} : { cwd: home }
 
   // Every call is made as the session, synchronously entering the seam so the
   // provider reads the right initiator.
@@ -133,11 +138,12 @@ async function openDirectory(
 /** One directory reading, as the session that owns the world. */
 async function list(
   ctx: Context,
+  routing: () => TransferRoutingSeat | undefined,
   sessionId: string,
   path: string | undefined,
   canCd: boolean,
 ): Promise<DshellFilesListing> {
-  const { agent, target } = await openDirectory(ctx, sessionId, path)
+  const { agent, target } = await openDirectory(ctx, routing, sessionId, path)
   const children = await ctx.agents.withInitiator(agent, () => ctx.fs.listDir(target))
   const entries: DshellFileEntry[] = children.slice(0, MAX_ENTRIES).map(child => ({
     name: child.name,
@@ -155,11 +161,12 @@ async function list(
 /** Send the session's shell into one directory, and answer with that directory. */
 async function cd(
   ctx: Context,
+  routing: () => TransferRoutingSeat | undefined,
   bridge: DshellTerminalBridge,
   sessionId: string,
   path: string | undefined,
 ): Promise<string> {
-  const directory = String((await openDirectory(ctx, sessionId, path)).target.targetKey)
+  const directory = String((await openDirectory(ctx, routing, sessionId, path)).target.targetKey)
   // `\r` is the byte dsh's own terminal backend appends for "run this"; the
   // bridge's input path is raw, so the newline is ours to add.
   bridge.feed(sessionId, `cd ${quote(directory)}\r`)
@@ -180,6 +187,43 @@ const CD_COMMANDS = new Set(['cd', 'chdir', 'pushd', 'popd'])
 /** The home of a session's world: a device's remote root, or this machine's. */
 function worldHome(routing: () => TransferRoutingSeat | undefined, sessionId: string): string {
   return routing()?.targetForSession(sessionId)?.remoteRoot ?? homedir()
+}
+
+/** Whether `child` is `parent` or lies inside it; lexical, like the seam's own check. */
+function under(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+/**
+ * The directory a session stands in, spelled in the world that answers for it.
+ *
+ * A session's own working directory is a path on THIS machine, and for a session
+ * that runs on a device the harness cannot move it: it was created here, and the
+ * device's tree is reached through the mount directory standing in for it. So a
+ * session whose directory is neither that mount nor anything under it has a
+ * directory that names no place in its world at all — a terminal session is
+ * created in the reader's home and only afterwards pointed at a device, and
+ * `/home/reader` on the device is somebody else's directory or nobody's.
+ *
+ * For those the answer is the device's own root, which is where its shell
+ * already is. A session created in the mount keeps its directory: the seam
+ * translates that one, and translating it here too would lose the subdirectory.
+ *
+ * @param routing - the ssh routing seat, when one is composed.
+ * @param sessionId - session whose directory is being asked for.
+ * @param cwd - the directory as this machine spells it, or undefined.
+ * @returns the directory to resolve against, in the answering world's namespace.
+ */
+export function sessionDirectory(
+  routing: () => TransferRoutingSeat | undefined,
+  sessionId: string,
+  cwd: string | undefined,
+): string | undefined {
+  const bound = routing()?.targetForSession(sessionId)
+  if (bound === undefined) return cwd
+  if (cwd !== undefined && bound.mount !== undefined && under(bound.mount, cwd)) return cwd
+  return bound.remoteRoot
 }
 
 /**
@@ -380,7 +424,9 @@ async function complete(
   // line scanner refuses all land here. The composer's tracked value is the
   // fallback for a session whose shell cannot be read (a device's `ssh`), and
   // `~` resolves against that world's home either way.
-  const base = shellCwd ?? (cwd !== undefined && cwd.length > 0 ? cwd : agent.session.header.cwd)
+  const base = shellCwd ?? sessionDirectory(
+    routing, sessionId, cwd !== undefined && cwd.length > 0 ? cwd : agent.session.header.cwd,
+  )
   const home = worldHome(routing, sessionId)
   const world = worldOf(routing, sessionId)
   const refine = phase === 'refine'
@@ -441,7 +487,9 @@ async function warm(
   const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
   if ('error' in resolved) return
   const agent = resolved.agent
-  const base = shellCwd ?? (cwd !== undefined && cwd.length > 0 ? cwd : agent.session.header.cwd)
+  const base = shellCwd ?? sessionDirectory(
+    routing, sessionId, cwd !== undefined && cwd.length > 0 ? cwd : agent.session.header.cwd,
+  )
   const home = worldHome(routing, sessionId)
   const world = worldOf(routing, sessionId)
   const caret = readShellCaret(line, cursor)
@@ -951,7 +999,8 @@ async function resolvePath(
   const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
   if ('error' in resolved) throw new Error(`会话不可用：${resolved.error.code}`)
   const agent = resolved.agent
-  const options = cwd === undefined ? {} : { cwd }
+  const home = sessionDirectory(routing, sessionId, cwd)
+  const options = home === undefined ? {} : { cwd: home }
   const target = await ctx.agents.withInitiator(
     agent,
     () => ctx.fs.resolve(expandHome(path, worldHome(routing, sessionId)), options),
@@ -982,10 +1031,10 @@ export function createFilesRoute(
     const bridge = terminal()
     switch (input.action) {
       case 'list':
-        return { listing: await list(ctx, input.sessionId, input.path, bridge !== undefined) }
+        return { listing: await list(ctx, routing, input.sessionId, input.path, bridge !== undefined) }
       case 'cd': {
         if (bridge === undefined) return { error: '本次组合没有终端桥，无法把终端切换到该目录' }
-        return { cdTo: await cd(ctx, bridge, input.sessionId, input.path) }
+        return { cdTo: await cd(ctx, routing, bridge, input.sessionId, input.path) }
       }
       case 'resolve': {
         const resolved = await resolvePath(ctx, routing, input.sessionId, input.path ?? '.', input.cwd)

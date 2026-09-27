@@ -23,6 +23,9 @@ import type { createDshellFilesStore } from './store.js'
 export interface FilesInjected {
   /**
    * Open this tab on a directory, with nothing listed yet.
+   *
+   * The listing that follows asks the host where the session stands rather than
+   * naming this directory, and re-bases the tab onto the answer.
    * @param tabId - the tab being drawn.
    * @param home - the session's directory, where the tab opens.
    * @param signal - the tab record's lifetime.
@@ -106,24 +109,48 @@ export function createFilesFace(
       byPath.set(path, generation)
       return generation
     }
+    /**
+     * Tabs whose next listing is the one that opens them, and therefore asks
+     * without naming a directory.
+     *
+     * The browser only knows the session's directory as this machine spells it,
+     * and for a session that runs on a device that string is not a place in the
+     * world that will answer: its shell is elsewhere. Asking "where does this
+     * session stand" lets the host answer in the right namespace, and the
+     * store's re-basing (see `listed`) then moves the tab onto the path it was
+     * given. A later ask always names its path — including a walk back to a
+     * device directory that happens to spell like the local one.
+     *
+     * Held until a listing SUCCEEDS, so a seed that failed (a device still
+     * connecting) is retried as a seed by the reload gesture rather than being
+     * pinned to a path the device does not have.
+     */
+    const seeding = new Set<TabId>()
     const load = (tabId: TabId, path: string, signal: AbortSignal): void => {
       if (signal.aborted) return
       const generation = nextGeneration(tabId, path)
+      const asked = seeding.has(tabId) ? undefined : path
       actions.loading(tabId, path)
-      void list(sessionId, path, signal).then((outcome) => {
+      void list(sessionId, asked, signal).then((outcome) => {
         // A newer listing of this level was asked for since, or the record is
         // gone and its bookkeeping with it: nothing left for this one to write.
         if (generations.get(tabId)?.get(path) !== generation) return
         if (signal.aborted) return
-        if (outcome.ok) actions.loaded(tabId, path, outcome.listing)
-        else actions.failed(tabId, path, outcome.message)
+        if (outcome.ok) {
+          seeding.delete(tabId)
+          actions.loaded(tabId, path, outcome.listing)
+        } else {
+          actions.failed(tabId, path, outcome.message)
+        }
       })
     }
     return {
       start(tabId, home, signal) {
         actions.seed(tabId, home)
+        seeding.add(tabId)
         signal.addEventListener('abort', () => {
           generations.delete(tabId)
+          seeding.delete(tabId)
           actions.forget(tabId)
         }, { once: true })
       },

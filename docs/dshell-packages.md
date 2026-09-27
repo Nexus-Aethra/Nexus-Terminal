@@ -293,6 +293,15 @@ when it contributes to model-visible state.
     provider that resolves a bound session's tree over SSH. It also
     publishes `dshellSshRouting` for packages that need to know which
     device a session runs on.
+  - An assignment always carries the local **mount** directory that stands
+    in for its device tree, because the `ctx.fs` seam refuses to guess one:
+    a binding without a mount routes the shell only, and every file
+    operation of a session that is visibly on a device then silently lands
+    on this machine. `bind` derives it (`mountPath`) and creates it when
+    the caller names none — no caller does — and the load repeats the
+    derivation for assignments written before that rule, so a device
+    session keeps its files on the device across the upgrade. An
+    assignment whose device is gone is left alone.
   - Credential and host-trust posture (Phase 10.10, see `src/runner.ts` and
     `src/host-key.ts`): a device with a stored key connects with **only** that
     key (`IdentitiesOnly=yes` — without it the user's ssh agent is offered
@@ -352,7 +361,14 @@ when it contributes to model-visible state.
     has four actions. `list` resolves the session's agent, then inside
     `withInitiator` resolves `stat` (must be a directory) and `listDir`
     and answers with the canonical absolute path in that session's own
-    execution world. `cd` sends the session's main shell into one such
+    execution world. A request that names no directory gets the one the
+    session stands in, spelled in that world (`sessionDirectory`): for a
+    device-bound session whose own working directory is a path on this
+    machine — a terminal session is created in the reader's home and only
+    afterwards pointed at a device — that is the device's root, since the
+    local path is not a place the device has. A session created inside the
+    mount keeps its directory, which the seam translates. `cd` sends the
+    session's main shell into one such
     directory, through the terminal bridge's own input path — the same
     one a keystroke takes, so the command is tracked and rendered like
     any typed command. `complete` answers one line's Tab: the standard
@@ -401,7 +417,14 @@ when it contributes to model-visible state.
     terminal view the block view mounts, which is outlined while the
     pointer is over it. Navigation state lives in a declared
     per-session store bucketed by tab id, because the pane unmounts the
-    inactive tab's body but the store survives.
+    inactive tab's body but the store survives. The listing that opens a
+    tab names no directory: the browser only knows the session's directory
+    as this machine spells it, so the host answers with the one that
+    session's world has and the store re-bases the tab onto the path it was
+    given — a device session's pane opens on the device's root rather than
+    on the local home it was created in. Every later listing names its
+    path, including a walk back to a device directory that happens to spell
+    like the local one.
   - The transfer tab is the same package's second `SidebarRightTabDefinition`
     (`kind: 'transfer'`, a page type, and deliberately **no guide entry**:
     the pane's default page is the sole guide entry's kind, so a second entry

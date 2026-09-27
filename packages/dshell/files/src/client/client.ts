@@ -18,10 +18,10 @@ export type DshellFilesMoveOutcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string }
 
-/** List one directory of one session's world. */
+/** List one directory of one session's world; no path asks for the session's own. */
 export type ListDirectory = (
   sessionId: string,
-  path: string,
+  path: string | undefined,
   signal: AbortSignal,
 ) => Promise<DshellFilesListOutcome>
 
@@ -44,7 +44,7 @@ async function post(request: DshellFilesRequest, signal?: AbortSignal): Promise<
 export function createListDirectory(): ListDirectory {
   return async (sessionId, path, signal): Promise<DshellFilesListOutcome> => {
     try {
-      const body = await post({ action: 'list', sessionId, path }, signal)
+      const body = await post({ action: 'list', sessionId, ...path === undefined ? {} : { path } }, signal)
       if (body.listing === undefined) return { ok: false, message: body.error ?? '文件列表没有返回内容' }
       return { ok: true, listing: body.listing }
     } catch (error) {

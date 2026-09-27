@@ -151,6 +151,24 @@ class BindingStore {
       const mounted = mount === null || mount.trim() === '' ? {} : { mount: mount.trim() }
       this.entries.set(sessionId, { deviceId, ...override, ...mounted })
     }
+    await this.write()
+  }
+
+  /**
+   * Give one assignment the mount it was written without, in memory.
+   * @param sessionId - assigned session.
+   * @param mount - local directory standing in for its tree.
+   * @returns whether anything changed, so the caller knows to {@link write}.
+   */
+  adoptMount(sessionId: string, mount: string): boolean {
+    const entry = this.entries.get(sessionId)
+    if (entry === undefined || entry.mount !== undefined) return false
+    this.entries.set(sessionId, { ...entry, mount })
+    return true
+  }
+
+  /** Write the assignments down, through a temporary so a reader never sees half. */
+  async write(): Promise<void> {
     await mkdir(dirname(this.path()), { recursive: true })
     const temporary = `${this.path()}.tmp`
     await writeFile(temporary, JSON.stringify(Object.fromEntries(this.entries), null, 2), 'utf8')
@@ -255,8 +273,9 @@ export class SshRouter {
    * @param deviceId - device, or null to run locally again.
    * @param remoteRoot - directory to run in on that device; null uses the
    *   device's own `remoteRoot`.
-   * @param mount - local mount directory for that tree, from {@link mountPath};
-   *   null keeps the session's file operations local-only.
+   * @param mount - local directory standing in for that tree; null takes the
+   *   tree's own ({@link mountPath}), because a binding without one routes only
+   *   the shell and leaves every file operation on this machine.
    * @param ctx - host context used to create the remote directory; when given,
    *   the directory is made to exist BEFORE the assignment becomes visible, so
    *   a terminal that spawns the instant the binding lands has somewhere to
@@ -271,14 +290,24 @@ export class SshRouter {
     mount: string | null = null,
     ctx?: Context,
   ): Promise<void> {
+    let assigned = mount
     if (deviceId !== null) {
       if (this.connections.get(deviceId) === undefined) {
         await this.refreshDevices()
         if (this.connections.get(deviceId) === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
       }
       if (ctx !== undefined) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
+      const tree = assigned === null || assigned.trim().length === 0
+        ? await this.mountPath(deviceId, remoteRoot)
+        : assigned
+      // Made to exist here rather than left to the session's creation: a
+      // session that runs on a device is created in a directory of THIS
+      // machine, and for one bound after its creation nothing else would ever
+      // make the stand-in.
+      await mkdir(tree, { recursive: true })
+      assigned = tree
     }
-    await this.bindings.set(sessionId, deviceId, remoteRoot, mount)
+    await this.bindings.set(sessionId, deviceId, remoteRoot, assigned)
     if (deviceId !== null) this.onDeviceChanged?.(deviceId, 'bound')
   }
 
@@ -673,6 +702,36 @@ export class SshRouter {
     await mkdir(join(sshDeviceRoot(), 'ctl'), { recursive: true, mode: 0o700 })
     await this.bindings.load()
     await this.refreshDevices()
+    await this.adoptMounts()
+  }
+
+  /**
+   * Give the assignments written before a bind derived its mount the mapping
+   * their file operations need.
+   *
+   * Without one, a session that is visibly on a device — its shell answers from
+   * there — reads and writes THIS machine's disk instead, because the file
+   * seam refuses to guess a mapping that was never recorded. Those bindings are
+   * on disk already and re-binding every one of them is not something a reader
+   * can be asked to do, so the derivation that `bind` performs is repeated here
+   * once, at load, against the devices it now knows.
+   *
+   * A device that is gone leaves its assignment alone: the shell path already
+   * falls back for it, and inventing a directory name for an unknown device
+   * would only add a mapping nothing can honour.
+   */
+  private async adoptMounts(): Promise<void> {
+    let adopted = false
+    for (const entry of this.bindings.all()) {
+      if (entry.mount !== undefined) continue
+      const device = this.connections.get(entry.deviceId)
+      if (device === undefined) continue
+      const root = entry.remoteRoot ?? device.remoteRoot
+      const mount = mountFor(entry.deviceId, root.trim().length === 0 ? '~' : root)
+      await mkdir(mount, { recursive: true })
+      adopted = this.bindings.adoptMount(entry.sessionId, mount) || adopted
+    }
+    if (adopted) await this.bindings.write()
   }
 }
 
