@@ -454,6 +454,36 @@ export class SshRouter {
   }
 
   /**
+   * The raw assignment for one session, whether or not its device can be served.
+   *
+   * What separates "this session runs here" from "this session runs on a device
+   * we cannot reach": {@link targetForSession} answers undefined for both, and
+   * treating the second as the first is how a device session's file operations
+   * end up on this machine. Every seam that would otherwise fall back to a local
+   * implementation reads this first and refuses instead.
+   *
+   * Synchronous for the same reason {@link targetForSession} is.
+   *
+   * @param sessionId - ambient agent id of the executing call.
+   * @returns the stored assignment, or undefined when the session is not bound.
+   */
+  assignmentForSession(sessionId: string): AssignmentView | undefined {
+    const assignment = this.bindings.get(sessionId)
+    return assignment === undefined ? undefined : { sessionId, ...assignment }
+  }
+
+  /**
+   * Why a session bound to a device that cannot be served is refused rather than
+   * run here.
+   *
+   * @param deviceId - the device the session is bound to.
+   * @returns the refusal text, in the reader's language.
+   */
+  unservableMessage(deviceId: string): string {
+    return this.t('route.noDevice', { id: deviceId })
+  }
+
+  /**
    * The spawn plan for one session's VISIBLE terminal, or undefined when the
    * session runs locally.
    *
@@ -497,8 +527,15 @@ export class SshRouter {
       if (assignment === undefined) throw new Error(unboundMountMessage(sessionCwd, this.t))
     }
     if (assignment === undefined) return undefined
+    // The device cache is filled by the load this method can wait for, so an
+    // unknown device here is a device that is GONE (deleted, or its document
+    // unreadable) rather than one that has not been read yet. Handing the
+    // session a local shell instead would give the reader a prompt on this
+    // machine behind a device's name — the same silent split the mount refusal
+    // above exists to prevent.
+    await this.ensureReady()
     const device = this.connections.get(assignment.deviceId)
-    if (device === undefined) return undefined
+    if (device === undefined) throw new Error(this.unservableMessage(assignment.deviceId))
     const remoteRoot = assignment.remoteRoot ?? device.remoteRoot
     return { argv: interactiveShellArgv(device, remoteRoot, this.t), env: sshEnv(device) }
   }
@@ -793,6 +830,13 @@ export function installShellRouting(ctx: Context, router: SshRouter, t: DshellSs
     const agent = ctx.agents.currentInitiator()
     const assignment = agent === undefined ? undefined : router.targetForSession(String(agent.id))
     if (assignment === undefined) {
+      // A session bound to a device that cannot be served — deleted, or its
+      // document unreadable — has no local half to fall back to: running the
+      // command here would put a device session's work on this machine, under
+      // this machine's permissions, while everything above the seam believes it
+      // happened on the device.
+      const bound = agent === undefined ? undefined : router.assignmentForSession(String(agent.id))
+      if (bound !== undefined) throw new Error(router.unservableMessage(bound.deviceId))
       // A session whose directory is a mount belongs to a device even when the
       // assignment is missing — the device may have been deleted, or a bind may
       // have failed. Running the command here would execute it on this machine

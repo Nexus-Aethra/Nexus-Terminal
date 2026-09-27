@@ -36,7 +36,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type { SubprocessHandle, SubprocessRuntime, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SshRouter } from './router.js'
 import { localCwd, quote, sshArgv, sshEnv } from './runner.js'
-import { remoteDirFor } from './mount.js'
+import { mappingFor, remoteDirFor } from './mount.js'
 import { DshellSshConnection, DshellSshConnections, localHelperArtifact } from './connection.js'
 import { HelperTargets } from './helper/target.js'
 import { RemoteProcess, supportsStdio } from './remote-process.js'
@@ -132,7 +132,15 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
   target.spawn = function spawn(this: unknown, spec: SubprocessSpawnSpec): SubprocessHandle {
     const agent = ctx.agents.currentInitiator()
     const assignment = agent === undefined ? undefined : router.targetForSession(String(agent.id))
-    if (assignment === undefined) return original.call(this, spec)
+    if (assignment === undefined) {
+      // A session bound to a device that cannot be served has no local half:
+      // spawning here would run a device session's process on this machine,
+      // which is the same refusal the shell seam raises (see
+      // `installShellRouting`), at the seam where the process actually leaves.
+      const bound = agent === undefined ? undefined : router.assignmentForSession(String(agent.id))
+      if (bound !== undefined) throw new Error(router.unservableMessage(bound.deviceId))
+      return original.call(this, spec)
+    }
     // Checked BEFORE the RPC branch, and for two reasons at once. The legacy hop
     // builds its own ssh argv, so routing it would recurse into this same seam —
     // and `ssh` is a bare name, so it would otherwise look perfectly routable
@@ -147,7 +155,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     // `remote-fs-helper.ts`), so its commands arrive here as `ssh` and take
     // this branch rather than being routed a second time.
     if (basename(spec.argv[0] ?? '') === 'ssh') return original.call(this, spec)
-    const directory = remoteDirectory(assignment, spec.cwd)
+    const directory = remoteDirectory(assignment, spec.cwd, agent?.session.header.cwd)
     const program = deviceProgram(spec.argv[0] ?? '')
     const connection: DshellSshConnection | undefined = connections.peek(assignment.device.id)
     if (connection !== undefined && program !== undefined && supportsStdio(spec)) {
@@ -185,21 +193,25 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
  * The caller's directory in the device's path space.
  *
  * A tool resolves a relative path against the session's own directory, which is
- * the local mount standing in for the device tree; an absolute path the model
- * gave is already a device path. A binding without a mount (written before
- * mounts existed) has nothing to translate and uses the device's root.
+ * the local mount standing in for the device tree — or, for a session pointed at
+ * a device after its creation, a local directory that stands for nothing there
+ * and is translated as the session's root instead (see `mappingFor`). An
+ * absolute path the model gave is already a device path. A binding without a
+ * mount (written before mounts existed) has nothing to translate and uses the
+ * device's root.
  *
  * @param assignment - the session's device, remote root and mount.
  * @param workdir - the caller's directory.
+ * @param sessionCwd - the directory the harness recorded for the session.
  * @returns the directory the process should run in, on the device.
  */
 function remoteDirectory(
   assignment: { remoteRoot: string; mount: string | undefined },
   workdir: string,
+  sessionCwd: string | undefined,
 ): string {
   // `targetForSession` has already resolved the root against the device, so
   // this only has to decide whether the caller's directory can be translated.
-  return assignment.mount === undefined
-    ? assignment.remoteRoot
-    : remoteDirFor({ mount: assignment.mount, remoteRoot: assignment.remoteRoot }, workdir)
+  const mapping = mappingFor(assignment, sessionCwd)
+  return mapping === undefined ? assignment.remoteRoot : remoteDirFor(mapping, workdir)
 }

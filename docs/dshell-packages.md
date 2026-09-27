@@ -302,6 +302,26 @@ when it contributes to model-visible state.
     derivation for assignments written before that rule, so a device
     session keeps its files on the device across the upgrade. An
     assignment whose device is gone is left alone.
+  - **A device session has no local half.** All three seams (files,
+    byte-level device ops, subprocess spawn) plus the shell `resolve` wrap
+    and the visible terminal's spawn plan distinguish "not bound" from
+    "bound to a device nothing can serve" — the device was deleted, or the
+    binding has no mount — and the second is a refusal
+    (`route.noDevice`), never a fallback. Falling through to `super` would
+    hand a device session this machine's disk while every layer above
+    reports a successful operation on the device, which is the risk this
+    package exists to remove.
+  - **The mapping has an alias root** (`mappingFor`, the one place a
+    mapping is built): a session created first and pointed at a device
+    later — every session of the sidebar's terminal section — has a
+    working directory on this machine that the harness cannot move, and
+    dsh's file tools resolve relative paths against it. That directory is
+    therefore translated as the device's root, so `read notes.md` reaches
+    the device's `<remoteRoot>/notes.md` instead of a `/home/reader` the
+    device may really have. The mount wins where the two overlap (dshell's
+    mount tree lives under the reader's home), and any other absolute path
+    still travels unchanged, because addressing the device directly is the
+    point of the session. The model needs no idea this happens.
   - Credential and host-trust posture (Phase 10.10, see `src/runner.ts` and
     `src/host-key.ts`): a device with a stored key connects with **only** that
     key (`IdentitiesOnly=yes` — without it the user's ssh agent is offered

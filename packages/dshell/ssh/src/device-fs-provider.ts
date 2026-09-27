@@ -30,6 +30,7 @@ import {
   type DeviceFsSeat,
 } from '@nexus-aethra/dshell-std'
 import type { DshellSshTranslate } from './host-locales.js'
+import { mappingFor } from './mount.js'
 import { RemoteFileSystem } from './remote-fs.js'
 import { SSH_ROUTING_SERVICE } from './router.js'
 
@@ -107,9 +108,10 @@ export class DshellDeviceFsProvider implements DeviceFsSeat {
   /**
    * The device ops for the ambient call's session.
    *
-   * Returns `undefined` when the session is local, unbound, or has no helper
-   * up right now — the transfer engine treats that as "operate locally" and
-   * the relay handles both shapes.
+   * Returns `undefined` when the session runs on this machine, and REFUSES when
+   * it is bound to a device nothing can serve: `undefined` reads as "operate
+   * locally" at every call site, which for a device session would put its bytes
+   * on this machine (the rule `DshellFileSystem.route` states at length).
    *
    * The lookup mirrors `DshellFileSystem.remote()`: same ambient initiator,
    * same routing table, same mapping. Two callers that asked at the same
@@ -121,12 +123,18 @@ export class DshellDeviceFsProvider implements DeviceFsSeat {
     const agent = this.ctx.agents.currentInitiator()
     if (agent === undefined) return undefined
     const routing = this.ctx[SSH_ROUTING_SERVICE]
-    const target = routing.targetForSession(String(agent.id))
-    if (target === undefined || target.mount === undefined) return undefined
+    const sessionId = String(agent.id)
+    const target = routing.targetForSession(sessionId)
+    const mapping = target === undefined ? undefined : mappingFor(target, agent.session.header.cwd)
+    if (target === undefined || mapping === undefined) {
+      const bound = routing.assignmentForSession(sessionId)
+      if (bound === undefined) return undefined
+      throw new Error(routing.unservableMessage(bound.deviceId))
+    }
     const remote = new RemoteFileSystem({
       ctx: this.ctx,
       device: target.device,
-      mapping: { mount: target.mount, remoteRoot: target.remoteRoot },
+      mapping,
       diffBasisMaxBytes: this.config.diffBasisMaxBytes ?? 0,
       t: this.t,
       connection: routing.helperConnection?.(target.device.id),

@@ -2,12 +2,15 @@
  * `ctx.deviceFs`, the seat the transfer and buffer relays read.
  *
  * The seat's only public behaviour is `forInitiator()`, which returns a
- * `DeviceFsOps` for the ambient call's session or `undefined` when the
- * session is local / unbound. These specs pin that contract: an unbound
- * session is `undefined`, a bound session is a real ops object, and a bound
- * session whose helper just disappeared is still answered (the seat does
- * not decide on helper liveness — the wrapped `RemoteFileSystem` does, by
- * falling back to the assembled-command lane).
+ * `DeviceFsOps` for the ambient call's session, `undefined` when the session
+ * runs on this machine, and a refusal when it is bound to a device nothing can
+ * serve — `undefined` is read as "operate locally" by every caller, which for a
+ * device session would put its bytes on this machine. These specs pin that
+ * contract: an unbound session is `undefined`, a bound session is a real ops
+ * object, an unservable one throws, and a bound session whose helper just
+ * disappeared is still answered (the seat does not decide on helper liveness —
+ * the wrapped `RemoteFileSystem` does, by falling back to the assembled-command
+ * lane).
  *
  * The adapter's role is to drop the rich return types of `RemoteFileSystem`
  * down to the simpler `DeviceFsOps` contract — `writeBytes` becomes `void`,
@@ -25,15 +28,23 @@ import { SSH_ROUTING_SERVICE } from '../src/router.js'
 
 interface RoutingFake {
   targetForSession: (id: string) => { device: { id: string; remoteRoot: string }; remoteRoot: string; mount: string | undefined } | undefined
+  /** The raw binding, which is what separates "local" from "bound but unservable". */
+  assignmentForSession: (id: string) => { sessionId: string; deviceId: string } | undefined
+  unservableMessage: (deviceId: string) => string
   helperConnection: (deviceId: string) => { request: (...args: unknown[]) => Promise<unknown> } | undefined
 }
 
 function makeCtx(args: {
   initiator: string | undefined
+  cwd?: string | undefined
   routing: RoutingFake
 }) {
   return {
-    agents: { currentInitiator: () => args.initiator === undefined ? undefined : { id: args.initiator } },
+    agents: {
+      currentInitiator: () => args.initiator === undefined
+        ? undefined
+        : { id: args.initiator, session: { header: { cwd: args.cwd } } },
+    },
     [SSH_ROUTING_SERVICE]: args.routing,
   }
 }
@@ -42,6 +53,8 @@ const hostCopy: DshellSshTranslate = ((key: string) => key) as unknown as Dshell
 
 const baseRouting = (): RoutingFake => ({
   targetForSession: () => undefined,
+  assignmentForSession: () => undefined,
+  unservableMessage: (deviceId: string) => `unservable:${deviceId}`,
   helperConnection: () => undefined,
 })
 
@@ -67,22 +80,37 @@ describe('DshellDeviceFsProvider', () => {
     expect(seat.forInitiator()).toBeUndefined()
   })
 
-  it('returns undefined when the binding has no mount', () => {
+  it('refuses a bound session whose binding has no mount', () => {
+    // `undefined` is what every caller reads as "operate locally", so a device
+    // session with nothing to translate with has to fail instead of answering.
     const routing: RoutingFake = {
       ...baseRouting(),
       targetForSession: () => ({ device: { id: 'd1', remoteRoot: '/root' }, remoteRoot: '/root', mount: undefined }),
+      assignmentForSession: () => ({ sessionId: 'session-x', deviceId: 'd1' }),
     }
     const ctx = makeCtx({ initiator: 'session-x', routing })
     const seat = new DshellDeviceFsProvider(ctx, { diffBasisMaxBytes: 0 }, hostCopy)
-    expect(seat.forInitiator()).toBeUndefined()
+    expect(() => seat.forInitiator()).toThrow('unservable:d1')
+  })
+
+  it('refuses a session whose device is gone', () => {
+    const routing: RoutingFake = {
+      ...baseRouting(),
+      targetForSession: () => undefined,
+      assignmentForSession: () => ({ sessionId: 'session-x', deviceId: 'deleted-device' }),
+    }
+    const ctx = makeCtx({ initiator: 'session-x', routing })
+    const seat = new DshellDeviceFsProvider(ctx, { diffBasisMaxBytes: 0 }, hostCopy)
+    expect(() => seat.forInitiator()).toThrow('unservable:deleted-device')
   })
 
   it('returns an ops object for a bound session with a mount', () => {
     const routing: RoutingFake = {
+      ...baseRouting(),
       targetForSession: () => ({ device: { id: 'd1', remoteRoot: '/root' }, remoteRoot: '/root', mount: '/tmp/d1' }),
       helperConnection: () => undefined,
     }
-    const ctx = makeCtx({ initiator: 'session-x', routing })
+    const ctx = makeCtx({ initiator: 'session-x', cwd: '/tmp/d1', routing })
     const seat = new DshellDeviceFsProvider(ctx, { diffBasisMaxBytes: 0 }, hostCopy)
     const ops = seat.forInitiator()
     expect(ops).toBeDefined()
@@ -100,6 +128,7 @@ describe('DshellDeviceFsProvider', () => {
     const helperSpy = vi.fn(() => undefined)
     const targetSpy = vi.fn(() => ({ device: { id: 'd1', remoteRoot: '/root' }, remoteRoot: '/root', mount: '/tmp/d1' }))
     const routing: RoutingFake = {
+      ...baseRouting(),
       targetForSession: targetSpy,
       helperConnection: helperSpy,
     }

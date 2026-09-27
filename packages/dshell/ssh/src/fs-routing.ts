@@ -33,10 +33,10 @@ import type { HostCopy } from '@nexus-aethra/dshell-std'
 import type {} from '@deepseek-ai/dsh-agent'
 // Type-only: pulls the sandbox-policy service merge (ctx.sandboxPolicy).
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import { isUnder, toMountPath, type MountMapping } from './mount.js'
+import { isUnder, mappingFor, toMountPath, type MountMapping } from './mount.js'
 import { hostCopy, type DshellSshTranslate } from './host-locales.js'
 import { RemoteFileSystem } from './remote-fs.js'
-import { SSH_ROUTING_SERVICE } from './router.js'
+import { SSH_ROUTING_SERVICE, type SshRouter } from './router.js'
 import { installDeviceFs } from './device-fs-provider.js'
 
 /** Remote temp areas a `workspace-write` session may also write, mirroring the local backend's temp allowance. */
@@ -71,10 +71,6 @@ export class DshellFileSystem extends SandboxedFileSystem {
   /**
    * The device backend for the ambient call, or undefined for a local session.
    *
-   * A binding without a mount (written before mount directories existed, or
-   * created by hand) routes only the shell path, so file operations stay local
-   * rather than guessing at a mapping that was never recorded.
-   *
    * The helper connection is looked up per call and never awaited. Looking one
    * up asks whether a helper is verified *now*, and a device with none — no
    * Node, no helper installed yet, a handshake still in flight — is answered by
@@ -83,30 +79,53 @@ export class DshellFileSystem extends SandboxedFileSystem {
    * into a hang.
    */
   private remote(): RemoteFileSystem | undefined {
-    const agent = this.ctx.agents.currentInitiator()
-    if (agent === undefined) return undefined
-    const routing = this.ctx[SSH_ROUTING_SERVICE]
-    const target = routing.targetForSession(String(agent.id))
-    if (target === undefined || target.mount === undefined) return undefined
-    const mapping: MountMapping = { mount: target.mount, remoteRoot: target.remoteRoot }
+    const routed = this.route()
+    if (routed === undefined) return undefined
+    const { target, mapping } = routed
     return new RemoteFileSystem({
       ctx: this.ctx,
       device: target.device,
       mapping,
       diffBasisMaxBytes: this.config.diffBasisMaxBytes,
       t: this.t,
-      connection: routing.helperConnection?.(target.device.id),
+      connection: this.ctx[SSH_ROUTING_SERVICE].helperConnection?.(target.device.id),
     })
   }
 
   /** The mapping for the ambient call, for the policy fence. */
   private mapping(): MountMapping | undefined {
+    return this.route()?.mapping
+  }
+
+  /**
+   * Where the ambient call belongs: its device and the mapping to translate
+   * with, or undefined for a session that runs on this machine.
+   *
+   * A session that IS bound to a device has no local half, so the two states
+   * that used to look alike are now told apart. "No binding" falls through to
+   * `super`, which is the stock backend and exactly right. "Bound, but nothing
+   * can serve it" — the device was deleted, or the binding carries no mount to
+   * translate with — is a refusal: falling through would hand a device session
+   * this machine's disk, where its reads answer from the reader's own files and
+   * its writes land there too, while every layer above reports a successful
+   * operation on the device. That is the risk this seam exists to remove, so it
+   * is stated rather than absorbed.
+   *
+   * The mapping carries the session's own directory as an alias of its remote
+   * root when the two differ, which is what makes the model's relative paths
+   * land on the device (see `mappingFor`).
+   */
+  private route(): { target: NonNullable<ReturnType<SshRouter['targetForSession']>>; mapping: MountMapping } | undefined {
     const agent = this.ctx.agents.currentInitiator()
     if (agent === undefined) return undefined
-    const target = this.ctx[SSH_ROUTING_SERVICE].targetForSession(String(agent.id))
-    return target === undefined || target.mount === undefined
-      ? undefined
-      : { mount: target.mount, remoteRoot: target.remoteRoot }
+    const routing = this.ctx[SSH_ROUTING_SERVICE]
+    const sessionId = String(agent.id)
+    const target = routing.targetForSession(sessionId)
+    const mapping = target === undefined ? undefined : mappingFor(target, agent.session.header.cwd)
+    if (target !== undefined && mapping !== undefined) return { target, mapping }
+    const bound = routing.assignmentForSession(sessionId)
+    if (bound === undefined) return undefined
+    throw new FsError(routing.unservableMessage(bound.deviceId), 'FS_PERMISSION_DENIED')
   }
 
   /** Run one remote mutation under a per-target lock. */

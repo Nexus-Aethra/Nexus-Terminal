@@ -32,6 +32,49 @@ export interface MountMapping {
   readonly mount: string
   /** Directory the device's commands and file operations start in. */
   readonly remoteRoot: string
+  /**
+   * A second local spelling of the same directory: the session's own working
+   * directory, when it is not the mount.
+   *
+   * The harness creates a session's directory on this machine and cannot move
+   * it afterwards, so a session that was created first and pointed at a device
+   * later — every session of the sidebar's terminal section — carries a
+   * directory that is a real local path and names no place in its own world.
+   * Its tools resolve relative paths against that directory, so without an
+   * alias `read notes.md` asks the device for `/home/reader/notes.md`: a
+   * directory the device may well have, filled with somebody else's files. With
+   * it, the path the tool built is read as the stand-in it is, and the model
+   * needs no idea that any of this happened.
+   *
+   * Only a prefix of the session's own directory is re-based this way. Any
+   * other absolute path still travels unchanged, because on a device session
+   * `/var/log` is the device's and saying so is the point.
+   */
+  readonly alias?: string | undefined
+}
+
+/**
+ * The mapping for one bound session.
+ *
+ * The single place a mapping is built from a routing answer, so the alias rule
+ * has one owner and the three seams that need a mapping (files, bytes, spawn)
+ * cannot drift apart about it.
+ *
+ * @param target - the routing answer: the device's directory and its mount.
+ * @param sessionCwd - the directory the harness recorded for the session.
+ * @returns the mapping, or undefined when the binding carries no mount and
+ *   therefore nothing can be translated.
+ */
+export function mappingFor(
+  target: { readonly remoteRoot: string; readonly mount?: string | undefined },
+  sessionCwd: string | undefined,
+): MountMapping | undefined {
+  const { mount, remoteRoot } = target
+  if (mount === undefined) return undefined
+  const alias = sessionCwd !== undefined && sessionCwd.length > 0 && !isUnder(mount, sessionCwd)
+    ? sessionCwd
+    : undefined
+  return { mount, remoteRoot, ...alias === undefined ? {} : { alias } }
 }
 
 /**
@@ -88,21 +131,31 @@ export function absoluteRemoteRoot(remoteRoot: string, deviceRoot: string | unde
 /**
  * Translate a path the harness/machine sees into the path the device sees.
  *
- * A path inside the mount maps to the corresponding remote path. Any other
- * absolute path is returned unchanged: on a device-bound session the model is
- * addressing the device, so `/var/log` means the device's `/var/log`, and
- * making that work is the whole point of the session.
+ * A path inside the mount — or inside the session's own directory, when that is
+ * not the mount (see {@link MountMapping.alias}) — maps to the corresponding
+ * remote path. The mount is tried first because a session's directory can be an
+ * ANCESTOR of it: dshell's mount tree lives under the reader's home, so the more
+ * specific root has to win or every mount path would be re-based as a home path.
+ *
+ * Any other absolute path is returned unchanged: on a device-bound session the
+ * model is addressing the device, so `/var/log` means the device's `/var/log`,
+ * and making that work is the whole point of the session.
  *
  * @param mapping - the session's mapping.
  * @param path - absolute path in this machine's namespace.
  * @returns absolute path in the device's namespace.
  */
 export function toRemotePath(mapping: MountMapping, path: string): string {
-  if (!isUnder(mapping.mount, path)) return path
-  const rest = relative(mapping.mount, path)
+  const rest = under(mapping.mount, path) ?? (mapping.alias === undefined ? undefined : under(mapping.alias, path))
+  if (rest === undefined) return path
   if (rest === '') return mapping.remoteRoot
   const base = mapping.remoteRoot === '/' ? '' : mapping.remoteRoot
   return join(base === '' ? '/' : base, rest)
+}
+
+/** The part of `path` under `root`, or undefined when it is not under it. */
+function under(root: string, path: string): string | undefined {
+  return isUnder(root, path) ? relative(root, path) : undefined
 }
 
 /**

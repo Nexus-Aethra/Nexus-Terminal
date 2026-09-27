@@ -25,6 +25,9 @@ export const zh = {
   'mount.unbound': '该会话没有绑定设备，但它的目录是设备挂载目录（{cwd}）：'
     + '在这里本机执行只会落在一个空目录里，因此已拒绝。'
     + '请检查该设备是否已被删除；若设备仍在，请在会话里重试连接或新建会话。',
+  'route.noDevice': '该会话绑定在设备 {id} 上，但这台设备现在无法服务（可能已被删除，或它的绑定没有可用的挂载映射）：'
+    + '在本机执行会让这个会话读写宿主机的文件，因此已拒绝。'
+    + '请检查设备配置，或把会话改回「本机」。',
   'test.connected': '已连接 {user}@{host}（{system}） · {ms}ms',
   'test.unknownSystem': '未知系统',
   'test.exitCode': 'ssh 退出码 {code}',
@@ -55,6 +58,10 @@ export const en = {
   'mount.unbound': 'This session is not bound to a device, but its directory is a device mount directory ({cwd}): '
     + 'running locally here would only land in an empty directory, so it was refused. '
     + 'Check whether the device was deleted; if it still exists, retry the connection in the session or start a new session.',
+  'route.noDevice': 'This session is bound to device {id}, which cannot be served right now '
+    + '(it was deleted, or its binding has no mount mapping to translate with): '
+    + 'running here would make the session read and write THIS machine, so it was refused. '
+    + 'Check the device, or bind the session back to this machine.',
   'test.connected': 'Connected {user}@{host} ({system}) · {ms}ms',
   'test.unknownSystem': 'unknown system',
   'test.exitCode': 'ssh exit code {code}',
