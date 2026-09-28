@@ -225,6 +225,10 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
       selected: selected === link.id,
       label: `${link.label ?? t('graph.pipe')}${open > 0 ? ` · ${t('graph.openUnits', { count: open })}` : ''}`,
       animated: open > 0,
+      // A label sits under the nodes, so it needs room around it to read when a
+      // node's edge lands on top of it.
+      labelBgPadding: [6, 3] as [number, number],
+      labelBgBorderRadius: 4,
       style: {
         stroke: selected === link.id
           ? 'var(--dsw-static-deepseek-300, #7d9bff)'
@@ -321,13 +325,24 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
 
 /**
  * The pane itself. The canvas colour is published as React Flow's own variable
- * rather than through `colorMode`: that prop pins the surface to one scheme,
- * and a dialog that follows the app's theme must not open a black rectangle in
- * a light one. The node and edge colours are dsh tokens either way.
+ * rather than through `colorMode`: that prop pins the surface to one scheme and
+ * a dialog that follows the app's theme must not open a black rectangle in a
+ * light one. The node and edge colours are dsh tokens either way.
+ *
+ * The zoom controls need the same treatment for the same reason: their shipped
+ * defaults are a light grey button on white, which is a white block in the
+ * middle of a dark canvas (the `colorMode` prop would have covered it, at the
+ * cost of the canvas following the app instead of the other way round).
  */
 const paneStyle = {
   position: 'absolute', inset: 0,
   '--xy-background-color': 'var(--dsw-alias-bg-layer-1)',
+  '--xy-controls-button-background-color': 'var(--dsw-alias-bg-layer-2)',
+  '--xy-controls-button-background-color-hover': 'var(--dsw-alias-interactive-bg-hover)',
+  '--xy-controls-button-color': 'var(--dsw-alias-label-primary)',
+  '--xy-controls-button-color-hover': 'var(--dsw-alias-label-primary)',
+  '--xy-controls-button-border-color': 'var(--dsw-alias-border-l4)',
+  '--xy-controls-box-shadow': '0 2px 10px rgba(0,0,0,.25)',
 } as CSSProperties
 
 /** The wiring hint, quiet enough to read as a caption. */

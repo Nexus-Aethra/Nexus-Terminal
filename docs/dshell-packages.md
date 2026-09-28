@@ -569,7 +569,7 @@ when it contributes to model-visible state.
   (`@nexus-aethra/dshell-*`). `@deepseek-ai/…` is dsh's own npm org and is not
   publishable by an outside account.
 - Publish order is dependency order — `dshell-std` first, `dshell-bundle` last —
-  because each package's `workspace:^` edges become `^0.1.5` ranges that must
+  because each package's `workspace:^` edges become `^0.1.6` ranges that must
   already resolve.
 - **Publish with `pnpm publish`, never `npm publish`.** Only pnpm rewrites the
   `workspace:` protocol into a real range on the way out; npm ships the specifier

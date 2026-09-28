@@ -27,6 +27,7 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 - [Input assists: Tab, ↑, →](#input-assists-tab--)
 - [**Cross-session collaboration: pipes and the buffer**](#cross-session-collaboration-pipes-and-the-buffer)
 - [SSH device sessions](#ssh-device-sessions)
+- [Token usage](#token-usage)
 - [Settings](#settings)
 - [The status card](#the-status-card)
 - [Gesture cheat sheet](#gesture-cheat-sheet)
@@ -238,11 +239,23 @@ flowchart LR
 
 ### Creating a pipe (only you can)
 
-Click **`管道`** in the left sidebar. The panel has two views:
+Click the **link glyph** at the left of the `终端` section's header (it survives the fold, being the
+panel's only entry). The panel has two views:
 
-- **`列表`** — `+ 建立管道`, pick two sessions (optionally a label such as "build host"), `建立管道`.
+- **`列表`** — `+ 建立管道`, pick two sessions, give it a **name** (such as "build host") and a
+  **purpose** — one line saying what travels over this pipe and why — then `建立管道`.
 - **`图`** — sessions are nodes and pipes are edges. Drag from a node's dot **onto another node** to
   create one; click an edge to see its detail or `解除`.
+
+A pipe joins **terminal sessions** — the ones the sidebar's `终端` section lists. A plain conversation
+is not offered as an endpoint, and the host refuses one: the file pane, the device routing and the
+section all key off the terminal identity, so a session that is not a terminal could not serve a
+request anyway.
+
+The purpose is the part the other side reads: it travels in the peer's standing prompt next to that
+pipe, so a peer's model can tell whether an incoming request belongs there. Either end can write it —
+you from the panel, an agent with `dshell_buffer action="describe"` — and the panel says when the words
+are the other session's rather than yours (`由 … 填写`).
 
 The panel says `只有你能建立管道；agent 没有建连的工具` — connecting is always your move; an AI can only
 use pipes that already exist.
@@ -352,9 +365,10 @@ In the `新会话` dialog, switch **`运行位置`** to **`SSH 设备`**, pick a
 Creating the session proves the connection with a real ssh round trip first; if it fails, no session
 is created.
 
-Devices themselves are registered under **Settings → Plugins → `SSH 设备`**: name, host, port, user,
-remote working directory, and either `密钥` (an OpenSSH private key; leave it empty to use your local
-ssh agent / `~/.ssh/config`) or `密码`.
+Devices themselves are registered on the **Plugins** panel — `插件` in the sidebar →
+ `@nexus-aethra/dshell-bundle` → the `dshell-ssh` row's `配置` — with a name, host, port, user, remote
+ working directory, and either `密钥` (an OpenSSH private key; leave it empty to use your local ssh
+ agent / `~/.ssh/config`) or `密码`.
 
 - Connections use `IdentitiesOnly=yes`, carrying only that device's own key;
 - Passwords go through OpenSSH's askpass hook, never onto a command line;
@@ -386,14 +400,40 @@ exists. (32 MB per file, 20 000 entries or 2 GiB per plan.)
 
 ---
 
+## Token usage
+
+**Settings → `用量`** charts what the models have cost, from an index dshell keeps in its own data
+directory:
+
+![The usage page](docs/images/usage.png)
+
+- **每日热力** — a fixed 26-week calendar of daily totals, filled top-to-bottom and left-to-right, so
+  the newest day is always the bottom-right cell. It reads **all** time on purpose: the range chips
+  move the charts, never the calendar.
+- **合计 / 未缓存输入 / 输出 / 缓存读 / 调用 / 缓存命中率** — the window's headline numbers. The hit
+  rate is the one to watch: cache reads over all input.
+- **每日消耗（按模型）** and **模型占比** — one line per model over the window, and each one's share.
+- **按模型明细** — input, output, cache read, cache write, calls and total per model.
+
+The index is incremental: dsh attaches provider-reported usage to each `assistant/message`, and a scan
+reads only the sessions whose logs have grown since last time. It runs when you open the page, and on
+`重新聚合`. A session whose log dsh cannot decode is reported as skipped — the page shows that the
+totals are partial, and why, instead of quietly counting less.
+
+---
+
 ## Settings
 
-**Settings → Plugins** holds two dshell cards:
+dshell configures itself on dsh's **Plugins** panel, on the row each setting belongs to: open `插件`
+in the sidebar, pick `@nexus-aethra/dshell-bundle`, then use the `配置` control on a row.
 
-| Card | Contents |
+| Row | Contents |
 |---|---|
-| **`终端与输入辅助`** | `终端配色` — `午夜` (default), `柔和`, `神秘`, `森林`, applied instantly; `输入辅助` — the `Tab 补全`, `历史列表`, `智能提示`, `子命令与选项` switches |
-| **`SSH 设备`** | The device list, each row offering `测试` / `编辑` / `删除` |
+| **`dshell-mode`** | `终端配色` — `午夜` (default), `柔和`, `神秘`, `森林`, applied instantly; `输入辅助` — the `Tab 补全`, `历史列表`, `智能提示`, `子命令与选项` switches; `数据目录` — where dshell keeps its own files, moved at the next start |
+| **`dshell-ssh`** | The device list, each row offering `测试` / `编辑` / `删除` |
+
+**`用量`** (the token-usage page above) is a section of its own in Settings, beside `通用设置` and
+`模型` — it is a report rather than a plugin setting.
 
 Settings are stored on the host and **shared by every browser on it** — turn an assist off here and it
 is off in the other browser too.
