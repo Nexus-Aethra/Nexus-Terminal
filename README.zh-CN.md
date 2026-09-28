@@ -55,9 +55,14 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 
 ### 装进 dsh
 
-前置：**dsh**（`0.1.5-rc.2` 或 `0.1.6-alpha.2` 这条线都行）——桌面版，或者命令行版
-（`npm install -g @deepseek-ai/dsh@alpha`）；以及 `PATH` 上的 **Node 24.21.0** 与 **pnpm 9.15.0**
-（`dsh plugin` 是转发给 pnpm 执行的）。
+前置：**dsh** `0.2.0-rc.1`——桌面版，或者命令行版（`npm install -g @deepseek-ai/dsh@next`）；
+以及 `PATH` 上的 **Node 24.21.0** 与 **pnpm 9.15.0**（`dsh plugin` 是转发给 pnpm 执行的）。
+`0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-rc.2` 这几条线也能用；npm 上的 `@latest` 目前是 `0.1.7-rc.2`。
+
+dsh 会拿插件声明的每个 `@deepseek-ai/dsh-*` peer 去校验自己的版本，只要有一个不匹配就**整个
+bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 dsh 版本。硬要跑某一版：
+`dsh plugin --profile <名字> allow-version <包名@版本> --dsh-version <确切版本> --accept-risk`，
+豁免会记在 profile 的 `compatibility.json` 里。
 
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，

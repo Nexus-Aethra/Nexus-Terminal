@@ -405,14 +405,20 @@ packed manifests are installable), so:
 for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
 node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 
-# 2. add the four upstream packages the DESKTOP seed omits but dshell's client
-#    bundle needs. They are already packed by the build; copy them in and restart
-#    the registry so it indexes them.
-cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
+# 2. no upstream package needs copying into the registry any more. Checked
+#    against the 0.2.0-rc.1 desktop runtime
+#    (`resources/app/dsh/node_modules/@deepseek-ai/`, 278 `dsh-*` packages): it
+#    ships every package the dshell client bundle imports at runtime —
+#    `dsh-client-store`, `dsh-client-ui-slots`, `dsh-client-ui-primitives`,
+#    `dsh-terminal`, `dsh-client-ui-input-trigger`, `dsh-client-ui-plugin-manager`.
+#    The one name it does NOT ship, `dsh-client-ui-dockkit`, is imported
+#    type-only (`import type { TabId }`) by dshell-files, so it is erased from
+#    the built client and stays a dev/peer entry only.
 
 # 2b. `@deepseek-ai/dsh-ssh` needs no step of its own since dshell 0.1.7: the
 #     desktop seed neither builds nor ships it (it is absent from the release's
-#     own `desktop-packages.json`), and dshell-ssh imports `SshRpcPeer` and
+#     own `desktop-packages.json`, and still absent from the 0.2.0-rc.1
+#     runtime), and dshell-ssh imports `SshRpcPeer` and
 #     `RemoteOperationError` from it at runtime, so that row now declares it as a
 #     DEPENDENCY and an install brings it. Before 0.1.7 it was a peer only, which
 #     is why enabling the bundle failed with `dshell-ssh: failed to import` — and
@@ -420,38 +426,27 @@ cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-
 #     session controller, the workspace files and the deliverables tabs sat at
 #     "pending (waiting for service: fs)".
 
-# 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
-#    package at 0.1.2 and those four at 0.1.5-rc.2 to "dependencies", and append
-#    "@nexus-aethra/dshell-bundle" to dsh.profile.bundles. Then install with the
-#    app's OWN runtime, from that directory:
-"/opt/DeepSeek Harness/resources/runtime/node/node" \
+# 3. in ~/.dsh/profiles/desktop/package.json: add
+#    "@nexus-aethra/dshell-bundle" at the release you packed to "dependencies"
+#    (it brings the other ten) and append it to dsh.profile.bundles. Then
+#    install with the app's OWN runtime, from that directory — 0.2.0 moved the
+#    bundled node under primary-runtime:
+"/opt/DeepSeek Harness/resources/runtime/primary-runtime/dependencies/node/bin/node" \
   "/opt/DeepSeek Harness/resources/runtime/pnpm/bin/pnpm.mjs" \
   --config.registry=http://127.0.0.1:4873/ --config.enable-global-virtual-store=false \
   install --no-frozen-lockfile
 ```
 
 Restart the app afterwards. The registry is needed only while installing — the
-packages are copied into the profile, not linked to it — and the upstream
-packages stay needed at runtime: they are what the dshell client bundle and the
-dshell host rows resolve against, and the desktop seed ships only the part of
-dsh the stock app itself uses.
-
-> The 0.1.2 bundle names three more upstream packages than the 0.1.1 one did —
-> `dsh-browser-use`, `dsh-computer-use` and
-> `dsh-experimental-computer-use-cua-driver-native`, the browser and desktop
-> rows of design 4.11. A desktop profile therefore needs them too, the same way
-> it needs the five above: add them to the profile's `dependencies` (they are on
-> npm at `0.1.6-alpha.2`, so the registry route works), or the boot reports
-> `2 entries did not activate` and the browser and desktop tools are simply
-> absent. Whether this build's seed already packs them has NOT been checked.
+packages are copied into the profile, not linked to it.
 
 Two consequences worth knowing. Any transaction the app's own plugin window
 performs installs from `registry.npmjs.org` (pinned in its `project-manager`),
-where these packages exist at 0.1.7 — the published release, not this checkout —
-so a plugin installed or removed from the UI may replace the local build with it.
-And the app checks upstream's update feed on every start
-(`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it logs a
-404 and stays quiet unless you ask for an update check from the menu.
+where these packages exist only at their published versions — not this
+checkout — so a plugin installed or removed from the UI may replace the local
+build with the published one. And the app checks upstream's update feed on every
+start (`download.deepseek.com/…/linux-x64/`), which carries no Linux channel: it
+logs a 404 and stays quiet unless you ask for an update check from the menu.
 
 ## Where to go next
 

@@ -2,10 +2,11 @@
  * dshell-ssh browser face: the device page in the Plugins panel and the
  * `dshellSsh` service the session picker reads.
  *
- * The surface is the `dshell-ssh` row's own configuration page: `0.1.7-rc.2`
- * carries plugin configuration on the Plugins panel, which keys an entry by
- * `<bundle package>#<row id>` and draws a configure control on that row, so a
- * reader configures the device registry beside the plugin it belongs to.
+ * The surface is the `dshell-ssh` row's own configuration page: since
+ * `0.1.7-rc.2` dsh carries plugin configuration on the Plugins panel, which
+ * keys an entry by `<bundle package>#<row id>` and draws a configure control
+ * on that row, so a reader configures the device registry beside the plugin it
+ * belongs to.
  */
 
 import { type Context } from '@deepseek-ai/cordis'

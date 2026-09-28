@@ -42,7 +42,7 @@ const DSH_PACKAGE_PREFIX = '@deepseek-ai/'
  *
  * Each is a package the desktop runtime does NOT own, verified against the
  * desktop release's own `desktop-packages.json` (the core set it installs into
- * every profile — 241 entries as of 0.1.7-rc.2: `dsh-terminal`,
+ * every profile — 278 entries as of 0.2.0-rc.1: `dsh-terminal`,
  * `dsh-api-session-controller`, `dsh-api-workspace-files` and
  * `dsh-client-ui-deliverables` are in it, `dsh-ssh` is not). A plugin may only
  * rely on what the runtime ships, and for these it ships nothing, so the
