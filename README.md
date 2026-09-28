@@ -65,7 +65,7 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 # One package: the bundle is the patch layer, it depends on the other ten dshell
 # packages, and dshell-ssh carries the one dsh package a stock profile does not
 # ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.6
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.7
 
 dsh web
 ```
