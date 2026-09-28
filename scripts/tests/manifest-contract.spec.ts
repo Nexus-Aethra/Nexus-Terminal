@@ -37,6 +37,25 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const DSH_ROOT = join(REPO_ROOT, 'dsh')
 const DSH_PACKAGE_PREFIX = '@deepseek-ai/'
 
+/**
+ * First-party packages dshell declares as DEPENDENCIES rather than peers.
+ *
+ * Each is a package the desktop runtime does NOT own, verified against the
+ * desktop release's own `desktop-packages.json` (the core set it installs into
+ * every profile — 241 entries as of 0.1.7-rc.2: `dsh-terminal`,
+ * `dsh-api-session-controller`, `dsh-api-workspace-files` and
+ * `dsh-client-ui-deliverables` are in it, `dsh-ssh` is not). A plugin may only
+ * rely on what the runtime ships, and for these it ships nothing, so the
+ * dependency is what makes an install self-sufficient:
+ *
+ * - `@deepseek-ai/dsh-ssh`: dshell-ssh value-imports `SshRpcPeer` and
+ *   `RemoteOperationError` from `@deepseek-ai/dsh-ssh/protocol`. Leaving it a
+ *   peer meant the desktop profile had no copy, the row failed to import, and —
+ *   because the bundle hands `ctx.fs` to that row — the session controller, the
+ *   workspace files and the deliverables tabs all stayed pending on `fs`.
+ */
+const RUNTIME_OMITTED: ReadonlySet<string> = new Set(['@deepseek-ai/dsh-ssh'])
+
 interface Manifest {
   readonly name?: string
   readonly version?: string
@@ -117,16 +136,38 @@ describe('the dshell manifests', () => {
     expect(problems).toEqual([])
   })
 
-  it('never name a first-party package as a dependency', () => {    // The desktop profile fails on this for the packages its runtime owns. We
-    // cannot see that list from here, so the rule is absolute: if the package
-    // is first-party, it is a peer.
+  it('never name a first-party package as a dependency, bar the runtime-omitted ones', () => {
+    // The desktop profile fails on this for the packages its runtime owns. That
+    // set belongs to upstream and is not visible from here, so the default is
+    // absolute: if the package is first-party, it is a peer.
     const offenders: string[] = []
     for (const pkg of DSHell_PACKAGES) {
       const manifest = manifestOf(pkg)
-      for (const [name] of declared(manifest.dependencies)) offenders.push(`${pkg}: dependencies.${name}`)
+      for (const [name] of declared(manifest.dependencies)) {
+        if (!RUNTIME_OMITTED.has(name)) offenders.push(`${pkg}: dependencies.${name}`)
+      }
       for (const [name] of declared(manifest.optionalDependencies)) offenders.push(`${pkg}: optionalDependencies.${name}`)
     }
     expect(offenders).toEqual([])
+  })
+
+  it('declares a runtime-omitted package everywhere it must be', () => {
+    // An exception is only sound when it is spelled out the same way three
+    // times: the dependency makes an install bring it, the peer keeps it under
+    // the host-compatibility check the desktop runs, and the dev copy is what
+    // this repository builds against.
+    const problems: string[] = []
+    for (const pkg of DSHell_PACKAGES) {
+      const manifest = manifestOf(pkg)
+      for (const [name, range] of declared(manifest.dependencies)) {
+        if (!RUNTIME_OMITTED.has(name)) continue
+        const peers = new Map(declared(manifest.peerDependencies))
+        const dev = new Map(declared(manifest.devDependencies))
+        if (peers.get(name) !== range) problems.push(`${pkg}: ${name} dependency=${range} peer=${peers.get(name) ?? '(absent)'}`)
+        if (dev.get(name) !== range) problems.push(`${pkg}: ${name} dependency=${range} dev=${dev.get(name) ?? '(absent)'}`)
+      }
+    }
+    expect(problems).toEqual([])
   })
 
   it('carry ranges the checkout in front of them satisfies', () => {

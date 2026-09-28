@@ -60,13 +60,10 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 （`dsh plugin` 是转发给 pnpm 执行的）。
 
 ```sh
-# 1) dshell 本体。只装一个包：bundle 就是 patch 层，另外十一个由它依赖带入。
+# 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，
+# dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.6
 
-# 2) dshell-ssh 运行期会 import、但原版 profile 不带的上游包：SSH 执行 provider。
-dsh plugin --profile web add -w @deepseek-ai/dsh-ssh@0.1.7-rc.2
-
-# 3) 启动
 dsh web
 ```
 

@@ -410,14 +410,15 @@ node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 #    the registry so it indexes them.
 cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
 
-# 2b. and one package the seed does NOT even build: `@deepseek-ai/dsh-ssh`, which
-#     dshell-ssh imports at runtime (`SshRpcPeer`, `RemoteOperationError`). The
-#     app's own tree has no copy, so without it the row fails to import — and
-#     because the bundle patch hands `ctx.fs` to dshell-ssh, `fs` never appears
-#     and the session controller, the workspace files and the deliverables tabs
-#     all sit at "pending (waiting for service: fs)". Take it from npmjs into the
-#     local registry (or install it straight from npmjs in step 3):
-(cd /tmp/dshell-packs && npm pack @deepseek-ai/dsh-ssh@0.1.7-rc.2 --registry=https://registry.npmjs.org/)
+# 2b. `@deepseek-ai/dsh-ssh` needs no step of its own since dshell 0.1.7: the
+#     desktop seed neither builds nor ships it (it is absent from the release's
+#     own `desktop-packages.json`), and dshell-ssh imports `SshRpcPeer` and
+#     `RemoteOperationError` from it at runtime, so that row now declares it as a
+#     DEPENDENCY and an install brings it. Before 0.1.7 it was a peer only, which
+#     is why enabling the bundle failed with `dshell-ssh: failed to import` — and
+#     because the patch hands `ctx.fs` to that row, `fs` never appeared and the
+#     session controller, the workspace files and the deliverables tabs sat at
+#     "pending (waiting for service: fs)".
 
 # 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
 #    package at 0.1.2 and those four at 0.1.5-rc.2 to "dependencies", and append

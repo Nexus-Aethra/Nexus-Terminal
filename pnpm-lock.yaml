@@ -452,6 +452,9 @@ importers:
 
   packages/dshell/ssh:
     dependencies:
+      '@deepseek-ai/dsh-ssh':
+        specifier: link:../../../dsh/packages/ssh/ssh
+        version: link:../../../dsh/packages/ssh/ssh
       '@nexus-aethra/dshell-std':
         specifier: workspace:^
         version: link:../std
@@ -516,9 +519,6 @@ importers:
       '@deepseek-ai/dsh-shell':
         specifier: link:../../../dsh/packages/shell/shell
         version: link:../../../dsh/packages/shell/shell
-      '@deepseek-ai/dsh-ssh':
-        specifier: link:../../../dsh/packages/ssh/ssh
-        version: link:../../../dsh/packages/ssh/ssh
       '@deepseek-ai/dsh-subprocess':
         specifier: link:../../../dsh/packages/subprocess/subprocess
         version: link:../../../dsh/packages/subprocess/subprocess

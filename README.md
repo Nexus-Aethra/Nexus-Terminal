@@ -62,15 +62,11 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 (`dsh plugin` forwards to pnpm).
 
 ```sh
-# 1) dshell itself. One package: the bundle is the patch layer, and it depends
-#    on the other eleven.
+# One package: the bundle is the patch layer, it depends on the other ten dshell
+# packages, and dshell-ssh carries the one dsh package a stock profile does not
+# ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.6
 
-# 2) the upstream package dshell-ssh imports at runtime, which a stock profile
-#    does not ship: the SSH execution provider.
-dsh plugin --profile web add -w @deepseek-ai/dsh-ssh@0.1.7-rc.2
-
-# 3) run
 dsh web
 ```
 
