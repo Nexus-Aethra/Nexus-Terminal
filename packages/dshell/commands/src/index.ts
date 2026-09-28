@@ -27,14 +27,6 @@ import { hostCopy } from './host-locales.js'
 
 export const name = '@nexus-aethra/dshell-commands'
 
-// `dshellHostCopy` is what the `/new` command's result lines are localized
-// through, and `sessionController` is what creates the session the command
-// reports on — both are accessors this module reads, so both have to be
-// declared here or the handler throws "cannot get property … without inject".
-export const inject = [
-  'commands', 'tools', 'dshellTerminalBridge', 'dshellHostCopy', 'sessionController',
-] as const
-
 /** Bytes one `dshell_terminal_output` call returns by default. */
 const DEFAULT_OUTPUT_SLICE_BYTES = 2 * 1024
 
@@ -75,7 +67,29 @@ function formatCommand(record: TerminalCommandRecord, includeOutput: boolean): s
   return `${head}\n${output}`
 }
 
+/**
+ * Hand this package's registrations the services they read.
+ *
+ * Nested rather than an entry-level `inject`: a plugin-level list holds the
+ * ENTRY at `pending` until every name exists, so the bundle it belongs to is
+ * reported as failed whenever the host mounts the rows this one waits on after
+ * ours — which is what a live enable in the desktop application's plugin window
+ * does. Every other dshell package injects this way; the registrations
+ * themselves are unchanged, they just run when the services are there.
+ *
+ * `dshellHostCopy` is what the `/new` command's result lines are localized
+ * through, and `sessionController` is what creates the session the command
+ * reports on.
+ */
 export function apply(ctx: Context): void {
+  ctx.inject(
+    ['commands', 'tools', 'dshellTerminalBridge', 'dshellHostCopy', 'sessionController'],
+    (injected) => { register(injected) },
+  )
+}
+
+/** Everything this package contributes, with its services in hand. */
+function register(ctx: Context): void {
   const bridge: DshellTerminalBridge = ctx.dshellTerminalBridge
   // Structural read, as this repo reads dshell services whose accessor
   // declaration lives with the PROVIDER (dshell-terminal-bridge): a consumer's tsc program
@@ -291,4 +305,4 @@ export function apply(ctx: Context): void {
   }))
 }
 
-export default { name, inject, apply }
+export default { name, apply }

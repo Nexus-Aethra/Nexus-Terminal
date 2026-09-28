@@ -1,10 +1,10 @@
 # dshell bundle patch — applied on top of the dsh `web` profile.
 #
-# It is applied by the PROFILE, not by a flag: the bundle is installed into one
+# Normally applied by the PROFILE: the bundle is installed into one
 # (`dsh plugin --profile <name> add -w @nexus-aethra/dshell-bundle@<version>`,
-# see the README) and the loader reads this file from it. rc.2's CLI has no
-# `--patch` option, so a checkout run adds the bundle the same way anything else
-# does — the file is never passed on a command line.
+# see the README) and the loader reads this file from it. A checkout run may
+# also pass it directly — `dsh --patch <this file> web` — with the flag BEFORE
+# the app name, since anything after `web` is forwarded to the app itself.
 #
 # Each dshell-* package below is a Cordis row the bundle brings into the
 # active composition. The patch ADDS rows; it disables exactly two stock ones,
