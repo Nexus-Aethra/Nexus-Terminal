@@ -74,7 +74,13 @@ export const zh = {
   'graph.pipe': '管道',
   'graph.openUnits': '{count} 单',
   'graph.selected': '已选中管道',
-  'graph.resetTitle': '清空记忆的节点位置，全部回到环形排布',
+  'graph.resetTitle': '清空记忆的节点位置，全部回到默认网格排布',
+  'graph.hint': '拖动节点边缘的圆点到另一个节点即可接线',
+  'graph.empty': '没有可显示的会话',
+  'graph.showAll': '显示全部会话',
+  'graph.onlyRelated': '只看相关会话',
+  'graph.showAllTitle': '把 dsh 里的每个会话都画出来，便于接一条全新的管道',
+  'graph.hideUnrelated': '只显示已有管道两侧的会话和当前会话',
 } satisfies Record<string, string>
 
 /** Namespace key union. */
@@ -139,5 +145,11 @@ export const en = {
   'graph.pipe': 'Pipe',
   'graph.openUnits': '{count} open',
   'graph.selected': 'Selected pipe',
-  'graph.resetTitle': 'Forget saved node positions and return to the ring layout',
+  'graph.resetTitle': 'Forget saved node positions and return to the default grid',
+  'graph.hint': 'Drag the dot on a node\'s edge onto another node to wire them',
+  'graph.empty': 'No sessions to show',
+  'graph.showAll': 'Show all sessions',
+  'graph.onlyRelated': 'Only related sessions',
+  'graph.showAllTitle': 'Draw every session in dsh, so a brand new pipe can be wired here',
+  'graph.hideUnrelated': 'Show only the sessions on existing pipes, plus this one',
 } satisfies Record<DshellBufferKey, string>

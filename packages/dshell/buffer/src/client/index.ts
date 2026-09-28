@@ -34,7 +34,7 @@ export type { BufferSnapshot, SessionSeat } from './service.js'
 export type { PipePanelProps } from './panel.js'
 
 /** A permanently empty list, for the frames before the sessions service arrives. */
-const EMPTY_SESSIONS: ReturnType<SessionSeat['getSnapshot']> = { ids: [], byId: {}, current: undefined }
+const EMPTY_SESSIONS: ReturnType<SessionSeat['getSnapshot']> = { ids: [], byId: {}, current: undefined, archived: [] }
 
 export function apply(ctx: Context): void {
   const t: TranslateNS<'dshellBuffer'> = ctx.locale.bind(NS)
@@ -55,13 +55,39 @@ export function apply(ctx: Context): void {
     sessions = sessionCtx.get('sessions') as unknown as ISessions
   })
   /**
-   * The slice built for the list snapshot it was built from.
+   * The workspace registry's client face, read structurally: it is where dsh
+   * keeps its own archive set, and a composition without it archives nothing.
+   */
+  const workspaceRegistry = (): {
+    list: {
+      getSnapshot(): { readonly archivedSessionIds: readonly string[] }
+      subscribe(listener: () => void): () => void
+    }
+  } | undefined => ctx.get('workspaces') as unknown as
+    { list: { getSnapshot(): { readonly archivedSessionIds: readonly string[] }, subscribe(l: () => void): () => void } } | undefined
+  /**
+   * dshell's terminal-mode registry, also read structurally.
+   *
+   * It carries dshell's OWN archive bit — the 归档 the terminal section toggles,
+   * which is a different thing from dsh's archive set above and the one most
+   * terminal sessions are put away with. A pipe panel that honoured only one of
+   * the two would still be cluttered by the other.
+   */
+  const terminalModes = (): {
+    getSnapshot(): { readonly archived: readonly string[] }
+    subscribe(listener: () => void): () => void
+  } | undefined => ctx.get('dshellTerminalMode') as unknown as
+    { getSnapshot(): { readonly archived: readonly string[] }, subscribe(l: () => void): () => void } | undefined
+
+  /**
+   * The slice built for the sources it was built from.
    *
    * A React store compares snapshots by identity, so the slice is cached against
-   * the source snapshot rather than rebuilt per read: a fresh object every call
-   * is an infinite render loop, not a slower one.
+   * the source snapshots rather than rebuilt per read: a fresh object every call
+   * is an infinite render loop, not a slower one. Three stores feed it, so all
+   * three references are the cache key.
    */
-  let slicedFrom: unknown
+  let slicedFrom: readonly unknown[] | undefined
   let sliced: ReturnType<SessionSeat['getSnapshot']> = EMPTY_SESSIONS
   const sessionsSeat: SessionSeat = {
     // Built rather than forwarded: the seat is dshell's own slice of the list,
@@ -70,7 +96,12 @@ export function apply(ctx: Context): void {
     getSnapshot: () => {
       const list = sessions?.list.getSnapshot()
       if (list === undefined) return EMPTY_SESSIONS
-      if (list === slicedFrom) return sliced
+      // Read per call rather than captured: either registry may register after
+      // this row, and a composition without one simply archives nothing.
+      const archived = workspaceRegistry()?.list.getSnapshot().archivedSessionIds
+      const ownArchived = terminalModes()?.getSnapshot().archived
+      if (slicedFrom !== undefined
+        && slicedFrom[0] === list && slicedFrom[1] === archived && slicedFrom[2] === ownArchived) return sliced
       const held = mainSessionId(Object.values(list.byId))
       sliced = {
         ids: list.ids.map(String),
@@ -80,11 +111,19 @@ export function apply(ctx: Context): void {
           running: row.running,
         }])),
         current: held === undefined ? undefined : String(held),
+        archived: [...new Set([...(archived ?? []), ...(ownArchived ?? [])].map(String))],
       }
-      slicedFrom = list
+      slicedFrom = [list, archived, ownArchived]
       return sliced
     },
-    subscribe: (listener) => sessions?.list.subscribe(listener) ?? (() => {}),
+    // Every store, because the panel draws from all of them: a session archived
+    // (or unarchived) elsewhere has to reach this panel as it happens.
+    subscribe: (listener) => {
+      const offList = sessions?.list.subscribe(listener)
+      const offArchive = workspaceRegistry()?.list.subscribe(listener)
+      const offModes = terminalModes()?.subscribe(listener)
+      return () => { offList?.(); offArchive?.(); offModes?.() }
+    },
   }
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register(

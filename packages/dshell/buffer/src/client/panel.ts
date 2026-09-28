@@ -7,7 +7,10 @@
  *   creates a new pipe.
  * - 图 — sessions as draggable nodes and pipes as edges, drawn with React
  *   Flow (`pipe-graph`); dragging from one node to another creates a pipe,
- *   and a selected edge offers detail and release.
+ *   and a selected edge offers detail and release. The nodes are the
+ *   sessions the reader came for — those already on a pipe, plus this one —
+ *   and a header toggle swaps that for every session in dsh when a brand new
+ *   pair has to be wired here.
  *
  * The panel keeps its old seat (`shell.overlay`) and its `open` flag in the
  * service; only the shape changed. Only the user can create a pipe, and this
@@ -164,6 +167,11 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
   const [view, setView] = useState<View>('list')
   const [detailLink, setDetailLink] = useState<string | undefined>(undefined)
   const [creating, setCreating] = useState(false)
+  // The graph opens on the sessions a reader came to see — the ones already
+  // wired to something, plus this session — because every session in dsh is
+  // dozens of nodes and none of them is the question. Wiring a NEW pair needs
+  // the whole list, so the toggle is one click away.
+  const [showAll, setShowAll] = useState(false)
 
   // Every hook sits above the early return: this seat renders null while
   // closed and content once opened, and a hook that first runs on the open
@@ -174,25 +182,32 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
     // it is filtered here — its pipes are already gone, and a node without
     // edges would read as a peer that is merely idle.
     const gone = new Set(snapshot.departed)
+    const piped = new Set(snapshot.links.flatMap(link => [link.a, link.b]))
     if (sessionState === undefined) {
       // Without a sessions seat the nodes are the ids the links name.
       const ids = [...new Set(snapshot.links.flatMap(link => [link.a, link.b]))]
       return ids.filter(id => !gone.has(id))
         .map(id => ({ id, label: id.slice(0, 8), sub: undefined, active: false, current: false }))
     }
+    // Archived sessions are put away rather than wired, so they are not drawn
+    // — except the ones that already hold a pipe, which keep their node so the
+    // pipe does not lose an end.
+    const archived = new Set(sessionState.archived ?? [])
     const current = sessionState.current === undefined ? undefined : String(sessionState.current)
     const ids = [...new Set([...sessionState.ids.map(String), ...snapshot.links.flatMap(link => [link.a, link.b])])]
-    return ids.filter(id => !gone.has(id)).map(id => {
-      const row = sessionState.byId[id]
-      return {
-        id,
-        label: row?.displayTitle ?? id.slice(0, 8),
-        sub: row?.cwd,
-        active: row?.running === true,
-        current: id === current,
-      }
-    })
-  }, [sessionState, snapshot.links, snapshot.departed])
+    return ids
+      .filter(id => !gone.has(id) && (showAll || piped.has(id) || id === current) && (!archived.has(id) || piped.has(id)))
+      .map(id => {
+        const row = sessionState.byId[id]
+        return {
+          id,
+          label: row?.displayTitle ?? id.slice(0, 8),
+          sub: row?.cwd,
+          active: row?.running === true,
+          current: id === current,
+        }
+      })
+  }, [sessionState, snapshot.links, snapshot.departed, showAll])
 
   if (!snapshot.open) return null
 
@@ -218,6 +233,14 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
           createElement('button', { style: tabStyle(view === 'list'), onClick: () => { setView('list') } }, t('tab.list')),
           createElement('button', { style: tabStyle(view === 'graph'), onClick: () => { setView('graph') } }, t('tab.graph')),
         ),
+        view === 'graph'
+          ? createElement('button', {
+            style: { ...smallButtonStyle, opacity: showAll ? 1 : 0.82 },
+            'aria-pressed': showAll,
+            title: showAll ? t('graph.hideUnrelated') : t('graph.showAllTitle'),
+            onClick: () => { setShowAll(!showAll) },
+          }, showAll ? t('graph.onlyRelated') : t('graph.showAll'))
+          : null,
         createElement('button', { style: smallButtonStyle, title: t('panel.close'), onClick: close }, t('panel.close')),
       ),
       view === 'graph'
@@ -279,24 +302,27 @@ function ListPane(props: ListSideProps & {
   const seat = sessions
   // A deleted session is still in dsh's list until the next start, but nothing
   // may be piped to it any more, so it is not offered as an endpoint either.
+  // Neither is an archived one: it is put away, and a pipe to it would be a
+  // pipe to a session the reader has stopped working with.
   const gone = new Set(snapshot.departed)
+  const archived = new Set(sessionState?.archived ?? [])
   const sessionIds = sessionState === undefined
     ? []
-    : sessionState.ids.map(String).filter(id => !gone.has(id))
+    : sessionState.ids.map(String).filter(id => !gone.has(id) && !archived.has(id))
 
   // Seed the two pickers once the list is known: the current session on the
   // left, the first other session on the right. Never overwrites a choice.
   useEffect(() => {
     if (sessionState === undefined) return
     const current = sessionState.current === undefined ? undefined : String(sessionState.current)
-    if (left === '' && current !== undefined && !snapshot.departed.includes(current)) {
+    if (left === '' && current !== undefined && sessionIds.includes(current)) {
       setLeft(current)
     }
     if (right === '') {
       const other = sessionIds.find(id => id !== current)
       if (other !== undefined) setRight(other)
     }
-  }, [sessionState, left, right, snapshot.departed])
+  }, [sessionState, sessionIds, left, right])
 
   // A pick is re-checked against the current list rather than trusted from the
   // state that seeded it: a session can be deleted while this form is open, and

@@ -67,6 +67,12 @@ export interface SessionSeat {
       readonly running?: boolean | undefined
     }>
     readonly current: string | undefined
+    /**
+     * Sessions dsh has archived. They are put away rather than wired, so the
+     * panel neither draws them nor offers them as an endpoint; a session that
+     * already has a pipe stays in the graph so the pipe keeps both its ends.
+     */
+    readonly archived?: readonly string[] | undefined
   }
   subscribe: (listener: () => void) => () => void
 }

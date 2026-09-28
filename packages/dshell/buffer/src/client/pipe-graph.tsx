@@ -12,7 +12,7 @@
  */
 
 import {
-  Background, Handle, Position, ReactFlow, ReactFlowProvider,
+  Background, Controls, Handle, Position, ReactFlow, ReactFlowProvider, useReactFlow,
   type Edge, type Node, type NodeChange, type NodeProps,
 } from '@xyflow/react'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
@@ -98,7 +98,7 @@ function SessionNode(props: NodeProps): ReactElement {
 const nodeTypes = { session: SessionNode }
 
 /** localStorage key for the user's node arrangement. */
-const POSITIONS_KEY = 'dshell-pipe-graph-positions'
+const POSITIONS_KEY = 'dshell-pipe-graph-positions-v2'
 
 type NodePositions = Record<string, { x: number; y: number }>
 
@@ -107,7 +107,9 @@ type NodePositions = Record<string, { x: number; y: number }>
  *
  * localStorage is the right home rather than the host state document: this is
  * one browser's view preference, not shared feature state, and the graph must
- * still render when the store is unavailable.
+ * still render when the store is unavailable. The key carries its version
+ * because the default arrangement changed from a ring to a grid: a remembered
+ * ring coordinate would otherwise scatter the first grid-laid graph.
  */
 function loadPositions(): NodePositions {
   try {
@@ -138,6 +140,34 @@ function savePositions(positions: NodePositions): void {
   } catch { /* a store that refuses writes just means no memory */ }
 }
 
+/** One cell of the default arrangement: wide enough for a title, tall enough for two lines. */
+const CELL_WIDTH = 210
+const CELL_HEIGHT = 112
+
+/**
+ * Where an undragged node sits: a centered grid, the way a session list reads.
+ *
+ * A ring whose radius grows with the session count was the first attempt and
+ * the reason this pane could open as a plain void — a few dozen sessions put
+ * every node outside the pane, and the fit was clamped before it could reach
+ * them. A grid stays inside the pane at any count, and reads as rows rather
+ * than as an arbitrary circle.
+ *
+ * @param index - the node's position in the snapshot's order.
+ * @param count - how many nodes there are.
+ * @returns centered coordinates, in React Flow's own units.
+ */
+function gridPosition(index: number, count: number): { x: number; y: number } {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(count)))
+  const rows = Math.ceil(count / columns)
+  const column = index % columns
+  const row = Math.floor(index / columns)
+  return {
+    x: Math.round((column - (columns - 1) / 2) * CELL_WIDTH),
+    y: Math.round((row - (rows - 1) / 2) * CELL_HEIGHT),
+  }
+}
+
 /** Count a link's unsettled tickets, for the animated-edge signal. */
 function openCount(tickets: readonly BufferTicket[], linkId: string): number {
   return tickets.filter(ticket => ticket.linkId === linkId
@@ -147,6 +177,7 @@ function openCount(tickets: readonly BufferTicket[], linkId: string): number {
 /** The graph pane. Wrap with {@link PipeGraphProvider} at the call site. */
 function PipeGraphInner(props: PipeGraphProps): ReactElement {
   const t = props.t
+  const flow = useReactFlow()
   const [positions, setPositions] = useState<NodePositions>(loadPositions)
   // Mirror for the drag-stop handler, which needs the live map to persist the
   // merged arrangement without reading state inside a state updater.
@@ -164,13 +195,18 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
     document.head.append(style)
   }, [])
 
-  // Ring layout for sessions the user has not dragged yet: even angles, a
-  // radius that grows with the count so labels never overlap.
+  // A new node set gets a fresh fit: the pane opens on the handful of related
+  // sessions, and the same pane can be asked for every session in dsh — the
+  // fit React Flow does on mount would leave that second set outside the view.
+  // The reset button raises the same signal after it drops the arrangement.
+  const [fitToken, setFitToken] = useState(0)
+  const nodeKey = props.sessions.map(session => session.id).join('|')
+  useEffect(() => { void flow.fitView({ padding: 0.28, duration: 200 }) }, [nodeKey, fitToken, flow])
+
+  // Default arrangement for sessions the user has not dragged yet: a centered
+  // grid, so every node opens inside the pane (see gridPosition).
   const nodes = useMemo<Node[]>(() => props.sessions.map((session, index) => {
-    const count = props.sessions.length
-    const radius = Math.max(190, count * 46)
-    const angle = -Math.PI / 2 + (2 * Math.PI * index) / Math.max(1, count)
-    const fallback = { x: Math.round(radius * Math.cos(angle)), y: Math.round(radius * Math.sin(angle) * 0.78) }
+    const fallback = gridPosition(index, props.sessions.length)
     return {
       id: session.id,
       type: 'session',
@@ -231,16 +267,15 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
   }
 
   return (
-    <div style={{ position: 'absolute', inset: 0 }}>
+    <div style={paneStyle}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        colorMode='dark'
         fitView
-        fitViewOptions={{ padding: 0.35 }}
-        minZoom={0.4}
-        maxZoom={1.6}
+        fitViewOptions={{ padding: 0.28 }}
+        minZoom={0.2}
+        maxZoom={1.8}
         nodesConnectable
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
@@ -254,7 +289,10 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
         proOptions={{ hideAttribution: true }}
       >
         <Background color='var(--dsw-alias-border-l3)' gap={22} />
+        <Controls showInteractive={false} />
       </ReactFlow>
+      <div style={hintStyle}>{t('graph.hint')}</div>
+      {props.sessions.length === 0 ? <div style={emptyStyle}>{t('graph.empty')}</div> : null}
       {selected === undefined ? null : (
         <div style={chipStyle}>
           <span style={chipDimStyle}>{t('graph.selected')}</span>
@@ -273,11 +311,30 @@ function PipeGraphInner(props: PipeGraphProps): ReactElement {
           onClick={() => {
             try { localStorage.removeItem(POSITIONS_KEY) } catch { /* same as empty */ }
             setPositions({})
+            setFitToken(token => token + 1)
           }}
         >{t('action.resetLayout')}</button>
       </div>
     </div>
   )
+}
+
+/**
+ * The pane itself. The canvas colour is published as React Flow's own variable
+ * rather than through `colorMode`: that prop pins the surface to one scheme,
+ * and a dialog that follows the app's theme must not open a black rectangle in
+ * a light one. The node and edge colours are dsh tokens either way.
+ */
+const paneStyle = {
+  position: 'absolute', inset: 0,
+  '--xy-background-color': 'var(--dsw-alias-bg-layer-1)',
+} as CSSProperties
+
+/** The wiring hint, quiet enough to read as a caption. */
+const hintStyle: CSSProperties = {
+  position: 'absolute', top: 10, left: 12, zIndex: 5,
+  fontSize: 11, opacity: 0.55, pointerEvents: 'none',
+  color: 'var(--dsw-alias-label-secondary)',
 }
 
 const chipStyle: CSSProperties = {
@@ -302,6 +359,12 @@ const resetStyle: CSSProperties = {
   background: 'var(--dsw-alias-bg-layer-2)',
   padding: '3px 6px',
   boxShadow: '0 4px 14px rgba(0,0,0,.3)',
+}
+/** The note a graph with no nodes shows, where a session list would be empty. */
+const emptyStyle: CSSProperties = {
+  position: 'absolute', inset: 0, zIndex: 4,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  fontSize: 12, opacity: 0.6, pointerEvents: 'none',
 }
 
 /** The graph pane with the provider React Flow needs for measured layout. */

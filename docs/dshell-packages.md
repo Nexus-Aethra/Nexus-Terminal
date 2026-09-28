@@ -367,10 +367,20 @@ when it contributes to model-visible state.
     the grace never saw, a boot reconciliation against dsh's cold session
     catalog (`sessionQuery.listSessions`, the same listing the sidebar is
     built from) settles, so state older than this path heals too.
+    Archived sessions are filtered the same way, from both dsh's archive
+    set and dshell's own archive bit — an archived session is put away
+    rather than wired, and only one that already holds a pipe keeps its
+    node, so a live pipe never loses an end. The graph itself opens on
+    the related sessions (piped, plus this one) with a header toggle for
+    the full list, follows the app theme, lays out on a grid and carries
+    React Flow's zoom controls; wires are drawn by dragging a node's
+    handle onto another node, or created from the list view's form.
 - dsh services depended on: `ctx.tools`, `ctx.systemPrompt`, `ctx.fs`,
   `ctx.agents`, `ctx.sessionController`, `ctx.sandboxPolicy` (optional),
   `ctx.shell` (cross-world byte transfer), `ctx.connection.fetch`; the
-  browser face uses `ctx.slots` and `ctx.sessions`.
+  browser face uses `ctx.slots`, `ctx.sessions`, and reads
+  `ctx.workspaces` and dshell-mode's `ctx.dshellTerminalMode` structurally
+  for the two archive sets it filters sessions by.
 - Reads `dshellSshRouting` structurally when present, to probe a
   device-bound target before admitting a delegation; a composition
   without dshell-ssh simply has no device to check.
