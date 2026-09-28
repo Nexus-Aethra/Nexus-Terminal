@@ -25,6 +25,8 @@ export interface PipeLine {
   readonly peer: string
   /** Where the peer runs: this machine, or a named device and its directory. */
   readonly where: string
+  /** What the pipe is for, as either end wrote it; absent means nobody said. */
+  readonly purpose: string | undefined
 }
 
 /** The standing policy; independent of whether a pipe exists right now. */
@@ -43,7 +45,10 @@ const POLICY =
   + 'chunks with sha256 verification automatically. The HOLDER of a grant is the side that acts — handing a '
   + 'file over means granting read and telling the peer to download it, while receiving one means the peer '
   + 'grants write and you upload. action="grants" lists the paths you hold and the ones you opened; paths '
-  + 'outside the mapped areas are refused.'
+  + 'outside the mapped areas are refused. A pipe may carry a name and a short purpose written by either '
+  + 'end — that is what tells you whether a request belongs there. Read it before delegating, and when you '
+  + 'learn what a pipe is for that nobody has written down, record it with action="describe" (it is the '
+  + 'peer\'s model that will read it next).'
 
 /** The trigger paragraph, which depends on whether there is anywhere to delegate TO. */
 function trigger(pipes: readonly PipeLine[]): string {
@@ -61,7 +66,8 @@ function trigger(pipes: readonly PipeLine[]): string {
 function state(pipes: readonly PipeLine[]): string {
   if (pipes.length === 0) return 'This session has NO cross-session pipe right now.'
   return 'Cross-session pipes live right now for this session (detail: dshell_buffer action="links"):\n'
-    + pipes.map(pipe => `- ${pipe.linkId} ↔ ${pipe.peer} · ${pipe.where}`).join('\n')
+    + pipes.map(pipe => `- ${pipe.linkId} ↔ ${pipe.peer} · ${pipe.where}`
+      + (pipe.purpose === undefined ? '' : ` · purpose: ${pipe.purpose}`)).join('\n')
 }
 
 /**

@@ -415,7 +415,24 @@ export interface BufferLink {
   /** The two connected sessions, ordered as the user created them. */
   readonly a: string
   readonly b: string
+  /** The pipe's name — what this pair calls the relationship. */
   readonly label?: string | undefined
+  /**
+   * What the pipe is for, in prose.
+   *
+   * The name says which pipe this is; this says what it is FOR, and it is what
+   * a peer's model reads before deciding whether a request belongs here. Either
+   * end may write it (the user in the pipe panel, an agent through
+   * `dshell_buffer action="describe"`).
+   */
+  readonly description?: string | undefined
+  /**
+   * The session that last wrote the name or the description; absent means the
+   * user wrote it from the panel. Recorded so a reader can tell a peer's own
+   * note from their own — the panel says so, and a name refined by an agent
+   * should not read as the user's words.
+   */
+  readonly annotatedBy?: string | undefined
   readonly createdAt: number
 }
 
@@ -549,7 +566,20 @@ export interface BufferListing {
 /** One browser face request. `state` also travels as the GET shape. */
 export type BufferRequest =
   | { readonly action: 'state' }
-  | { readonly action: 'link'; readonly a: string; readonly b: string; readonly label?: string }
+  | {
+      readonly action: 'link'
+      readonly a: string
+      readonly b: string
+      readonly label?: string
+      readonly description?: string
+    }
+  | {
+      /** Name a pipe or state what it is for; empty strings clear the field. */
+      readonly action: 'annotate'
+      readonly linkId: string
+      readonly label?: string
+      readonly description?: string
+    }
   | { readonly action: 'unlink'; readonly linkId: string }
   | { readonly action: 'revoke'; readonly grantId: string }
   | { readonly action: 'cancel'; readonly ticketId: string }

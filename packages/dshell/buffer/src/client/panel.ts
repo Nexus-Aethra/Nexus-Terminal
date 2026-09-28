@@ -25,7 +25,7 @@ import {
   FileTypeIcon, IconChevronLeftOutlineRegular, IconFolderCloseMedium, IconRefreshOutlineMedium, classifyFileType,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { BufferGrant, BufferTicket, BufferUserEntry } from '../protocol.js'
+import type { BufferGrant, BufferLink, BufferTicket, BufferUserEntry } from '../protocol.js'
 import type { DshellBufferKey } from './locales.js'
 import type { BufferClientService, SessionSeat } from './service.js'
 import { PipeGraph, type GraphSession } from './pipe-graph.js'
@@ -299,6 +299,7 @@ function ListPane(props: ListSideProps & {
   const [left, setLeft] = useState('')
   const [right, setRight] = useState('')
   const [label, setLabel] = useState('')
+  const [description, setDescription] = useState('')
   const seat = sessions
   // A deleted session is still in dsh's list until the next start, but nothing
   // may be piped to it any more, so it is not offered as an endpoint either.
@@ -332,8 +333,9 @@ function ListPane(props: ListSideProps & {
 
   const create = (): void => {
     if (!picksValid) return
-    void props.buffer.link(left, right, label).then(() => {
+    void props.buffer.link(left, right, label, description).then(() => {
       setLabel('')
+      setDescription('')
       props.setCreating(false)
     }).catch(() => {})
   }
@@ -359,6 +361,12 @@ function ListPane(props: ListSideProps & {
         value: label,
         onChange: (event: { target: { value: string } }) => { setLabel(event.target.value) },
       }),
+      createElement('input', {
+        style: fieldStyle,
+        placeholder: t('form.descriptionPlaceholder'),
+        value: description,
+        onChange: (event: { target: { value: string } }) => { setDescription(event.target.value) },
+      }),
       createElement('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: 8 } },
         createElement('div', { style: dimStyle }, t('form.authorityNote')),
         createElement('button', {
@@ -381,7 +389,12 @@ function ListPane(props: ListSideProps & {
             onClick: () => { props.onOpenDetail(link.id) },
           },
             createElement('span', { style: { ...growStyle, fontWeight: 500 } },
-              `${labelFor(t, seat, link.a)} ↔ ${labelFor(t, seat, link.b)}${link.label === undefined ? '' : ` · ${link.label}`}`),
+              `${labelFor(t, seat, link.a)} ↔ ${labelFor(t, seat, link.b)}`
+              + (link.label === undefined ? '' : ` · ${link.label}`)),
+            link.description === undefined ? null : createElement('span', {
+              style: { ...dimStyle, flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+              title: link.description,
+            }, link.description),
             open > 0 ? createElement('span', { style: dimStyle }, t('links.open', { count: open })) : null,
             createElement('button', {
               style: smallButtonStyle,
@@ -426,6 +439,7 @@ function DetailPane(props: ListSideProps & {
         onClick: () => { void props.buffer.unlink(link.id).catch(() => {}) },
       }, t('action.releasePipe')),
     ),
+    createElement(PipeNote, { link, sessions, buffer: props.buffer, t }),
     createElement(BufferBrowser, { buffer: props.buffer, linkId: link.id, sessions, t }),
     createElement('div', { style: sectionTitleStyle }, t('detail.activeRequests', { count: open.length })),
     open.length === 0
@@ -445,6 +459,58 @@ function DetailPane(props: ListSideProps & {
 function openCountOf(tickets: readonly BufferTicket[], linkId: string): number {
   return tickets.filter(ticket => ticket.linkId === linkId
     && (ticket.state === 'queued' || ticket.state === 'running')).length
+}
+
+/**
+ * The pipe's name and purpose, editable in place.
+ *
+ * Both ends write this text — the peer's agent through `action="describe"` —
+ * so the editor is seeded from the link but never clobbers a draft being typed:
+ * a local draft wins while it exists and is dropped after a save, which lets
+ * the panel's poll refresh the text whenever nobody is editing. When an agent
+ * wrote it, it says so: a peer's words must not read as the reader's own.
+ */
+function PipeNote(props: {
+  readonly link: BufferLink
+  readonly sessions?: SessionSeat | undefined
+  readonly buffer: BufferClientService
+  readonly t: TranslateNS<'dshellBuffer'>
+}): ReactElement {
+  const { link, t } = props
+  const [draft, setDraft] = useState<{ label: string; description: string } | undefined>(undefined)
+  const shown = draft ?? { label: link.label ?? '', description: link.description ?? '' }
+  const save = (): void => {
+    void props.buffer.annotate(link.id, shown.label, shown.description)
+      .then(() => { setDraft(undefined) })
+      .catch(() => {})
+  }
+  return createElement('div', { style: { ...cardStyle, marginBottom: 12 } },
+    createElement('div', { style: rowStyle },
+      createElement('span', { style: { ...dimStyle, flex: '0 0 auto' } }, t('detail.nameLabel')),
+      createElement('input', {
+        style: { ...fieldStyle, flex: '1 1 auto' },
+        placeholder: t('detail.namePlaceholder'),
+        value: shown.label,
+        'data-dshell-pipe-note': 'label',
+        onChange: (event: { target: { value: string } }) => { setDraft({ ...shown, label: event.target.value }) },
+      }),
+      createElement('button', {
+        style: primaryStyle,
+        'data-dshell-pipe-note': 'save',
+        onClick: save,
+      }, t('detail.noteSave')),
+    ),
+    createElement('input', {
+      style: fieldStyle,
+      placeholder: t('detail.purposePlaceholder'),
+      value: shown.description,
+      'data-dshell-pipe-note': 'description',
+      onChange: (event: { target: { value: string } }) => { setDraft({ ...shown, description: event.target.value }) },
+      onKeyDown: (event: { key: string }) => { if (event.key === 'Enter') save() },
+    }),
+    link.annotatedBy === undefined ? null : createElement('span', { style: dimStyle, 'data-dshell-pipe-note': 'by' },
+      t('detail.noteBy', { who: shortLabel(props.sessions, link.annotatedBy) })),
+  )
 }
 
 /** One `<select>` of session ids. */

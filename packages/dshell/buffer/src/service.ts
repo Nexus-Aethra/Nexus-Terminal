@@ -282,7 +282,7 @@ export class BufferService {
         ? '运行在本机'
         : `运行在设备「${device.name ?? device.id}」`
           + (target?.remoteRoot === undefined ? '' : `，工作目录 ${target.remoteRoot}`)
-      return { linkId: link.id, peer: this.labelOf(peer), where }
+      return { linkId: link.id, peer: this.labelOf(peer), where, purpose: link.description }
     })
   }
 
@@ -375,7 +375,7 @@ export class BufferService {
   // ------------------------------------------------------ user-facing changes
 
   /** Connect two sessions. Called by the pipe UI; no tool exposes this. */
-  async createLink(a: string, b: string, label?: string): Promise<BufferLink> {
+  async createLink(a: string, b: string, label?: string, description?: string): Promise<BufferLink> {
     if (a === b) throw new Error(this.t('error.linkSelf'))
     const existing = this.links.find(link =>
       (link.a === a && link.b === b) || (link.a === b && link.b === a))
@@ -383,12 +383,57 @@ export class BufferService {
     const link: BufferLink = {
       id: newId('link'),
       a, b,
-      ...label === undefined || label.trim().length === 0 ? {} : { label: label.trim() },
+      ...text(label) === undefined ? {} : { label: text(label) as string },
+      ...text(description) === undefined ? {} : { description: text(description) as string },
       createdAt: Date.now(),
     }
     this.links.push(link)
     await this.save()
     return link
+  }
+
+  /**
+   * Name a pipe, say what it is for, or clear either.
+   *
+   * Both ends may write: this is the pair's shared note about their own
+   * relationship, and the point is that the peer's model reads it before
+   * deciding whether a request belongs there. `by` is the session doing the
+   * writing — a tool call passes its calling session, and the panel passes
+   * nothing, which is what makes "the user wrote this" distinguishable from
+   * "an agent wrote this" in the panel.
+   *
+   * A field given as an empty (or whitespace-only) string is CLEARED, not
+   * stored blank, because every reader treats absent and empty alike and a
+   * stored blank would only make the document noisier.
+   *
+   * @param linkId - the pipe to annotate.
+   * @param note - the fields to write; an omitted field is left alone.
+   * @param by - the writing session when an agent writes; absent for the user.
+   * @returns the updated link.
+   */
+  async annotateLink(
+    linkId: string,
+    note: { readonly label?: string | undefined; readonly description?: string | undefined },
+    by?: string,
+  ): Promise<BufferLink> {
+    const link = this.links.find(candidate => candidate.id === linkId)
+    if (link === undefined) throw new Error(this.t('error.unknownLink', { id: linkId }))
+    if (by !== undefined && link.a !== by && link.b !== by) {
+      throw new Error(this.t('error.notAnEndpoint', { id: linkId }))
+    }
+    const updated: BufferLink = {
+      ...link,
+      ...note.label === undefined ? {} : text(note.label) === undefined
+        ? { label: undefined }
+        : { label: text(note.label) as string },
+      ...note.description === undefined ? {} : text(note.description) === undefined
+        ? { description: undefined }
+        : { description: text(note.description) as string },
+      ...by === undefined ? { annotatedBy: undefined } : { annotatedBy: by },
+    }
+    this.links = this.links.map(candidate => candidate.id === linkId ? updated : candidate)
+    await this.save()
+    return updated
   }
 
   /** Remove a link. Outstanding tickets keep running; no new delegation may use it. */
@@ -1594,6 +1639,17 @@ export class BufferService {
 function newId(prefix: string): string {
   const random = globalThis.crypto.randomUUID().replace(/-/gu, '').slice(0, 10)
   return `${prefix}_${random}`
+}
+
+/**
+ * One optional text field, normalized: `undefined` for absent or blank.
+ *
+ * Absent and blank are the same fact for every reader of a pipe's name or
+ * purpose, so they are the same value here rather than two states to test for.
+ */
+function text(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
 }
 
 /** First 8 characters of a session id, for message text. */

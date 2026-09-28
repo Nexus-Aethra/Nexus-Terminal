@@ -18,7 +18,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView } from '@deepseek-ai/dsh-tools'
 import { sessionLabel } from './notice.js'
-import type { BufferGrant, BufferTicket } from './protocol.js'
+import type { BufferGrant, BufferLink, BufferTicket } from './protocol.js'
 import type { DelegateInput, GrantRequest, BufferService } from './service.js'
 
 /** Hard cap on text an agent may pull out of one granted file in one call. */
@@ -40,7 +40,12 @@ const DESCRIPTION =
   + 'action="links" tells you whether a peer is connected and where it runs, and a task you would otherwise '
   + 'be unable to complete here is handed over with action="delegate" instead of improvised with ssh/scp. '
   + 'Use it as well to serve requests other sessions handed to you. Actions:\n'
-  + '- links: the pipes this session is an end of (how you learn the peer session ids and link ids).\n'
+  + '- links: the pipes this session is an end of (how you learn the peer session ids and link ids, and '
+  + 'what each pipe is for).\n'
+  + '- describe: name a pipe and/or state what it is for. The peer\'s model reads that text before '
+  + 'deciding whether a request belongs there, so write it for the peer: what travels over this pipe and '
+  + 'why, in one short line. Either end may write it; an empty string clears a field. Use it when a pipe '
+  + 'has no purpose yet and you have learned what it is for.\n'
   + '- delegate: send a request to the session on the other end of a pipe. Supply to or link_id, a '
   + 'subject, optional detail, an optional deadline_ms, and optionally grants — files or directories '
   + 'of THIS session\'s world you open to the other side, each with read and/or write rights. Every '
@@ -144,10 +149,39 @@ function renderLinks(service: BufferService, viewer: string): string {
     // The pipe's own label is NOT the peer's name (labelOf falls back to it), so
     // state it separately instead of printing the same words twice.
     lines.push(`- link_id=${link.id} · 对端 session id=${peer} · ${sessionLabel(peer, undefined, undefined)}`
-      + (link.label === undefined ? '' : ` · 管道标签「${link.label}」`))
+      + (link.label === undefined ? '' : ` · 名称「${link.label}」`))
+    lines.push(link.description === undefined
+      ? '  用途：（还没写。如果你已经知道这条管道用来做什么，用 action="describe" 写下来，对端的模型会读到。）'
+      : `  用途：${link.description}${link.annotatedBy === undefined ? '' : `（由 ${service.label(link.annotatedBy)} 填写）`}`)
   }
   lines.push('', 'delegate 时 to 填对端 session id（上面每行都有），或 link_id 填管道 id——两者任选其一。')
+  lines.push('action="describe" 可以给管道命名、写用途（link_id 或 to 任选其一）。')
   return lines.join('\n')
+}
+
+/**
+ * The pipe a naming call addresses, from `link_id` or the peer's session id.
+ *
+ * Only the caller's own pipes are candidates, so a link id belonging to another
+ * pair reads as unknown rather than as somebody else's business.
+ */
+function requireLinkBy(
+  service: BufferService,
+  viewer: string,
+  args: { readonly link_id?: string | undefined; readonly to?: string | undefined },
+): BufferLink {
+  const links = service.linksFor(viewer)
+  if (args.link_id !== undefined) {
+    const found = links.find(link => link.id === args.link_id)
+    if (found === undefined) throw new Error(`不是本会话的管道：${args.link_id}（用 action="links" 查看）`)
+    return found
+  }
+  if (args.to !== undefined) {
+    const found = links.find(link => link.a === args.to || link.b === args.to)
+    if (found === undefined) throw new Error(`没有连接 ${args.to} 的管道（用 action="links" 查看）`)
+    return found
+  }
+  throw new Error('请给出 link_id 或 to，指明是哪条管道。')
 }
 
 /** Render the granted-area view, from both directions. */
@@ -239,11 +273,13 @@ export function registerBufferTool(ctx: Context, service: BufferService): () => 
       action: {
         type: 'string',
         required: true,
-        enum: ['links', 'delegate', 'tickets', 'claim', 'progress', 'finish', 'fail', 'cancel', 'grants', 'read', 'ls', 'edit', 'download', 'upload'],
+        enum: ['links', 'describe', 'delegate', 'tickets', 'claim', 'progress', 'finish', 'fail', 'cancel', 'grants', 'read', 'ls', 'edit', 'download', 'upload'],
         description: 'Which buffer operation to perform.',
       },
-      to: { type: 'string', description: 'delegate: target session id (the peer of a pipe).' },
-      link_id: { type: 'string', description: 'delegate: the pipe to send over, instead of to.' },
+      to: { type: 'string', description: 'delegate: target session id (the peer of a pipe). describe: the peer whose pipe to name, instead of link_id.' },
+      link_id: { type: 'string', description: 'delegate: the pipe to send over, instead of to. describe: the pipe to name.' },
+      pipe_label: { type: 'string', description: 'describe: the pipe\'s name. Empty string clears it.' },
+      pipe_description: { type: 'string', description: 'describe: what this pipe is for, written for the PEER\'s model — what travels over it and why. Empty string clears it.' },
       subject: { type: 'string', description: 'delegate: one-line statement of what is being asked.' },
       detail: { type: 'string', description: 'delegate: the full request, including acceptance criteria.' },
       grants: {
@@ -345,6 +381,8 @@ async function run(
     dest?: string
     side?: string
     max_bytes?: number
+    pipe_label?: string
+    pipe_description?: string
   },
   viewer: string,
   service: BufferService,
@@ -353,6 +391,16 @@ async function run(
   switch (args.action) {
     case 'links':
       return renderLinks(service, viewer)
+
+    case 'describe': {
+      const link = requireLinkBy(service, viewer, args)
+      const updated = await service.annotateLink(link.id, {
+        label: args.pipe_label,
+        description: args.pipe_description,
+      }, viewer)
+      return `已更新管道 ${updated.id}：名称「${updated.label ?? '（未命名）'}」，用途「${updated.description ?? '（未写）'}」。`
+        + '对端的模型会在每次组装提示词时读到这段用途。'
+    }
 
     case 'delegate': {
       const input: DelegateInput = {

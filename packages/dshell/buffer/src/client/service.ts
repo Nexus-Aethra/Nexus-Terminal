@@ -134,8 +134,23 @@ export class BufferClientService extends Service {
   }
 
   /** Connect two sessions. Only the user may do this. */
-  async link(a: string, b: string, label?: string): Promise<void> {
-    await this.send({ action: 'link', a, b, ...label === undefined || label === '' ? {} : { label } }, { strict: true })
+  async link(a: string, b: string, label?: string, description?: string): Promise<void> {
+    await this.send({
+      action: 'link',
+      a,
+      b,
+      ...label === undefined || label === '' ? {} : { label },
+      ...description === undefined || description === '' ? {} : { description },
+    }, { strict: true })
+  }
+
+  /**
+   * Name a pipe, state what it is for, or clear either (empty string clears).
+   * The user is the only caller, which is what unsets the "an agent wrote
+   * this" marker on the link.
+   */
+  async annotate(linkId: string, label: string, description: string): Promise<void> {
+    await this.send({ action: 'annotate', linkId, label, description }, { strict: true })
   }
 
   /** Remove a pipe. Outstanding tickets keep running. */

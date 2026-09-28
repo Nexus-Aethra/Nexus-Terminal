@@ -46,7 +46,15 @@ export function createBufferRoute(deps: BufferRouteDeps): ConnectionFetchRoute {
       case 'state':
         return state()
       case 'link':
-        await deps.service.createLink(input.a, input.b, input.label)
+        await deps.service.createLink(input.a, input.b, input.label, input.description)
+        return state()
+      case 'annotate':
+        // No `by`: the user is the only caller behind this route, and writing
+        // from here is what clears the "an agent wrote this" marker.
+        await deps.service.annotateLink(input.linkId, {
+          label: input.label,
+          description: input.description,
+        })
         return state()
       case 'unlink':
         await deps.service.removeLink(input.linkId)

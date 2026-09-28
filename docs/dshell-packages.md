@@ -375,6 +375,12 @@ when it contributes to model-visible state.
     the full list, follows the app theme, lays out on a grid and carries
     React Flow's zoom controls; wires are drawn by dragging a node's
     handle onto another node, or created from the list view's form.
+- A pipe carries a name and a short purpose, and both ends write them: the
+  user from the panel (at creation or in the pipe's detail), an agent with
+  `dshell_buffer action="describe"` — which is how a model that has learned
+  what a pipe is for records it for its peer. The purpose is what the peer's
+  assembled prompt states next to the pipe, and `annotatedBy` keeps a peer's
+  words from reading as the user's in the panel.
 - dsh services depended on: `ctx.tools`, `ctx.systemPrompt`, `ctx.fs`,
   `ctx.agents`, `ctx.sessionController`, `ctx.sandboxPolicy` (optional),
   `ctx.shell` (cross-world byte transfer), `ctx.connection.fetch`; the
