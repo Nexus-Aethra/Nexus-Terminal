@@ -64,7 +64,7 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 ```sh
 # 1) dshell itself. One package: the bundle is the patch layer, and it depends
 #    on the other eleven.
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.5
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.6
 
 # 2) the upstream row the patch names that a stock profile does not ship:
 #    the SSH execution provider.
@@ -77,7 +77,7 @@ dsh web
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
 
 In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
-`@nexus-aethra/dshell-bundle@0.1.5` (it installs from npmjs and pins the version exactly).
+`@nexus-aethra/dshell-bundle@0.1.6` (it installs from npmjs and pins the version exactly).
 
 > Skipping step 2 is not fatal — dsh boots and reports the two rows as `did not activate`, and the
 > rest of dshell works. It is listed because the SSH device sessions and the agent's terminal tool
