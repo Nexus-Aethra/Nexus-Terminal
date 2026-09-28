@@ -65,10 +65,9 @@ CLI (`npm install -g @deepseek-ai/dsh@alpha`) — and **Node 24.21.0** with **pn
 #    on the other eleven.
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.5
 
-# 2) the upstream rows the patch names that a stock profile does not ship:
-#    the SSH execution provider and the terminal tool.
+# 2) the upstream row the patch names that a stock profile does not ship:
+#    the SSH execution provider.
 dsh plugin --profile web add -w @deepseek-ai/dsh-ssh@0.1.7-rc.2
-dsh plugin --profile web add -w @deepseek-ai/dsh-tool-terminal@0.1.7-rc.2
 
 # 3) run
 dsh web

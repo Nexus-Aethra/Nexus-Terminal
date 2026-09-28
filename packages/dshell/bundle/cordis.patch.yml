@@ -11,30 +11,41 @@
 # so a stock session sees none of it.
 
 # ── host half: terminal capability ─────────────────────────────────────
-# dsh ships the `web` profile with bash + sandbox already configured,
-# so dshell reuses the existing terminal/sandbox rows and only inserts
-# its own plugin packages. Each dshell-* row uses a fresh id so it does
-# not collide with a shipped tooling id.
+# dsh ships the `web` profile with bash + sandbox already configured, so
+# dshell reuses the existing sandbox row and inserts one dsh row besides its
+# own packages: the PTY service, which the stock web surface does not mount in
+# the host plane (see below). Each row uses a fresh id so it cannot collide
+# with a shipped tooling id.
 
 - insert:
-    # PTY service; this id is distinct from any shipped web-profile row, so it
-    # coexists with the existing tools.
+    # The one dsh package dshell must name: `ctx.terminals`, the PTY service and
+    # backend registry. dshell's bridge registers its backend into it and reads
+    # its types, and dsh's own web surface does NOT mount it in the host plane
+    # (only inside the minimal preset's isolated `terminals` realm), so the row
+    # that provides it is ours to add. The id is fresh so it cannot collide with
+    # a shipped one.
     - id: dshell-terminal
       name: '@deepseek-ai/dsh-terminal'
 
-    # NOTE: no terminal-bash row on purpose. dshell's bridge registers its raw
-    # PTY backend under the type `shell` — the name dsh's persistent shell
-    # tools resolve by default (`backendType` defaults to `'shell'`) — so any
+    # NOTE: no terminal-bash row and no tool-terminal row on purpose.
+    #
+    # terminal-bash would race the bridge: dshell's bridge registers its raw PTY
+    # backend under the type `shell` — the name dsh's persistent shell tools
+    # resolve by default (`backendType` defaults to `'shell'`) — so any
     # composition whose persistent shell group does NOT isolate the terminals
     # realm resolves the bridge's backend and its bash lands on the agent's
-    # watched terminal. A terminal-bash row here would race the bridge for the
-    # same backend name and fail loud at boot (DUPLICATE_BACKEND).
+    # watched terminal. Two backends for that name fail loud at boot
+    # (DUPLICATE_BACKEND).
     #
-    # Only opted-in sessions ever open that PTY: the browser half asks for the
-    # stream only while the session carries the terminal-mode flag.
-
-    - id: dshell-tool-terminal
-      name: '@deepseek-ai/dsh-tool-terminal'
+    # tool-terminal supplies dsh's six model-facing `terminal_*` tools, and no
+    # dshell code uses it: the agent's view of its own shell is dshell-commands'
+    # three tools, and dsh's web surface deliberately leaves agent-plane tool
+    # rows out of the host plane for presets to mount. Naming it here would put
+    # those tools in front of every session, stock ones included.
+    #
+    # Only opted-in sessions ever open the PTY this service carries: the browser
+    # half asks for the stream only while the session carries the terminal-mode
+    # flag.
 
     # Browser half of the `terminal` Conversation target.
     - id: dshell-conversation

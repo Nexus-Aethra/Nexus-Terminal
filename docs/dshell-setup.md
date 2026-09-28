@@ -405,13 +405,13 @@ packed manifests are installable), so:
 for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
 node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 
-# 2. add the five upstream packages the DESKTOP seed omits but dshell's bundle
+# 2. add the four upstream packages the DESKTOP seed omits but dshell's bundle
 #    patch names. They are already packed by the build; copy them in and restart
 #    the registry so it indexes them.
-cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{tool-terminal,client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
+cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
 
 # 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
-#    package at 0.1.2 and those five at 0.1.5-rc.2 to "dependencies", and append
+#    package at 0.1.2 and those four at 0.1.5-rc.2 to "dependencies", and append
 #    "@nexus-aethra/dshell-bundle" to dsh.profile.bundles. Then install with the
 #    app's OWN runtime, from that directory:
 "/opt/DeepSeek Harness/resources/runtime/node/node" \
@@ -421,9 +421,10 @@ cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-
 ```
 
 Restart the app afterwards. The registry is needed only while installing — the
-packages are copied into the profile, not linked to it — and the five upstream
-packages stay needed at runtime because the bundle patch inserts a
-`dshell-tool-terminal` row naming `@deepseek-ai/dsh-tool-terminal`.
+packages are copied into the profile, not linked to it — and the four upstream
+packages stay needed at runtime because the bundle patch names modules the
+desktop seed omits (the dshell client bundle's own dependencies, and the
+servers the rows resolve).
 
 > The 0.1.2 bundle names three more upstream packages than the 0.1.1 one did —
 > `dsh-browser-use`, `dsh-computer-use` and

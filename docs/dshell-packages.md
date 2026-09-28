@@ -625,12 +625,13 @@ uses.
 The following dsh components are reused unchanged. They are listed here
 so the inventory is complete; do not introduce wrappers for them.
 
-- `dsh-terminal-bash` — supplies the `shell` backend for
-  `ctx.terminals`. Picked up by `dsh-bundle` (dsh's own bundle) already.
-- `dsh-tool-terminal` — supplies `terminal_open`, `terminal_send`,
-  etc. as model-facing tools. Picked up the same way. Agent's
-  secondary-shell operations go through these tools, not through
-  dshell.
+- `dsh-terminal` — the PTY service and backend registry (`ctx.terminals`).
+  dsh's web surface mounts it only inside the minimal preset's isolated
+  `terminals` realm, so the dshell bundle's patch names it at the host
+  plane and the installer adds the package to the profile; dshell's bridge
+  registers the backend dsh then drives. `dsh-terminal-bash` (a bash
+  backend) is deliberately NOT mounted: it would race that bridge for the
+  same `shell` backend name (DUPLICATE_BACKEND).
 - `dsh-session-persistence-jsonl` — supplies session log storage.
   dshell never touches this; the session log stays where dsh puts it.
 - `dsh-compaction` and `dsh-session-title-*` — used unchanged by

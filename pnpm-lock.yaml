@@ -51,7 +51,6 @@ overrides:
   '@deepseek-ai/dsh-terminal': link:./dsh/packages/terminal/terminal
   '@deepseek-ai/dsh-terminal-bash': link:./dsh/packages/terminal/terminal-bash
   '@deepseek-ai/dsh-token-meter': link:./dsh/packages/llm/token-meter
-  '@deepseek-ai/dsh-tool-terminal': link:./dsh/packages/terminal/tool-terminal
   '@deepseek-ai/dsh-tools': link:./dsh/packages/core/tools
   '@deepseek-ai/schemastery': link:./dsh/vendor/schemastery
   node-pty: link:./dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0/node_modules/node-pty
@@ -203,9 +202,6 @@ importers:
       '@deepseek-ai/dsh-terminal-bash':
         specifier: link:../../../dsh/packages/terminal/terminal-bash
         version: link:../../../dsh/packages/terminal/terminal-bash
-      '@deepseek-ai/dsh-tool-terminal':
-        specifier: link:../../../dsh/packages/terminal/tool-terminal
-        version: link:../../../dsh/packages/terminal/tool-terminal
       tsdown:
         specifier: ^0.22.14
         version: 0.22.14(tsx@4.23.13)(typescript@6.0.3)

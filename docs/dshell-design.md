@@ -90,15 +90,18 @@ Consequences:
   `packages/terminal/tool-terminal/src/index.ts:167` and the same package's
   tests). Using it keeps dshell compatible with dsh's documented contract.
 - Agent-owned "secondary" PTYs (`name: 'gdb'`, unnamed, etc.) are kept
-  alive in `ctx.terminals` and reachable via `tool-terminal`, but dshell
-  never subscribes to their output.
+  alive in `ctx.terminals`, but dshell never subscribes to their output.
+  dshell mounts no terminal-tool row, so whether the agent has the tools
+  to open one at all is the composition's (a preset's) business — dshell's
+  own three tools read the USER's shell and nothing else.
 
 ### 4.3 Secondary shell pass-through
 
-PTYs the agent opens via `terminal_open` with any name other than `main`
-(or with no name) are not rendered by dshell. They remain accessible to
-the agent through `terminal_send` / `terminal_read` / `terminal_signal`
-/ `terminal_close` / `terminal_list`. Their results reach the user
+PTYs an agent opens through dsh's terminal tools (`terminal_open` and
+friends — mounted only where a composition or preset brings
+`dsh-tool-terminal`; dshell does not) are not rendered by dshell: only the
+`main` shell of a terminal session is. Such a PTY stays accessible to its
+agent through those same tools, and its results reach the user
 indirectly:
 
 - The agent's tool calls and results land in the session log as

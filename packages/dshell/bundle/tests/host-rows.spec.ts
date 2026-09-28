@@ -150,10 +150,23 @@ describe('dshell\'s bundle patch', () => {
   it('carries the rows it is documented to carry', () => {
     // A floor, not a ceiling: this is the count the patch is described with in
     // dshell-packages.md, so a row lost to a bad edit is visible here even
-    // though the existence checks above would not notice. The targets are
-    // exactly the two rows dshell owns (see the module doc), which is the
-    // number the design states.
-    expect(ourInserts.length).toBeGreaterThanOrEqual(10)
+    // though the existence checks above would not notice. Nine inserts: our own
+    // nine packages plus the one dsh row the composition needs (`dsh-terminal`,
+    // the PTY service our bridge registers a backend into). The targets are
+    // exactly the two stock rows dshell overrides (see the module doc).
+    expect(ourInserts.length).toBeGreaterThanOrEqual(9)
     expect(ourTargets.length).toBe(2)
+  })
+
+  it('names no dsh tool row', () => {
+    // The scope rule, pinned: dshell wraps the terminal, it does not hand the
+    // model dsh's own capabilities. `dsh-terminal` is a SERVICE the bridge
+    // registers into; a row naming a dsh TOOL package (`dsh-tool-*`) would put
+    // dsh's tools in front of every session, stock ones included, which dsh's
+    // own web surface deliberately leaves to presets.
+    const toolRows = ourInserts
+      .map(row => String(row.name ?? ''))
+      .filter(name => name.includes('dsh-tool-'))
+    expect(toolRows).toEqual([])
   })
 })

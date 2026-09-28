@@ -49,15 +49,15 @@ done
 echo "  + dshell-bundle (as patch layer)"
 ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/packages/dshell/bundle" )
 
-# Row names are resolved from the profile's own dependencies, so the two
-# upstream packages the patch names have to be installed there. They come from
-# the checkout like every other @deepseek-ai package in this profile, not from
-# npm: the profile pins one version of the tree, and a package resolved from the
-# registry would be the second. dshell adds no browser-use or computer-use row,
-# so nothing of dsh's is installed on dshell's behalf.
+# Row names are resolved from the profile's own dependencies, so the upstream
+# package the patch names has to be installed there. It comes from the checkout
+# like every other @deepseek-ai package in this profile, not from npm: the
+# profile pins one version of the tree, and a package resolved from the registry
+# would be the second. dshell adds no browser-use or computer-use row, and names
+# no dsh tool row, so nothing of dsh's capability is installed on dshell's
+# behalf.
 for upstream in \
-  packages/ssh/ssh \
-  packages/terminal/tool-terminal
+  packages/ssh/ssh
 do
   echo "  + @deepseek-ai/$(basename "$upstream") (upstream)"
   ( cd "$HERE/dsh" && $DSH_PKG plugin --profile "$PROFILE" add -w "$HERE/dsh/$upstream" )
