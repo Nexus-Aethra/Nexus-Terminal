@@ -18,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { en, zh } from './locales.js'
 import { UsageSection } from './page.js'
+import { watchUsageNavIcon } from './nav-icon.js'
 
 /** The locale namespace, matching the key `locales.ts` declares. */
 const NS = 'dshellUsage'
@@ -41,4 +42,7 @@ export function apply(ctx: Context): void {
     label: () => t('nav'),
     locale: NS,
   }, UsageSection))
+  // The row's own icon, because this seat carries none: dsh draws a generic
+  // gear for any section id it does not ship (see nav-icon.ts).
+  ctx.effect(() => watchUsageNavIcon(() => t('nav')), 'dshell-usage: navigation icon')
 }

@@ -12,10 +12,11 @@
  * a charting library would be the largest thing in it by an order of magnitude.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { DSHELL_USAGE_PATH } from '@nexus-aethra/dshell-std'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { UsageResponse, UsageSummary, UsageTotalRow } from '../protocol.js'
+import { HEAT_LEVELS, heatmapColumns, heatmapTruncated } from './heatmap.js'
 
 /** A fixed palette: a route keeps its colour as the window changes. */
 const PALETTE = [
@@ -35,6 +36,10 @@ const counts = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFr
 /** Rough sizes; the page is a settings column, not a full viewport. */
 const CURVE = { width: 720, height: 200, padLeft: 56, padRight: 12, padTop: 12, padBottom: 24 }
 const PIE = { size: 200, radius: 88, inner: 52 }
+/** The heatmap's grid geometry: a fixed half-year block at settings scale. */
+const HEAT = { cell: 13, gap: 3, weeks: 26 }
+/** The heatmap's shades, from "a little" to "the busiest day", tinted like the first curve. */
+const HEAT_SHADES = ['#5B8FF9', '#4a78e0', '#3c62c4', '#2f4da6']
 
 /** Every bucket summed — the measure both charts and the table sort on. */
 function total(buckets: { uncachedInputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number }): number {
@@ -89,6 +94,8 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | undefined>(undefined)
+  /** Sessions the last scan had to skip, so the page can say the totals are partial. */
+  const [skipped, setSkipped] = useState<{ count: number, reason: string | undefined } | undefined>(undefined)
 
   const ask = useCallback(async (action: 'summary' | 'scan', window: number | null): Promise<void> => {
     setBusy(true)
@@ -114,6 +121,11 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
             turns: counts.format(body.scanned.turns),
           })
         : undefined)
+      // A scan that skipped a session produced partial totals, and a reader who
+      // is not told reads the number as the whole. The reason travels with it.
+      setSkipped(body.scanned !== undefined && body.scanned.skipped > 0
+        ? { count: body.scanned.skipped, reason: body.scanned.skipReason }
+        : undefined)
     }
     catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
@@ -123,10 +135,17 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
     }
   }, [t])
 
-  // Read on open, and again whenever the window changes: the window is a query
-  // argument, not a filter over one big payload, so the index decides what the
-  // page ever sees.
-  useEffect(() => { void ask('summary', days) }, [ask, days])
+  // Opening the page extends the index once — the host coalesces a burst of
+  // opens behind its own interval — and a later window change only re-reads,
+  // because the window is a query argument rather than a filter over one big
+  // payload. Without that first scan a reader who never presses 「重新聚合」
+  // would read a frozen index, which is what the page did before.
+  const firstOpen = useRef(true)
+  useEffect(() => {
+    const action = firstOpen.current ? 'scan' : 'summary'
+    firstOpen.current = false
+    void ask(action, days)
+  }, [ask, days])
 
   const curve = useMemo(() => {
     if (summary === undefined) return undefined
@@ -179,12 +198,91 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
     }
   }, [summary])
 
+  /** The window's headline numbers: what the two charts are shares and shapes of. */
+  const headline = useMemo(() => {
+    if (summary === undefined) return undefined
+    const sums = summary.totals.reduce((carry, row) => ({
+      uncachedInputTokens: carry.uncachedInputTokens + row.uncachedInputTokens,
+      outputTokens: carry.outputTokens + row.outputTokens,
+      cacheReadTokens: carry.cacheReadTokens + row.cacheReadTokens,
+      cacheWriteTokens: carry.cacheWriteTokens + row.cacheWriteTokens,
+      turns: carry.turns + row.turns,
+    }), { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 })
+    const billed = sums.uncachedInputTokens + sums.cacheReadTokens
+    return {
+      ...sums,
+      total: total(sums),
+      // A hit rate is the one number that says whether the cache is working;
+      // it is read over the input side only, which is where a cache read lands.
+      hitRate: billed === 0 ? undefined : sums.cacheReadTokens / billed,
+    }
+  }, [summary])
+
+  /** The calendar grid: a fixed rectangle of weeks, newest day at the bottom right. */
+  const heat = useMemo(() => {
+    if (summary === undefined || summary.heat.length === 0) return undefined
+    const columns = heatmapColumns(summary.heat, HEAT.weeks, summary.today)
+    if (columns.length === 0) return undefined
+    return {
+      columns,
+      truncated: heatmapTruncated(summary.heat, HEAT.weeks, summary.today),
+      busiest: Math.max(...summary.heat.map(day => day.total)),
+    }
+  }, [summary])
+
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 20, padding: '4px 2px' }}>
       <header style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <h2 style={{ margin: 0, fontSize: 16 }}>{t('title')}</h2>
         <p style={{ margin: 0, opacity: 0.7, lineHeight: 1.6 }}>{t('subtitle')}</p>
       </header>
+
+      {heat !== undefined && (
+        <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <figcaption style={{ opacity: 0.8 }}>{t('chart.heatmap')}</figcaption>
+          {/* One row per day, filled top to bottom then the next column, so the
+              newest day is always the bottom-right cell. */}
+          <div style={{ display: 'flex', gap: HEAT.gap, overflowX: 'auto' }}>
+            {heat.columns.map((column, index) => (
+              <div key={`column-${String(index)}`} style={{ display: 'grid', gridTemplateRows: `repeat(7, ${String(HEAT.cell)}px)`, gap: HEAT.gap }}>
+                {column.map((cell, slot) => cell === undefined
+                  ? <span key={`empty-${String(slot)}`} style={{ width: HEAT.cell, height: HEAT.cell, borderRadius: 3, background: 'currentColor', opacity: 0.06 }} />
+                  : (
+                      <span
+                        key={cell.day}
+                        title={t('chart.heatmapDay', {
+                          day: cell.day,
+                          total: counts.format(cell.total),
+                          turns: counts.format(cell.turns),
+                        })}
+                        style={{
+                          width: HEAT.cell, height: HEAT.cell, borderRadius: 3,
+                          background: cell.level === 0 ? 'currentColor' : HEAT_SHADES[cell.level - 1],
+                          opacity: cell.level === 0 ? 0.06 : 0.35 + (cell.level / HEAT_LEVELS) * 0.65,
+                        }}
+                      />
+                    ))}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, opacity: 0.7 }}>
+            <span>{t('chart.heatmapLess')}</span>
+            {[0, 1, 2, 3, 4].map(level => (
+              <span key={String(level)} style={{
+                width: HEAT.cell, height: HEAT.cell, borderRadius: 3,
+                background: level === 0 ? 'currentColor' : HEAT_SHADES[level - 1],
+                opacity: level === 0 ? 0.06 : 0.35 + (level / HEAT_LEVELS) * 0.65,
+              }} />
+            ))}
+            <span>{t('chart.heatmapMore')}</span>
+            <span style={{ marginLeft: 6, opacity: 0.8 }}>
+              {t('chart.heatmapPeak', { total: counts.format(heat.busiest) })}
+            </span>
+            {heat.truncated ? <span style={{ opacity: 0.8 }}>· {t('chart.heatmapTruncated')}</span> : null}
+          </div>
+        </figure>
+      )}
+
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <span style={{ opacity: 0.7 }}>{t('range.label')}</span>
@@ -228,11 +326,47 @@ export function UsageSection({ t }: PropsLocale<'dshellUsage'>): ReactElement {
         </div>
       )}
 
+      {skipped !== undefined && (
+        <div
+          style={{
+            fontSize: 12, lineHeight: 1.6, padding: '6px 10px', borderRadius: 8,
+            color: 'var(--dsw-alias-state-warning-primary, #b45309)',
+            background: 'var(--dsw-alias-interactive-bg-hover-warning, rgba(245,158,11,.12))',
+          }}
+          title={skipped.reason}
+        >
+          {t('state.skipped', { count: counts.format(skipped.count) })}
+          {skipped.reason === undefined ? null : (
+            <span style={{ opacity: 0.7 }}> · {shorten(skipped.reason, 120)}</span>
+          )}
+        </div>
+      )}
+
       {error !== undefined && (
         <div style={{ color: 'var(--dsh-danger, #c0392b)', fontSize: 13 }}>{t('state.error', { reason: error })}</div>
       )}
 
       {summary === undefined && error === undefined && <div style={{ opacity: 0.6 }}>{t('state.loading')}</div>}
+
+      {headline !== undefined && headline.turns > 0 && (
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          {([
+            ['summary.total', counts.format(headline.total)],
+            ['summary.uncached', counts.format(headline.uncachedInputTokens)],
+            ['summary.output', counts.format(headline.outputTokens)],
+            ['summary.cacheRead', counts.format(headline.cacheReadTokens)],
+            ['summary.turns', counts.format(headline.turns)],
+            ...headline.hitRate === undefined
+              ? []
+              : [['summary.hitRate', `${(headline.hitRate * 100).toFixed(1)}%`] as const],
+          ] as const).map(([key, value]) => (
+            <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 11, opacity: 0.6 }}>{t(key)}</span>
+              <span style={{ fontSize: 18, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {summary !== undefined && curve === undefined && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -385,4 +519,14 @@ function Legend({ series }: { series: readonly { model: string, color: string }[
 /** One table cell's alignment and padding, so the two tables match. */
 function cellStyle(align: 'left' | 'right'): { textAlign: 'left' | 'right', padding: string } {
   return { textAlign: align, padding: '3px 10px 3px 0' }
+}
+
+/**
+ * Shorten a host error for a one-line note.
+ *
+ * A refusal names the session, the reason and the log path — useful, and far too
+ * long to sit in a settings line; the full text stays in the note's `title`.
+ */
+function shorten(text: string, limit: number): string {
+  return text.length <= limit ? text : `${text.slice(0, limit)}…`
 }

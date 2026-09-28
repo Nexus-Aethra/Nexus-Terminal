@@ -203,16 +203,30 @@ export class UsageStore {
       })
     }
     const totalsList = [...totals.values()].sort((left, right) => total(right) - total(left))
+    // The calendar reads ALL time, whatever window the charts are showing: a
+    // rhythm question ("which days do I burn tokens on") is not the same
+    // question as "what did this week cost", and re-shaping the calendar every
+    // time the reader moves the range would answer neither.
+    const heat = (this.#db.prepare(`
+      SELECT day, sum(uncached_input + output + cache_read + cache_write) AS total, sum(turns) AS turns
+      FROM usage_bucket GROUP BY day ORDER BY day
+    `).all() as { day: string, total: number, turns: number }[]).map(row => ({
+      day: String(row.day),
+      total: Number(row.total),
+      turns: Number(row.turns),
+    }))
     const scanned = this.#db.prepare('SELECT value FROM usage_meta WHERE key = ?').get('scannedAt') as { value: string } | undefined
     const built = this.#db.prepare('SELECT count(*) AS n FROM usage_cursor').get() as { n: number } | undefined
     return {
       built: (built?.n ?? 0) > 0,
       days,
       scannedAt: scanned?.value ?? null,
+      today: localDay(new Date()),
       daysList: [...new Set(byDay.map(row => row.day))].sort(),
       models: totalsList.map(row => routeName(row)),
       byDay,
       totals: totalsList,
+      heat,
     }
   }
 

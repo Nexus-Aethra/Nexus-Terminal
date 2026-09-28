@@ -46,7 +46,13 @@ export function createUsageRoute(deps: UsageRouteDeps): ConnectionFetchRoute {
       // scan's own counts, which the page reports.
       return {
         ...deps.store.summary(days),
-        scanned: { sessions: outcome.sessions, read: outcome.read, turns: outcome.turns },
+        scanned: {
+          sessions: outcome.sessions,
+          read: outcome.read,
+          turns: outcome.turns,
+          skipped: outcome.skipped,
+          ...outcome.skipReason === undefined ? {} : { skipReason: outcome.skipReason },
+        },
       }
     }
     return deps.store.summary(days)

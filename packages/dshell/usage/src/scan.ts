@@ -123,6 +123,10 @@ export interface ScanOutcome {
   readonly sessions: number
   readonly read: number
   readonly turns: number
+  /** Sessions whose log could not be decoded, so their usage is not counted. */
+  readonly skipped: number
+  /** Why the first skipped session was skipped; absent when nothing was. */
+  readonly skipReason: string | undefined
   readonly written: boolean
 }
 
@@ -148,7 +152,7 @@ export class UsageScanner {
     if (this.#inFlight !== undefined) return await this.#inFlight
     const since = Date.now() - this.#lastFinishedAt
     if (since < this.policy.minIntervalMs) {
-      return { sessions: 0, read: 0, turns: 0, written: false }
+      return { sessions: 0, read: 0, turns: 0, skipped: 0, skipReason: undefined, written: false }
     }
     if (this.policy.debounceMs > 0) {
       await new Promise<void>((settle) => {
@@ -181,17 +185,34 @@ export class UsageScanner {
     const counted: CountedTurn[] = []
     const advanced: { sessionId: string; seq: number }[] = []
     let read = 0
+    let skipped = 0
+    let skipReason: string | undefined
     for (const session of sessions) {
       const id = String(session.header.id)
       const cursor = cursors.get(id)
-      const events = await this.query.listEvents(id)
-      const maxSeq = events.reduce((highest, event) => Math.max(highest, event.seq), 0)
-      if (cursor !== undefined && maxSeq <= cursor) continue
-      // A log that shrank means the persisted session was replaced rather than
-      // appended to; its cursor no longer describes it, so it is read afresh
-      // and its earlier contribution is left where it is — an index of what was
-      // spent cannot be un-spent by a rewrite.
-      const full = await this.query.readSession(id)
+      // One unreadable log must not cost the reader every other session's
+      // usage. A session whose event list or log cannot be decoded is counted
+      // as skipped and left WITHOUT advancing its cursor, so a later scan
+      // visits it again — the log is not ours to repair, and a refusal is
+      // usually a fact about that one artifact (a log dsh cannot migrate, a
+      // half-written file) rather than about the index. The first reason is
+      // carried out so the page can say why the totals are partial.
+      let maxSeq: number
+      let full: { events: readonly SessionEvent[] }
+      try {
+        const events = await this.query.listEvents(id)
+        maxSeq = events.reduce((highest, event) => Math.max(highest, event.seq), 0)
+        if (cursor !== undefined && maxSeq <= cursor) continue
+        // A log that shrank means the persisted session was replaced rather than
+        // appended to; its cursor no longer describes it, so it is read afresh
+        // and its earlier contribution is left where it is — an index of what was
+        // spent cannot be un-spent by a rewrite.
+        full = await this.query.readSession(id)
+      } catch (error) {
+        skipped += 1
+        skipReason ??= error instanceof Error ? error.message : String(error)
+        continue
+      }
       read += 1
       for (const event of full.events) {
         if (cursor !== undefined && event.seq <= cursor) continue
@@ -207,6 +228,9 @@ export class UsageScanner {
     if (rows.length > 0 || advanced.length > 0) {
       this.store.applyBatch({ rows, cursors: advanced, scannedAt })
     }
-    return { sessions: sessions.length, read, turns: counted.length, written: rows.length > 0 || advanced.length > 0 }
+    return {
+      sessions: sessions.length, read, turns: counted.length, skipped, skipReason,
+      written: rows.length > 0 || advanced.length > 0,
+    }
   }
 }

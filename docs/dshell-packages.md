@@ -504,18 +504,20 @@ when it contributes to model-visible state.
 
 ### `dshell-usage`
 
-- Role: the Settings → 用量 page — per-model token consumption, a daily
-  stacked curve, a share pie, and a per-route table. Two-faced Cordis
-  package:
+- Role: the Settings → 用量 page — a daily calendar heatmap and the
+  headline figures over the whole window, a per-model curve, a share pie,
+  and a per-route table. Two-faced Cordis package:
   - **Host face** owns one SQLite index under dshell's data root
     (`<root>/usage/usage.sqlite`, `PRAGMA user_version = 1`), a scanner
     over `ctx.sessionQuery`, and `/api/dshell/usage`. Reading is a
     `summary` action; the page's rebuild is a `scan` action, because the
     scan belongs where the events already are.
   - **Browser face** registers one `settings.section` entry — the same
-    seat dsh's own Plugins page takes — and renders both charts as
-    hand-rolled SVG (`buffer`'s `pipe-graph.tsx` is the only other
-    `.tsx` in the tree).
+    seat dsh's own Plugins page takes — paints the calendar as plain DOM
+    and the charts as hand-rolled SVG (`buffer`'s `pipe-graph.tsx` is the
+    only other `.tsx` in the tree), and patches its own navigation row's
+    icon (see below). It scans once when the page opens, so a reader who
+    never presses 「重新聚合」 still sees current numbers.
 - Where the numbers come from: dsh attaches provider-reported accounting
   to the `assistant/message` event itself (`data.usage`) and the same
   event's `data.message.source` names the route, so usage and route
@@ -526,6 +528,24 @@ when it contributes to model-visible state.
   session, so a rescan skips a session whose log has not grown after a
   cheap metadata listing. `day` is `YYYY-MM-DD` in the **host's** local
   time, decided at scan time.
+- One unreadable log does not stop the accounting: dsh refuses to
+  migrate some older artifacts, and a scan that let that refusal escape
+  wrote nothing at all (the index sat a week stale while the pipes ran).
+  A session the scanner cannot decode is counted as `skipped`, keeps its
+  cursor so a later scan retries it, and travels to the page in the scan
+  report — the page says the totals are partial, and why, instead of
+  presenting them as the whole.
+- The page reads the calendar from its own all-time day totals (`heat` in
+  the summary): a fixed 26-week rectangle filled top-to-bottom then left
+  to right, so the newest day is always the bottom-right cell and moving
+  the range chips never re-shapes it. The range, the headline figures,
+  the curve, the pie and the table are windowed; the calendar is not.
+- The 用量 navigation row draws its own gauge: dsh's settings shell picks
+  a nav icon from a map of the section ids IT ships and draws a generic
+  gear for every other id, and rc.2's `settings.section` seat carries no
+  icon — so `client/nav-icon.ts` patches that one row's svg (the artwork
+  copied verbatim from the primitives package). It exists only until that
+  seat accepts an icon.
 - Writes are batched on purpose: a scan folds in memory and calls the
   store once, and concurrent triggers share one flight behind a
   minimum interval (30 s) plus a debounce — a host with a busy agent
