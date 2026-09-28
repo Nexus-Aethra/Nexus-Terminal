@@ -35,6 +35,7 @@ export const zh = {
   'form.descriptionPlaceholder': '用途（可选）：这条管道用来传什么、为什么——对端的 agent 会读到它',
   'form.authorityNote': '只有你能建立管道；agent 没有建连的工具。',
   'form.submit': '建立管道',
+  'form.noTerminals': '没有可连接的终端会话。请先在侧边栏的「终端」区栏新建一个，或在别处取消归档。',
   'session.withCwd': '{title}（{cwd}）',
   'action.release': '解除',
   'action.releasePipe': '解除管道',
@@ -83,9 +84,9 @@ export const zh = {
   'graph.resetTitle': '清空记忆的节点位置，全部回到默认网格排布',
   'graph.hint': '拖动节点边缘的圆点到另一个节点即可接线',
   'graph.empty': '没有可显示的会话',
-  'graph.showAll': '显示全部会话',
+  'graph.showAll': '显示全部终端会话',
   'graph.onlyRelated': '只看相关会话',
-  'graph.showAllTitle': '把 dsh 里的每个会话都画出来，便于接一条全新的管道',
+  'graph.showAllTitle': '把 dshell 的每个终端会话都画出来，便于接一条全新的管道（普通对话会话不参与管道）',
   'graph.hideUnrelated': '只显示已有管道两侧的会话和当前会话',
 } satisfies Record<string, string>
 
@@ -112,6 +113,7 @@ export const en = {
   'form.descriptionPlaceholder': 'Purpose (optional): what this pipe carries and why — the peer\'s agent reads it',
   'form.authorityNote': 'Only you can create pipes; agents have no tool to connect them.',
   'form.submit': 'Create pipe',
+  'form.noTerminals': 'No terminal session to connect. Create one from the sidebar\'s 终端 section first, or unarchive one.',
   'session.withCwd': '{title} ({cwd})',
   'action.release': 'Release',
   'action.releasePipe': 'Release pipe',
@@ -160,8 +162,8 @@ export const en = {
   'graph.resetTitle': 'Forget saved node positions and return to the default grid',
   'graph.hint': 'Drag the dot on a node\'s edge onto another node to wire them',
   'graph.empty': 'No sessions to show',
-  'graph.showAll': 'Show all sessions',
+  'graph.showAll': 'Show all terminal sessions',
   'graph.onlyRelated': 'Only related sessions',
-  'graph.showAllTitle': 'Draw every session in dsh, so a brand new pipe can be wired here',
+  'graph.showAllTitle': 'Draw every dshell terminal session, so a brand new pipe can be wired here (plain conversations take no part in pipes)',
   'graph.hideUnrelated': 'Show only the sessions on existing pipes, plus this one',
 } satisfies Record<DshellBufferKey, string>

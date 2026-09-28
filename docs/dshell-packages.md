@@ -375,6 +375,12 @@ when it contributes to model-visible state.
     the full list, follows the app theme, lays out on a grid and carries
     React Flow's zoom controls; wires are drawn by dragging a node's
     handle onto another node, or created from the list view's form.
+- A pipe joins dshell's terminal sessions only, and the host enforces it
+  (`createLink` refuses an end the terminal-mode registry does not list): a
+  plain dsh conversation or a subagent is not something the rest of dshell can
+  serve a request from, and the panel filters the same set out of its graph
+  and its endpoint pickers. A composition without dshell-mode has no such
+  registry, and then nothing can tell — the check is skipped.
 - A pipe carries a name and a short purpose, and both ends write them: the
   user from the panel (at creation or in the pipe's detail), an agent with
   `dshell_buffer action="describe"` — which is how a model that has learned

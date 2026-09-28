@@ -73,6 +73,16 @@ export interface SessionSeat {
      * already has a pipe stays in the graph so the pipe keeps both its ends.
      */
     readonly archived?: readonly string[] | undefined
+    /**
+     * The sessions the pipe feature serves: dshell's terminal sessions.
+     *
+     * A pipe is between sessions a reader works in — a shell, or an agent on a
+     * device — and every other dsh session (plain conversations, subagents) is
+     * offered by neither the graph nor the endpoint pickers. Undefined means
+     * the composition has no terminal-mode registry, so nothing can tell and
+     * nothing is filtered.
+     */
+    readonly terminals?: readonly string[] | undefined
   }
   subscribe: (listener: () => void) => () => void
 }

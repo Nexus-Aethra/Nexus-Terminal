@@ -74,10 +74,10 @@ export function apply(ctx: Context): void {
    * the two would still be cluttered by the other.
    */
   const terminalModes = (): {
-    getSnapshot(): { readonly archived: readonly string[] }
+    getSnapshot(): { readonly archived: readonly string[]; readonly sessions: readonly string[] }
     subscribe(listener: () => void): () => void
   } | undefined => ctx.get('dshellTerminalMode') as unknown as
-    { getSnapshot(): { readonly archived: readonly string[] }, subscribe(l: () => void): () => void } | undefined
+    { getSnapshot(): { readonly archived: readonly string[]; readonly sessions: readonly string[] }, subscribe(l: () => void): () => void } | undefined
 
   /**
    * The slice built for the sources it was built from.
@@ -99,9 +99,12 @@ export function apply(ctx: Context): void {
       // Read per call rather than captured: either registry may register after
       // this row, and a composition without one simply archives nothing.
       const archived = workspaceRegistry()?.list.getSnapshot().archivedSessionIds
-      const ownArchived = terminalModes()?.getSnapshot().archived
+      const modeSnapshot = terminalModes()?.getSnapshot()
+      const ownArchived = modeSnapshot?.archived
+      const terminals = modeSnapshot?.sessions
       if (slicedFrom !== undefined
-        && slicedFrom[0] === list && slicedFrom[1] === archived && slicedFrom[2] === ownArchived) return sliced
+        && slicedFrom[0] === list && slicedFrom[1] === archived
+        && slicedFrom[2] === ownArchived && slicedFrom[3] === terminals) return sliced
       const held = mainSessionId(Object.values(list.byId))
       sliced = {
         ids: list.ids.map(String),
@@ -112,8 +115,9 @@ export function apply(ctx: Context): void {
         }])),
         current: held === undefined ? undefined : String(held),
         archived: [...new Set([...(archived ?? []), ...(ownArchived ?? [])].map(String))],
+        terminals: terminals?.map(String),
       }
-      slicedFrom = [list, archived, ownArchived]
+      slicedFrom = [list, archived, ownArchived, terminals]
       return sliced
     },
     // Every store, because the panel draws from all of them: a session archived

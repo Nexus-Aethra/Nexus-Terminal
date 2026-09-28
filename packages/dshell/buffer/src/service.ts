@@ -377,6 +377,7 @@ export class BufferService {
   /** Connect two sessions. Called by the pipe UI; no tool exposes this. */
   async createLink(a: string, b: string, label?: string, description?: string): Promise<BufferLink> {
     if (a === b) throw new Error(this.t('error.linkSelf'))
+    await this.requireTerminals(a, b)
     const existing = this.links.find(link =>
       (link.a === a && link.b === b) || (link.a === b && link.b === a))
     if (existing !== undefined) throw new Error(this.t('error.linkExists'))
@@ -390,6 +391,35 @@ export class BufferService {
     this.links.push(link)
     await this.save()
     return link
+  }
+
+  /**
+   * Refuse a pipe whose ends are not both dshell terminal sessions.
+   *
+   * The pipe feature serves terminal sessions: those are the sessions a reader
+   * works in — a shell, or an agent on a device — and wiring a plain dsh
+   * conversation to something reads as an offer the rest of dshell cannot keep
+   * (the file pane, the device routing and the section all key off that
+   * identity). Enforced here rather than in the panel because the panel is a
+   * filter a route call walks around.
+   *
+   * Read structurally: a composition without dshell-mode has no such registry,
+   * and then nothing can tell — the check is skipped rather than refusing
+   * every pipe. The registry's own load is awaited first, because an unloaded
+   * table knows no session and would refuse a legitimate one.
+   */
+  private async requireTerminals(a: string, b: string): Promise<void> {
+    const registry = this.ctx.get('dshellTerminalMode') as unknown as {
+      load?(): Promise<void>
+      isOn(sessionId: string): boolean
+    } | undefined
+    if (registry === undefined) return
+    await registry.load?.()
+    for (const [id, other] of [[a, b], [b, a]] as const) {
+      if (!registry.isOn(id)) {
+        throw new Error(this.t('error.notTerminal', { id, peer: this.labelOf(other) }))
+      }
+    }
   }
 
   /**

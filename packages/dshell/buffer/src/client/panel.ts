@@ -189,14 +189,20 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
       return ids.filter(id => !gone.has(id))
         .map(id => ({ id, label: id.slice(0, 8), sub: undefined, active: false, current: false }))
     }
-    // Archived sessions are put away rather than wired, so they are not drawn
-    // — except the ones that already hold a pipe, which keep their node so the
-    // pipe does not lose an end.
+    // The feature serves terminal sessions (see SessionSeat.terminals): a plain
+    // conversation is not a node, so the graph cannot invite wiring one. An
+    // archived session is put away for the same reason — except, either way,
+    // one that already holds a pipe keeps its node, so the pipe does not lose
+    // an end.
     const archived = new Set(sessionState.archived ?? [])
+    const terminals = sessionState.terminals === undefined ? undefined : new Set(sessionState.terminals)
+    const serves = (id: string): boolean => terminals === undefined || terminals.has(id)
     const current = sessionState.current === undefined ? undefined : String(sessionState.current)
     const ids = [...new Set([...sessionState.ids.map(String), ...snapshot.links.flatMap(link => [link.a, link.b])])]
     return ids
-      .filter(id => !gone.has(id) && (showAll || piped.has(id) || id === current) && (!archived.has(id) || piped.has(id)))
+      .filter(id => !gone.has(id)
+        && (!archived.has(id) || piped.has(id))
+        && (piped.has(id) || (serves(id) && (showAll || id === current))))
       .map(id => {
         const row = sessionState.byId[id]
         return {
@@ -303,13 +309,16 @@ function ListPane(props: ListSideProps & {
   const seat = sessions
   // A deleted session is still in dsh's list until the next start, but nothing
   // may be piped to it any more, so it is not offered as an endpoint either.
-  // Neither is an archived one: it is put away, and a pipe to it would be a
-  // pipe to a session the reader has stopped working with.
+  // Neither is an archived one (put away), nor one this feature does not serve
+  // at all: a pipe joins dshell's terminal sessions, and offering a plain
+  // conversation would be an offer the rest of dshell cannot keep.
   const gone = new Set(snapshot.departed)
   const archived = new Set(sessionState?.archived ?? [])
+  const terminals = sessionState?.terminals === undefined ? undefined : new Set(sessionState.terminals)
   const sessionIds = sessionState === undefined
     ? []
-    : sessionState.ids.map(String).filter(id => !gone.has(id) && !archived.has(id))
+    : sessionState.ids.map(String).filter(id => !gone.has(id) && !archived.has(id)
+      && (terminals === undefined || terminals.has(id)))
 
   // Seed the two pickers once the list is known: the current session on the
   // left, the first other session on the right. Never overwrites a choice.
@@ -350,11 +359,13 @@ function ListPane(props: ListSideProps & {
       }, props.creating ? t('links.collapse') : t('links.create')),
     ),
     props.creating ? createElement('div', { style: cardStyle },
-      createElement('div', { style: rowStyle },
-        sessionSelect(left, setLeft, sessionIds, id => labelFor(t, seat, id)),
-        createElement('span', { style: dimStyle }, '↔'),
-        sessionSelect(right, setRight, sessionIds, id => labelFor(t, seat, id)),
-      ),
+      sessionIds.length === 0
+        ? createElement('div', { style: emptyStyle }, t('form.noTerminals'))
+        : createElement('div', { style: rowStyle },
+          sessionSelect(left, setLeft, sessionIds, id => labelFor(t, seat, id)),
+          createElement('span', { style: dimStyle }, '↔'),
+          sessionSelect(right, setRight, sessionIds, id => labelFor(t, seat, id)),
+        ),
       createElement('input', {
         style: fieldStyle,
         placeholder: t('form.labelPlaceholder'),
