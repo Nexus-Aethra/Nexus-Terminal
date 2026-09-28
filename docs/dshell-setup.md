@@ -405,10 +405,19 @@ packed manifests are installable), so:
 for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/dshell-packs); done
 node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 
-# 2. add the four upstream packages the DESKTOP seed omits but dshell's bundle
-#    patch names. They are already packed by the build; copy them in and restart
+# 2. add the four upstream packages the DESKTOP seed omits but dshell's client
+#    bundle needs. They are already packed by the build; copy them in and restart
 #    the registry so it indexes them.
 cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-{client-store,client-ui-slots,client-ui-primitives,client-ui-dockkit}-0.1.5-rc.2.tgz /tmp/dshell-packs/
+
+# 2b. and one package the seed does NOT even build: `@deepseek-ai/dsh-ssh`, which
+#     dshell-ssh imports at runtime (`SshRpcPeer`, `RemoteOperationError`). The
+#     app's own tree has no copy, so without it the row fails to import — and
+#     because the bundle patch hands `ctx.fs` to dshell-ssh, `fs` never appears
+#     and the session controller, the workspace files and the deliverables tabs
+#     all sit at "pending (waiting for service: fs)". Take it from npmjs into the
+#     local registry (or install it straight from npmjs in step 3):
+(cd /tmp/dshell-packs && npm pack @deepseek-ai/dsh-ssh@0.1.7-rc.2 --registry=https://registry.npmjs.org/)
 
 # 3. in ~/.dsh/profiles/desktop/package.json: add every @nexus-aethra/dshell-*
 #    package at 0.1.2 and those four at 0.1.5-rc.2 to "dependencies", and append
@@ -421,10 +430,10 @@ cp dsh/apps/desktop/.desktop-build/targets/linux-x64/packed/dsh/deepseek-ai-dsh-
 ```
 
 Restart the app afterwards. The registry is needed only while installing — the
-packages are copied into the profile, not linked to it — and the four upstream
-packages stay needed at runtime because the bundle patch names modules the
-desktop seed omits (the dshell client bundle's own dependencies, and the
-servers the rows resolve).
+packages are copied into the profile, not linked to it — and the upstream
+packages stay needed at runtime: they are what the dshell client bundle and the
+dshell host rows resolve against, and the desktop seed ships only the part of
+dsh the stock app itself uses.
 
 > The 0.1.2 bundle names three more upstream packages than the 0.1.1 one did —
 > `dsh-browser-use`, `dsh-computer-use` and
