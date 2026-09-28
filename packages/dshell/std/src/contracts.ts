@@ -922,6 +922,16 @@ export const DSHELL_STREAM_SEND_PATH = '/api/dshell/stream/send'
 export const DSHELL_HOME_ENV = 'DSHELL_HOME'
 
 /**
+ * The bundle package this workspace publishes.
+ *
+ * Named here because the Plugins panel keys a plugin's own configuration by
+ * `<bundle package>#<row id>` (see dsh's ui-plugin-manager slot contract), so a
+ * package mounting a config page there has to spell the bundle it ships in —
+ * and spelling it in two places is how one of them goes stale.
+ */
+export const DSHELL_BUNDLE_NAME = '@nexus-aethra/dshell-bundle'
+
+/**
  * Exact `/api` route path owned by dshell's directory browser.
  *
  * The settings card's data-directory field cannot be typed by everyone and

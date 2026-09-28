@@ -8,10 +8,9 @@
  *
  * rc.2 reads a plugin's configuration from the schema its entry EXPORTS as
  * `Config`; the entry id in the bundle patch (`dshell-mode`) is the namespace
- * the settings section and the browser's `ctx.configForms` key on. The two
- * documents dshell kept in alpha.2 (terminal preferences, data root) are now
- * sections of this one object, which is why the settings page dispatches one
- * dshell card from it.
+ * the browser's `ctx.configForms` keys on. The two documents dshell kept in
+ * alpha.2 (terminal preferences, data root) are now sections of this one
+ * object, which is why one configuration page renders both cards.
  */
 
 import z from '@deepseek-ai/schemastery'

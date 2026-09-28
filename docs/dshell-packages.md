@@ -205,8 +205,10 @@ when it contributes to model-visible state.
   editor: the composer is a Lexical contenteditable, so the tail is a
   span in the composer's floating overlay placed from the caret's rect.
   Each of the three is switchable, and those switches live in the
-  `dshell` settings document: the card in the Plugins section edits them
-  beside the palette (`settings-card.ts`), `shell-settings.ts` holds the
+  `dshell` settings document: the `dshell-mode` row's configuration page
+  in the Plugins panel edits them beside the palette (`settings-card.ts`,
+  mounted by `config-page.ts` with the data-directory card), and
+  `shell-settings.ts` holds the
   client store with a pre-paint cache, and the key interceptor reads it
   through a ref so a flip cannot go stale.
   The view seat is `terminal-view.ts`, which chooses between the
@@ -335,9 +337,11 @@ when it contributes to model-visible state.
     deep for one). A successful connection **test** reports the fingerprint it
     trusts — `主机密钥 SHA256:…（首次信任…／已信任）` — read back from that store,
     since `accept-new` otherwise records a first contact silently.
-  - **Browser face** provides the device card in the Plugins settings
-    section and the `dshellSsh` service the session picker and the
-    new-session dialog read.
+  - **Browser face** provides the `dshell-ssh` row's configuration page in
+    the Plugins panel (dsh's `plugins.row.config` seat, keyed
+    `<bundle>#dshell-ssh`) — the device registry is configured beside the
+    plugin it belongs to — and the `dshellSsh` service the session picker
+    and the new-session dialog read.
 - dsh services depended on: `ctx.settings`, `ctx.shell`,
   `ctx.subprocess`, `ctx.fs`, `ctx.agents`, `ctx.connection.fetch`.
 - Introduced in: Phase 9.6; connection failure handling in Phase 9.7.

@@ -1,11 +1,11 @@
 /**
- * dshell-ssh browser face: the device card in the Plugins settings section and
- * the `dshellSsh` service the session picker reads.
+ * dshell-ssh browser face: the device page in the Plugins panel and the
+ * `dshellSsh` service the session picker reads.
  *
- * The surface is a TAB in the Plugins settings section: `0.1.6-alpha.2`
- * replaced the per-namespace card dispatch (`settings.plugin.item`) with a
- * tabbed page, so the registrant states its own id and localized label instead
- * of being dispatched by the namespace it edits.
+ * The surface is the `dshell-ssh` row's own configuration page: `0.1.7-rc.2`
+ * carries plugin configuration on the Plugins panel, which keys an entry by
+ * `<bundle package>#<row id>` and draws a configure control on that row, so a
+ * reader configures the device registry beside the plugin it belongs to.
  */
 
 import { type Context } from '@deepseek-ai/cordis'
@@ -15,9 +15,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the workspace SlotMap (`sidebar.workspaces.session.row.action`).
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
-// Type-only: pulls the Plugins-section SlotMap (`settings.plugins.tab`).
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { DshellSshCard } from './card.js'
+// Type-only: pulls the Plugins-panel SlotMap (`plugins.row.config`).
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
+import { DshellSshConfigPage } from './card.js'
 import { en, zh } from './locales.js'
 import { SshClientService } from './service.js'
 import { DshellSessionDeviceButton } from './session-bind.js'
@@ -35,23 +36,20 @@ export type { DshellSshKey } from './locales.js'
 
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dshell-ssh: dictionaries')
-  const t = ctx.locale.bind(NS)
   const ssh = new SshClientService(ctx)
   void ssh.load()
-  // The card itself is the registered component: its `t` seat comes from the
+  // The page itself is the registered component: its `t` seat comes from the
   // declared namespace, and the device service travels as the inject face, so
-  // both reach it as composed props (the same shape the shipped tabs use). The
-  // tab's own label is registrant-localized, which is why `t` is bound here.
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+  // both reach it as composed props. The panel keys the entry by the row it
+  // configures, which is why the bundle's name is stated rather than inferred.
+  ctx.slots.inject('plugins.row.config', () => ctx.slots.register(
     {
-      name: 'settings.plugins.tab',
-      id: 'ssh',
-      order: 20,
-      label: () => t('card.title'),
+      name: 'plugins.row.config',
+      key: `${DSHELL_BUNDLE_NAME}#dshell-ssh`,
       locale: NS,
       inject: () => ({ ssh }),
     },
-    DshellSshCard,
+    DshellSshConfigPage,
   ))
   // The per-session device binding rides the stock session row's hover strip:
   // dshell's own session list, which carried the old picker, is gone with the

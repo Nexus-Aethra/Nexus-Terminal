@@ -10,7 +10,8 @@
  *
  * The selected id is authoritative in the Host settings document
  * (`../settings.ts`, namespace `dshell`) and is edited through the card
- * the browser half contributes to the Plugins settings section. localStorage
+ * the browser half contributes to the dshell-mode page in the Plugins panel.
+ * localStorage
  * holds the last accepted id ONLY as a pre-paint cache: the first render
  * happens before the settings scope answers, and repainting the default
  * palette on every load would flash. A Host answer always wins over the cache.

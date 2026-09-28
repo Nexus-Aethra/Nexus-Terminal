@@ -9,10 +9,9 @@
  * every transcript into it. That is not an input assist, and a reader looking
  * for "where does this thing write my transcripts" does not open 终端与输入辅助.
  *
- * dsh's plugin settings section dispatches one card per registered settings
- * namespace, so the split is a second namespace (`dshell-data`) rather than a
- * second panel drawn inside the first: the section's ledger is what puts a card
- * on the page, and a card it does not dispatch would never be reached.
+ * Both cards are mounted by `config-page.ts` as the `dshell-mode` row's
+ * configuration page in the Plugins panel; this one keeps its own document
+ * (`dshell-data`) so the two stores stay independent.
  *
  * The card follows the section's shape — a header naming what it governs over a
  * line saying what it is set to, collapsed until opened — and it is a card

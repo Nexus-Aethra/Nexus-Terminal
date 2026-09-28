@@ -12,8 +12,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls the settings SlotMap and the ctx.configForms merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: pulls the Plugins-section SlotMap (`settings.plugins.tab`).
-import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
+// Type-only: pulls the Plugins-panel SlotMap (`plugins.row.config`).
+import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 // Type-only: pulls the locale service merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -42,8 +42,8 @@ import type { PipeSeat, PipeTicket } from './status-card.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
-import { DshellSettingsCard } from './settings-card.js'
-import { DshellDataCard } from './data-card.js'
+import { DshellModeConfigPage } from './config-page.js'
+import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import { adoptTheme, connectThemeSettings } from './theme.js'
 import { adoptShellHelperSettings, connectShellHelperSettings } from './shell-settings.js'
 import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
@@ -617,32 +617,18 @@ export function apply(ctx: Context): void {
       'dshell-mode: /shell + /agent + /fullscreen source',
     )
   })
-  // The palette is a dshell plugin setting, so it lives in the Plugins
-  // settings section's "configurable" tab as a card keyed by the namespace it
-  // edits — the same namespace this package's Host half registers, which is
-  // what makes the tab dispatch the card at all.
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+  // dshell-mode's configuration is the `dshell-mode` row's page in the Plugins
+  // panel: the panel draws a configure control on the row the bundle declares,
+  // and the page opens beside the plugin it configures. A keyed slot takes the
+  // row's key — `<bundle package>#<row id>` as the bundle's patch declares it —
+  // rather than an id of its own.
+  ctx.slots.inject('plugins.row.config', () => ctx.slots.register(
     {
-      name: 'settings.plugins.tab',
-      id: 'terminal',
-      order: 10,
-      label: () => t('settings.title'),
+      name: 'plugins.row.config',
+      key: `${DSHELL_BUNDLE_NAME}#dshell-mode`,
       locale: NS,
     },
-    DshellSettingsCard,
-  ))
-  // The second tab. `0.1.6-alpha.2` dispatches the Plugins page by TAB, not by
-  // the namespace a registrant edits, so each surface names its own id and
-  // label and the order is stated rather than inherited from the page.
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
-    {
-      name: 'settings.plugins.tab',
-      id: 'data',
-      order: 11,
-      label: () => t('data.title'),
-      locale: NS,
-    },
-    DshellDataCard,
+    DshellModeConfigPage,
   ))
   /**
    * Name a session the host's own way.

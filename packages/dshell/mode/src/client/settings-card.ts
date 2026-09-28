@@ -1,17 +1,18 @@
 /**
- * The dshell card in the Plugins settings section: the terminal palette, and
- * the switches for the shell helpers that read the composer's line.
+ * The dshell-mode page's terminal card: the terminal palette, and the switches
+ * for the shell helpers that read the composer's line.
  *
- * One card per settings namespace: the section dispatches a card for every
- * namespace the Host serves that a card claims, so dshell's OTHER document
- * (where it keeps its files, `dshell-data`) is a card of its own rather than a
- * group here — see `data-card.ts`.
+ * One card per question: the page it is mounted on (`config-page.ts`, the
+ * `dshell-mode` row's configuration in the Plugins panel) carries dshell's
+ * OTHER document too — where it keeps its files, `dshell-data` — as a second
+ * card rather than a group here, because the two answer different questions
+ * (see `data-card.ts`).
  *
- * It follows the section's card shape — a header button naming what the card
- * governs over a line that says what its settings are set to, collapsed until
- * opened — so it reads as one of the cards rather than a permanently open
- * panel. The chevron is the same `›`-rotated control dshell uses for its other
- * fold affordances.
+ * It follows the card shape dsh's settings surfaces use — a header button
+ * naming what the card governs over a line that says what its settings are set
+ * to, collapsed until opened — so it reads as one of the cards rather than a
+ * permanently open panel. The chevron is the same `›`-rotated control dshell
+ * uses for its other fold affordances.
  *
  * This is a card without a form. A palette applies the moment it is picked and
  * a switch takes effect on its click — that is what the user is judging — so

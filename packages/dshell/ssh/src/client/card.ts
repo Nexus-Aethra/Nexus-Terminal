@@ -1,11 +1,11 @@
 /**
- * The dshell-ssh card in the Plugins settings section: the device list and the
- * form that adds one.
+ * The dshell-ssh page in the Plugins panel: the device list and the form that
+ * adds one.
  *
- * It follows the section's card shape (header disclosure, collapsed first) and
- * needs no save button for the list itself — every action posts immediately —
- * but the add/edit form is staged, because a half-typed host must not be
- * committed by a stray keystroke.
+ * The card shape is the one dsh's settings surfaces use (header disclosure,
+ * collapsed first) and needs no save button for the list itself — every action
+ * posts immediately — but the add/edit form is staged, because a half-typed
+ * host must not be committed by a stray keystroke.
  */
 
 import {
@@ -166,6 +166,29 @@ const labelStyle: CSSProperties = { fontSize: 12, opacity: 0.7, gridColumn: '1 /
  * slot, plus the framework-synthesized `t` seat for the declared namespace.
  */
 export type DshellSshCardProps = { ssh: SshClientService } & PropsLocale<'dshellSsh'>
+
+/** The card's props as the Plugins panel hands them over, including its view. */
+export type DshellSshConfigProps = DshellSshCardProps & {
+  /** `summary` is the one-liner the panel falls back to; `page` is the card. */
+  readonly view?: 'summary' | 'page' | undefined
+}
+
+/**
+ * The `dshell-ssh` row's configuration page.
+ *
+ * The panel renders one entry per row it was handed a page for, and asks it
+ * twice: once as the row's one-liner (`summary`, used when the package itself
+ * carries no description) and once as the page itself. There is no form to
+ * stage here — the device registry writes through its own route — so the page
+ * is simply the card, which draws its own chrome.
+ *
+ * @param props - the device service, the locale seat, and which view to draw.
+ * @returns the summary line, or the card.
+ */
+export function DshellSshConfigPage({ view, ...card }: DshellSshConfigProps): ReactElement {
+  if (view === 'summary') return createElement('span', null, card.t('row.summary'))
+  return createElement(DshellSshCard, card)
+}
 
 export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const { ssh, t } = props

@@ -342,9 +342,9 @@ export function apply(ctx: Context, config: Partial<DshellSettings> = {}): void 
   const settled = new Promise<DshellDataRootPlan>((resolve) => { settle = resolve })
   ctx.provide(DSHELL_DATA_ROOT_SERVICE, { settled } satisfies DshellDataRootSeat)
   // rc.2 reads the schema off the entry's exported `Config`; there is nothing
-  // to register, and the page the settings section dispatches for this entry is
-  // built from it. The data root is settled from that same resolved config,
-  // which is the earliest point its value exists.
+  // to register, and the client reads the resolved values through
+  // `ctx.configForms` by this entry's id. The data root is settled from that
+  // same resolved config, which is the earliest point its value exists.
   const plan = settleDataRoot(ctx, config)
   settle(plan)
   // The per-session terminal-mode flag lives under the settled root, and is

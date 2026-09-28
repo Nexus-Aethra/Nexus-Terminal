@@ -96,6 +96,7 @@ export const zh = {
 
   // The settings card.
   'settings.title': '终端与输入辅助',
+  'config.summary': '终端配色、输入辅助，以及 dshell 自己文件的存放目录。',
   'settings.group.theme': '终端配色',
   'settings.group.helpers': '输入辅助',
   'settings.note.theme': '主终端（画布、块视图与命令行）的调色板 · 每个配色都备有浅色与深色两套取值，跟随 dsh 主题的明亮/暗色自动切换 · 选择立即生效，并保存到主机设置（同一主机所有浏览器共用）。',
@@ -398,6 +399,7 @@ export const en = {
   'composer.legend.agent': 'Enter sends the conversation · /agent for the terminal',
 
   'settings.title': 'Terminal and input assists',
+  'config.summary': 'Terminal palette, input assists, and where dshell keeps its own files.',
   'settings.group.theme': 'Terminal palette',
   'settings.group.helpers': 'Input assists',
   'settings.note.theme': 'Palette for the main terminal (canvas, block view, and command line). Every scheme carries both a light and a dark skin and follows dsh own light/dark theme. A pick takes effect immediately and is saved to the host settings (shared by every browser on this host).',
