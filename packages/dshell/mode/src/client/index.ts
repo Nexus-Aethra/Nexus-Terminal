@@ -38,7 +38,7 @@ import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
 import { injectTuiCss } from './tui-css.js'
 import { applyTabLock } from './terminal-mode-lock.js'
 import { toggledChoice, type TuiChoice } from './tui.js'
-import type { PipeSeat, PipeTicket } from './status-card.js'
+import { StatusChip, type PipeSeat, type PipeTicket, type StatusChipInjected } from './status-card.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
@@ -630,6 +630,32 @@ export function apply(ctx: Context): void {
     },
     DshellModeConfigPage,
   ))
+  // The session status chip, in dsh's own header-action band. One chip per
+  // terminal session, reporting that session's work — the plan and its phase,
+  // the AI terminal, its subagents and background jobs, its pipe requests and
+  // buffer transfers. Nothing global lives here: the pipe panel keeps the
+  // terminal section's own entry, and a stock session renders no chip at all
+  // (the gate is the same one every dshell client surface uses).
+  ctx.slots.inject(
+    'conversation.session.header.actions',
+    () => ctx.slots.register(
+      {
+        name: 'conversation.session.header.actions',
+        id: 'dshell-status',
+        // dsh's own job list sits at order 20 in this band; status reads after it.
+        order: 30,
+        locale: NS,
+        inject: (): StatusChipInjected => ({
+          pty,
+          sessions,
+          pipe: pipeSeat,
+          openConversation,
+          modes,
+        }),
+      },
+      gated(StatusChip),
+    ),
+  )
   /**
    * Name a session the host's own way.
    *

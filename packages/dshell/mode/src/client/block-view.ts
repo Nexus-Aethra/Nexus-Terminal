@@ -32,9 +32,10 @@ import { assembleTimeline, type ViewItem } from './block-model.js'
 import { createSpanTerminal, SPAN_FONT, SPAN_FONT_SIZE, SPAN_LINE_HEIGHT } from './block-terminal.js'
 import { ConnectionNotice, ConnectionPanel, connectionView } from './connection-notice.js'
 import {
-  StatusCard, StatusCardBoundary, STATUS_CARD_RESERVE, injectTodoCardCss, setTodoPanelSuppressed,
+  injectTodoCardCss, setTodoPanelSuppressed,
   type PipeSeat, type TodoItem,
 } from './status-card.js'
+import { publishSessionStatus } from './session-status.js'
 import { BookmarkRail, bookmarksOf } from './bookmark-rail.js'
 import { useDshellTheme } from './theme.js'
 
@@ -442,6 +443,13 @@ export function BlockView(props: {
     return undefined
   }, [version, id])
 
+  // Hand the two fold-derived facts to the session header's status chip: that
+  // surface sits outside this view and folds nothing itself.
+  useEffect(() => {
+    if (id === undefined) return
+    publishSessionStatus(String(id), { todos, activity })
+  }, [id, todos, activity])
+
   // The right-edge bookmark rail: one tick per agent turn in this session.
   // `bookmarksOf` reads the same fold the column renders, so the strip stays
   // in step with the cards — every turn that appears below also appears on
@@ -512,17 +520,6 @@ export function BlockView(props: {
         font: `${String(SPAN_FONT_SIZE)}px ${SPAN_FONT}`,
       },
     }, 'W'.repeat(40)),
-    createElement(StatusCardBoundary, null, createElement(StatusCard, {
-      todos,
-      activity,
-      theme,
-      pty: props.pty,
-      sessionId: id,
-      sessions: props.sessions,
-      pipe: props.pipe,
-      openConversation: props.openConversation,
-      t,
-    })),
     createElement('div', {
       ref: scroll,
       'data-dshell-block-view': '',
@@ -535,10 +532,9 @@ export function BlockView(props: {
         position: 'absolute',
         inset: 0,
         overflowY: 'auto',
-        // The status card is permanent, so the column reserves its height: a
-        // floating pill over the terminal's first line is exactly the kind of
-        // covered output this view exists to avoid.
-        padding: `${String(STATUS_CARD_RESERVE)}px 10px 2px`,
+        // The status lives in the session header now, so the column keeps its
+        // own top padding: nothing floats over the terminal's first line.
+        padding: '10px 10px 2px',
       },
     },
       ...items.flatMap((item, index) => {

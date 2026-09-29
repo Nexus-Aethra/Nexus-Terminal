@@ -1,35 +1,41 @@
 /**
- * The status card.
+ * The session status chip.
  *
  * dsh docks its `TodoPanel` at the bottom of the conversation, where it lies
  * across the transcript and covers the last lines of output. For a terminal
- * that is the wrong place: the reader is watching the tail of the stream. This
- * card floats in the top-right corner instead, out of the reading flow, and the
- * docked panel is suppressed while this view is mounted.
+ * that is the wrong place: the reader is watching the tail of the stream. The
+ * status therefore lives in the session header instead, as one chip beside
+ * dsh's own header actions, and the docked panel is suppressed while a terminal
+ * session is on screen.
  *
  * It is an *integrated status list*, not a task panel and not a terminal
- * window: one row per thing worth knowing about the session's work — the plan
+ * window: one row per thing worth knowing about this session's work — the plan
  * and the phase it is in, the AI's own terminal, the subagents it spawned, the
- * open sessions, a broken terminal link. Collapsed it is one narrow line: the
- * newest thing that is happening, so a glance is enough. Expanded it is those
- * rows, and a row's detail (the task list, the live terminal, the children)
- * opens only when that row is clicked.
+ * background jobs, this session's pipe requests and buffer transfers, a broken
+ * terminal link. The chip carries the newest thing that is happening, so a
+ * glance is enough; opening it shows those rows, and a row's detail (the task
+ * list, the live terminal, the children) opens only when that row is clicked.
  *
- * Everything here is a *projection* of state owned elsewhere — the fold's
- * tasks, the bridge's agent stream, dsh's session list and subagent catalog —
- * so the card never becomes a second source of truth.
+ * Everything here is *session-scoped* and a *projection* of state owned
+ * elsewhere — the fold's tasks, the bridge's agent stream, dsh's session list,
+ * the buffer's pipe state — so the chip never becomes a second source of truth,
+ * and the pipe panel itself stays reachable from the terminal section's own
+ * entry rather than from here.
  */
 
 import { Component, createElement, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactElement, type ReactNode } from 'react'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
+import { IconChevronDownOutlineRegular, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { SPAN_FONT } from './block-terminal.js'
-import { createAgentTerminal, AGENT_PANEL_HEIGHT, type AgentTerminalView } from './agent-terminal.js'
 import type { PtyStreamService } from '@nexus-aethra/dshell-terminal-bridge/client'
 import type { DshellModeKey } from './locales.js'
-import type { Theme } from './theme.js'
+import { useDshellTheme, type Theme } from './theme.js'
+import type { TerminalModeClient } from './terminal-mode.js'
+import { sessionStatusSeat } from './session-status.js'
 
 /** One item of the session's task list, as the `todo/write` event carries it. */
 export interface TodoItem {
@@ -85,9 +91,15 @@ function jobDuration(t: PropsLocale<'dshellMode'>['t'], job: JobView, now: numbe
  * bundle, and a composition without it passes nothing — the pipe rows then
  * simply never appear.
  */
-/** The pipe state slice the card reads — links, tickets, in-flight transfers. */
+/** The pipe state slice the chip reads — links, tickets, in-flight transfers. */
 export interface PipeState {
-  readonly links: readonly { readonly id: string; readonly a: string; readonly b: string }[]
+  readonly links: readonly {
+    readonly id: string
+    readonly a: string
+    readonly b: string
+    /** The name a human or the agent gave the link; absent when unnamed. */
+    readonly label?: string | undefined
+  }[]
   readonly tickets: readonly PipeTicket[]
   /**
    * Whether the frame-wide pipe panel is on screen. The card ignores it; the
@@ -145,6 +157,9 @@ const EMPTY_PIPE_STATE: PipeState = { links: [], tickets: [] }
 const getEmptyPipeState = (): PipeState => EMPTY_PIPE_STATE
 const NO_PIPE_SUBSCRIBE = (): (() => void) => () => {}
 
+/** A session whose view has not folded anything yet. */
+const EMPTY_TODOS: readonly TodoItem[] = []
+
 /** Ticket states that are still running; everything else is settled. */
 const SETTLED: readonly PipeTicket['state'][] = ['done', 'failed', 'timeout', 'cancelled']
 
@@ -172,13 +187,7 @@ function remaining(t: PropsLocale<'dshellMode'>['t'], deadlineAt: number): strin
 /** How often the card re-reads the pipe while this session has one. */
 const PIPE_POLL_MS = 5000
 
-/**
- * Vertical space the collapsed card occupies, reserved at the top of the
- * column so the transcript never starts underneath it.
- */
-export const STATUS_CARD_RESERVE = 46
-
-/** Suppress the docked panel for as long as the block view owns the surface. */
+/** Suppress the docked panel for as long as a terminal session owns the surface. */
 export function setTodoPanelSuppressed(suppressed: boolean): void {
   if (typeof document === 'undefined') return
   if (suppressed) document.body.dataset.dshellTodoFloating = ''
@@ -207,46 +216,6 @@ interface StatusRow {
   readonly active: boolean
   /** Detail body, rendered only while the row is open. */
   readonly detail?: ReactNode
-}
-
-/** The live agent terminal, at a fixed grid, re-rendered from the stream. */
-function AgentTerminalPanel(props: { pty: PtyStreamService; sessionId: string; theme: Theme }): ReactElement {
-  const { pty, sessionId, theme } = props
-  const state = useSyncExternalStore(pty.agent.subscribe, pty.agent.getSnapshot)
-  const host = useRef<HTMLDivElement | null>(null)
-  const view = useRef<AgentTerminalView | undefined>(undefined)
-  useEffect(() => {
-    const element = host.current
-    if (element === null) return
-    const terminal = createAgentTerminal(element, theme, cols => { pty.resizeAgent(cols) })
-    view.current = terminal
-    terminal.update(pty.agentText(sessionId))
-    const observer = new ResizeObserver(() => { terminal.fit() })
-    observer.observe(element)
-    return () => {
-      observer.disconnect()
-      terminal.dispose()
-      view.current = undefined
-    }
-  }, [pty, sessionId, theme])
-  // The stream's version is the render key: the text itself is read on demand,
-  // so a long shell output never rides through React's state.
-  useEffect(() => {
-    view.current?.update(pty.agentText(sessionId))
-  }, [pty, sessionId, state.version])
-  return createElement('div', {
-    ref: host,
-    'data-dshell-agent-terminal': '',
-    style: {
-      height: `${String(AGENT_PANEL_HEIGHT + 10)}px`,
-      marginTop: '2px',
-      padding: '4px 2px 2px 6px',
-      borderRadius: '6px',
-      background: theme.inputBar,
-      border: `1px solid ${theme.border}`,
-      overflow: 'hidden',
-    },
-  })
 }
 
 /** One clickable row: glyph, label, value, and the detail it opens. */
@@ -342,23 +311,30 @@ export class StatusCardBoundary extends Component<{ children: ReactNode }, { err
   }
 }
 
-/** The floating status card: one line collapsed, integrated status rows expanded. */
-export function StatusCard(props: {
-  todos: readonly TodoItem[]
-  /** What the running turn is doing, when the fold knows (the current phase). */
-  activity: string | undefined
-  theme: Theme
+/** The faces the session-header status chip reads. */
+export interface StatusChipInjected {
+  /** The agent-terminal and terminal-link streams, owned by the bridge. */
   pty: PtyStreamService
-  sessionId: string | undefined
+  /** dsh's session list: running state, titles, subagent children, job mirror. */
   sessions: ISessions
   /** The cross-session pipe's face; absent in a composition without it. */
   pipe?: PipeSeat | undefined
   /** Show a conversation the reader picked (a subagent's); absent with no view owner. */
   openConversation?: ((target: SessionTarget) => void) | undefined
-} & PropsLocale<'dshellMode'>): ReactElement | null {
-  const { todos, activity, theme, pty, sessionId, sessions, pipe, openConversation, t } = props
-  // Subscribed before any early return: hooks cannot be conditional, and the
-  // state they carry is what decides whether the card exists at all.
+  /** The terminal-mode seat: the chip is gated on it, so a stock session has none. */
+  modes: TerminalModeClient
+}
+
+/** Full props of the session-header status chip. */
+export type StatusChipProps = PropsRuntime<'conversation.session.header.actions'>
+  & PropsLocale<'dshellMode'> & StatusChipInjected
+
+/** The session status chip: one line in the header, integrated status rows behind it. */
+export function StatusChip(props: StatusChipProps): ReactElement | null {
+  const { sessionId, pty, sessions, pipe, openConversation, t } = props
+  const theme = useDshellTheme()
+  // Subscribed before anything else: hooks cannot be conditional, and the state
+  // they carry is what decides what the chip says at all.
   const agent = useSyncExternalStore(pty.agent.subscribe, pty.agent.getSnapshot)
   const link = useSyncExternalStore(pty.state.subscribe, pty.state.getSnapshot)
   const list = useSyncExternalStore(sessions.list.subscribe, sessions.list.getSnapshot)
@@ -366,8 +342,51 @@ export function StatusCard(props: {
     pipe?.subscribe ?? NO_PIPE_SUBSCRIBE,
     pipe?.getSnapshot ?? getEmptyPipeState,
   )
-  const [openCard, setOpenCard] = useState(false)
+  // The task list and the phase in flight are folded by the block view, which
+  // publishes them for surfaces outside itself — this chip reads that
+  // projection instead of folding the transcript a second time.
+  const statusMap = useSyncExternalStore(sessionStatusSeat.subscribe, sessionStatusSeat.getSnapshot)
+  const status = sessionId === undefined ? undefined : statusMap.get(String(sessionId))
+  const todos = status?.todos ?? EMPTY_TODOS
+  const activity = status?.activity
+  const [open, setOpen] = useState(false)
   const [openRow, setOpenRow] = useState<string | undefined>(undefined)
+  const root = useRef<HTMLDivElement | null>(null)
+  useDismissOnOutsidePointer(root, open, setOpen)
+
+  // Where the menu lands. The chip sits mid-band, so an edge-anchored sheet
+  // runs off the viewport (a right-anchored 420px menu on a chip at x=305 in a
+  // 935px window lands at x=-57) and would cover the band it belongs to. The
+  // menu is therefore placed in fixed coordinates: clamped horizontally into
+  // the viewport, opened below the chip, and flipped above it when the room
+  // below is too small to read anything in.
+  const [placement, setPlacement] = useState<{
+    left: number; width: number; maxHeight: number; top?: number; bottom?: number
+  } | null>(null)
+  const measure = (): void => {
+    const el = root.current
+    if (el === null) return
+    const rect = el.getBoundingClientRect()
+    const width = Math.min(420, Math.max(240, innerWidth - 24))
+    const left = Math.max(12, Math.min(rect.left, innerWidth - 12 - width))
+    const below = innerHeight - rect.bottom - 17
+    const above = rect.top - 17
+    setPlacement(below < 240 && above > below
+      ? { left, width, bottom: innerHeight - rect.top + 5, maxHeight: Math.min(480, above) }
+      : { left, width, top: rect.bottom + 5, maxHeight: Math.min(480, below) })
+  }
+  useEffect(() => {
+    if (!open) return
+    measure()
+    const onMove = (): void => { measure() }
+    addEventListener('resize', onMove)
+    addEventListener('scroll', onMove, true)
+    return () => {
+      removeEventListener('resize', onMove)
+      removeEventListener('scroll', onMove, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `measure` reads only refs and state below
+  }, [open, openRow])
   // The clock behind live job durations: it runs only while the jobs row is
   // expanded and something is still running, so an idle session costs nothing.
   const [now, setNow] = useState(() => Date.now())
@@ -468,6 +487,12 @@ export function StatusCard(props: {
     ticket.from === sessionId && !SETTLED.includes(ticket.state))
   const owed = pipeState.tickets.filter(ticket =>
     ticket.to === sessionId && !SETTLED.includes(ticket.state))
+  // This session's established pipes. They are reported even while nothing is
+  // in flight: which other session a terminal is wired to is a fact about the
+  // session, and the header is where a reader looks up the session.
+  const linksHere = sessionId === undefined
+    ? []
+    : pipeState.links.filter(entry => entry.a === sessionId || entry.b === sessionId)
 
   // The one line the collapsed card shows: the newest thing that is happening,
   // in the order a reader would ask about it — the phase of a written plan
@@ -486,7 +511,9 @@ export function StatusCard(props: {
                   : pendingTodo !== undefined ? `○ ${pendingTodo.content}`
                     : dead ? t('status.terminalEnded')
                       : linkBroken ? t('status.linkBroken')
-                        : t('status.idle')
+                        : linksHere.length > 0
+                          ? `${t('status.idle')} · ${t('status.chip.links', { count: linksHere.length })}`
+                          : t('status.idle')
   const idle = !running && activeTodo === undefined && !live && runningChildren === 0
     && pendingTodo === undefined && !dead && !linkBroken && waiting.length === 0 && owed.length === 0
     && liveJobs.length === 0 && liveTransfers.length === 0
@@ -513,25 +540,6 @@ export function StatusCard(props: {
       ),
     })
   }
-  rows.push({
-    id: 'terminal', glyph: '▚', label: t('status.terminal'), active: live,
-    value: !live
-      ? (dead ? t('status.ended') : t('status.off'))
-      : agent.ready ? t('status.runningReadonly') : t('status.starting'),
-    detail: createElement('div', { style: { display: 'grid', gap: '4px' } },
-      live || !agentHere
-        ? null
-        : createElement('div', {
-          onClick: () => { pty.openAgentTerminal() },
-          style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5 },
-        }, agent.reason === undefined ? t('status.openTerminal') : t('status.reopen')),
-      dead ? line(agent.reason ?? '', theme) : null,
-      live && !agent.ready ? line(t('status.startingShell'), theme) : null,
-      agentHere
-        ? createElement(AgentTerminalPanel, { pty, sessionId, theme })
-        : line(t('status.switchToSession'), theme),
-    ),
-  })
   if (children.length > 0 || runningChildren > 0) {
     rows.push({
       id: 'agents', glyph: '⎇', label: t('status.agents'), active: runningChildren > 0,
@@ -644,6 +652,31 @@ export function StatusCard(props: {
   }
   // The pipe rows. A breakpoint is the wait for an answer (the agent ended its
   // turn on purpose); a pipe task is work another session handed to this one.
+  if (linksHere.length > 0) {
+    rows.push({
+      id: 'pipes', glyph: '⇄', label: t('status.pipe.links'),
+      active: waiting.length > 0 || owed.length > 0,
+      value: t('status.pipe.links.value', { count: linksHere.length }),
+      detail: createElement('div', { style: { display: 'grid', gap: '3px' } },
+        ...linksHere.map(entry => {
+          const peer = peerTitle(entry.a === sessionId ? entry.b : entry.a)
+          return createElement('div', {
+            key: entry.id,
+            style: {
+              display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px', alignItems: 'baseline',
+              color: theme.text, fontSize: 11.5, lineHeight: '16px',
+            },
+          },
+            createElement('span', {
+              title: entry.label ?? peer,
+              style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            }, entry.label === undefined || entry.label.length === 0 ? peer : `${peer} · ${entry.label}`),
+            createElement('span', { style: { color: theme.muted, flex: '0 0 auto' } }, '⇄'),
+          )
+        }),
+      ),
+    })
+  }
   if (waiting.length > 0) {
     rows.push({
       id: 'breakpoint', glyph: '⏸', label: t('status.breakpoint'), active: true,
@@ -689,15 +722,6 @@ export function StatusCard(props: {
           createElement('div', { style: { color: theme.muted, fontSize: 11 } },
             `${t(STATE_KEY[ticket.state])} · ${remaining(t, ticket.deadlineAt)}`),
         )),
-        pipe === undefined
-          ? null
-          : createElement('div', {
-            onClick: (event: { stopPropagation: () => void }) => {
-              event.stopPropagation()
-              pipe.setOpen(true)
-            },
-            style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5, marginTop: '3px' },
-          }, t('status.openPipePanel')),
       ),
     })
   }
@@ -716,49 +740,61 @@ export function StatusCard(props: {
     })
   }
 
-  // The terminal's grid needs the room; every other detail is text.
-  const wide = openRow === 'terminal'
-
   return createElement('div', {
-    'data-dshell-status-card': '',
-    style: {
-      position: 'absolute',
-      top: 8,
-      right: 12,
-      zIndex: 5,
-      display: 'grid',
-      gap: '2px',
-      width: openCard ? (wide ? 'min(720px, 84%)' : 'min(380px, 62%)') : 'fit-content',
-      maxWidth: openCard ? (wide ? 'min(720px, 84%)' : 'min(380px, 62%)') : 'min(330px, 56%)',
-      background: theme.menuBg,
-      border: `1px solid ${theme.border}`,
-      borderRadius: '8px',
-      padding: openCard ? '6px 7px 7px' : '8px 11px',
-      fontFamily: SPAN_FONT,
-      fontSize: 12.5,
-      color: theme.muted,
-      boxShadow: '0 6px 20px rgba(0,0,0,.35)',
-    },
+    ref: root,
+    'data-dshell-status-chip': '',
+    style: { position: 'relative', display: 'inline-flex' },
   },
-    createElement('div', {
+    // The chip: dsh's own header-action metrics, so it reads as part of the band.
+    createElement('button', {
+      type: 'button',
       'data-dshell-status-head': '',
-      onClick: () => { setOpenCard(!openCard); if (openCard) setOpenRow(undefined) },
-      style: { display: 'flex', gap: '7px', alignItems: 'baseline', cursor: 'pointer', whiteSpace: 'nowrap' },
+      'aria-expanded': open,
+      'aria-label': t('status.chip.aria'),
+      title: headline,
+      onClick: () => {
+        setOpen(!open)
+        if (open) setOpenRow(undefined)
+      },
+      style: {
+        display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: '3px 6px 3px 2px',
+        border: 0, borderRadius: 'var(--dsw-radius-sm)', background: 'transparent',
+        color: open ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary)',
+        fontSize: 12, lineHeight: '18px', cursor: 'pointer', fontFamily: SPAN_FONT, maxWidth: 340,
+      },
     },
       createElement('span', {
-        style: { color: idle ? theme.muted : theme.accentText, flex: '0 0 auto', opacity: idle ? 0.8 : 1 },
-      }, '⌘'),
+        'data-dshell-status-dot': '',
+        style: {
+          flex: 'none', fontSize: 8, lineHeight: '18px',
+          color: idle ? 'var(--dsw-alias-label-quaternary, currentColor)' : theme.accent,
+          opacity: idle ? 0.55 : 1,
+        },
+      }, '●'),
+      createElement('span', {
+        style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      }, headline),
       createElement('span', {
         style: {
-          color: running || live ? theme.text : theme.muted,
-          overflow: 'hidden', textOverflow: 'ellipsis', flex: '1 1 auto',
+          flex: 'none', display: 'inline-flex', alignItems: 'center',
+          transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 120ms ease',
         },
-      }, headline),
-      createElement('span', { style: { color: theme.muted, flex: '0 0 auto', opacity: 0.8 } }, openCard ? '▴' : '▾'),
+      }, createElement(IconChevronDownOutlineRegular, { size: 12 })),
     ),
-    openCard
+    open && placement !== null
       ? createElement('div', {
-        style: { display: 'grid', gap: '1px', marginTop: '2px', borderTop: `1px solid ${theme.border}`, paddingTop: '4px' },
+        'data-dshell-status-menu': '',
+        style: {
+          position: 'fixed', left: placement.left, maxHeight: placement.maxHeight,
+          ...(placement.top === undefined ? { bottom: placement.bottom } : { top: placement.top }),
+          zIndex: 100,
+          boxSizing: 'border-box', display: 'grid', gap: 1, padding: 3,
+          width: placement.width, overflow: 'auto',
+          borderRadius: 'var(--dsw-radius-lg)', background: 'var(--dsw-specific-menu)',
+          backdropFilter: 'var(--dsw-menu-backdrop-filter)',
+          boxShadow: '0 6px 20px rgba(0,0,0,.35)',
+          fontFamily: SPAN_FONT, fontSize: 12.5, color: theme.muted,
+        },
       },
         ...rows.map(row => createElement(Row, {
           key: row.id,
