@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-usage",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "dshell usage: a durable per-model token index over every session's reported usage, and the settings page that charts it.",
   "license": "MIT",
   "repository": {
