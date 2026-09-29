@@ -57,10 +57,10 @@ Two ways in: install the published plugins into a dsh you already have, or build
 
 ### Install into dsh
 
-Prerequisites: **dsh** `0.2.0-rc.1` — either the desktop app, or the CLI
+Prerequisites: **dsh** `0.2.0-rc.2` — either the desktop app, or the CLI
 (`npm install -g @deepseek-ai/dsh@next`) — and **Node 24.21.0** with **pnpm 9.15.0** on `PATH`
-(`dsh plugin` forwards to pnpm). The `0.1.5-rc.2`, `0.1.6-alpha.2` and `0.1.7-rc.2` lines also
-work; `@latest` on npm is currently `0.1.7-rc.2`.
+(`dsh plugin` forwards to pnpm). The `0.1.5-rc.2`, `0.1.6-alpha.2`, `0.1.7-rc.2` and `0.2.0-rc.1` lines
+also work; `@latest` on npm is currently `0.1.7-rc.2`.
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
 whole bundle when one does not match, so a dshell release names the exact dsh versions it supports.

@@ -406,7 +406,7 @@ for d in packages/dshell/*/; do (cd "$d" && pnpm pack --pack-destination /tmp/ds
 node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 
 # 2. no upstream package needs copying into the registry any more. Checked
-#    against the 0.2.0-rc.1 desktop runtime
+#    against the 0.2.0-rc.2 desktop runtime
 #    (`resources/app/dsh/node_modules/@deepseek-ai/`, 278 `dsh-*` packages): it
 #    ships every package the dshell client bundle imports at runtime —
 #    `dsh-client-store`, `dsh-client-ui-slots`, `dsh-client-ui-primitives`,
@@ -417,7 +417,7 @@ node scripts/local-registry.mjs --port 4873 --dir /tmp/dshell-packs &
 
 # 2b. `@deepseek-ai/dsh-ssh` needs no step of its own since dshell 0.1.7: the
 #     desktop seed neither builds nor ships it (it is absent from the release's
-#     own `desktop-packages.json`, and still absent from the 0.2.0-rc.1
+#     own `desktop-packages.json`, and still absent from the 0.2.0-rc.2
 #     runtime), and dshell-ssh imports `SshRpcPeer` and
 #     `RemoteOperationError` from it at runtime, so that row now declares it as a
 #     DEPENDENCY and an install brings it. Before 0.1.7 it was a peer only, which
