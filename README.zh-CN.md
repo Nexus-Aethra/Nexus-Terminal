@@ -67,7 +67,7 @@ bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 ds
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，
 # dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.8
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.9
 
 dsh web
 ```
