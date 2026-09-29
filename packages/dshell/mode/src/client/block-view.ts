@@ -458,7 +458,7 @@ export function BlockView(props: {
   const bookmarks = useMemo(() => {
     const state = foldRef.current
     return id !== undefined && state !== undefined && state.sessionId === id
-      ? bookmarksOf(state.fold.blocks, t)
+      ? bookmarksOf(state.fold.blocks, t('bookmark.empty'))
       : []
   }, [version, id, t])
   // A jump unsticks the tail-pin so a fresh turn does not drag the reader
@@ -617,6 +617,7 @@ export function BlockView(props: {
       bookmarks,
       scrollContainer: scroll.current,
       onJump: handleJump,
+      t,
     }),
   )
 }

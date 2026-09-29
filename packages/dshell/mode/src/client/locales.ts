@@ -284,6 +284,8 @@ export const zh = {
 
   // The bookmark rail.
   'bookmark.empty': '(空消息)',
+  'bookmark.rail': '会话书签',
+  'bookmark.jump': '跳到第 {turn} 轮',
 
   // A broken connection.
   'connection.settingsHint': '请在「设置 → 插件 → SSH 设备」中检查该设备',
@@ -561,6 +563,8 @@ export const en = {
   'completion.command': 'command',
 
   'bookmark.empty': '(empty message)',
+  'bookmark.rail': 'Session bookmarks',
+  'bookmark.jump': 'Jump to turn {turn}',
 
   'connection.settingsHint': 'Check this device under "Settings → Plugins → SSH devices"',
   'connection.goSettings': 'Settings',

@@ -1,96 +1,126 @@
 /**
- * The right-edge bookmark rail.
+ * The right-edge turn rail.
  *
- * One tick per agent turn in the current session, drawn from the block fold
- * (the same fold the column renders). The collapsed form is a vertical strip
- * of horizontal dashes — most gray, the running turn's accent, the latest
- * done one muted — so it reads as a marker strip rather than as content. On
- * hover the strip expands leftward into a list of the first line of each
- * request, and clicking a row scrolls the column to that block and unsticks
- * the tail-pin so a fresh turn does not immediately drag the reader away.
+ * One mark per agent turn in the current session, drawn from the block fold
+ * (the same fold the column renders). The shape follows dsh's own turn
+ * navigator — ui-chat's TurnNavigator — rather than dshell's earlier panel:
+ * a fixed-pitch ladder of 20x2 pills in the right gutter, right-aligned so the
+ * marks share one edge, and a preview card that opens to the left of the
+ * ladder while the pointer or focus is on a mark.
  *
- * The strip disappears entirely when there are no agent turns in this
- * session — a session that has only ever been a shell would otherwise carry
- * a permanent UI surface that does nothing.
+ * Geometry, states, motion, and the tokens are the host's: the ladder is
+ * vertically centred on the seat, caps at 420px and scrolls inside that frame
+ * with 24px mask fades, marks are 10px apart with 6px of inset per end, and a
+ * mark scales its pill in on hover (0.6 → 0.9), on the reader's own turn
+ * (1.0, in `--dsw-alias-label-primary`), and while a turn is running (a 1s
+ * pulse). Keyboard focus takes the brand colour, which the resting ladder
+ * never uses. Copy that reaches the reader is locale-owned.
  *
- * "Active" tracking: the bookmark whose block currently dominates the
- * viewport is highlighted, so the reader can see which turn they are
- * reading. A click sets the active key explicitly; as the user scrolls, an
- * IntersectionObserver re-evaluates the active block from the visible
- * geometry, and the highlight follows.
+ * Two things the host's rail does not carry, because they are dshell's:
+ * a failed turn keeps the error colour instead of the neutral one, and a
+ * running turn is the newest one, so the pulse marks live work. The rail
+ * hides itself when the session has fewer than two turns: a ladder of one
+ * mark navigates nowhere.
  */
 
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { createElement, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TurnBlock } from './blocks.js'
 import { agentItemOf } from './block-model.js'
-import { useDshellTheme, type Theme } from './theme.js'
 import { sanitizeRowText } from './session-rows.js'
 
-/** Width of the collapsed strip — narrow enough to disappear into the gutter. */
-const RAIL_WIDTH = 8
-/** Width of the row label once the rail is open. */
-const ROW_WIDTH = 260
+/** Rail width. The pill is 20px of it; the rest is the mark's hit area. */
+const FRAME_WIDTH = 28
+/** Distance from the seat's right edge, matching the host navigator. */
+const FRAME_RIGHT = 12
+/** Fixed pitch between neighbouring marks; overflow scrolls inside the frame. */
+const MARK_PITCH = 10
+/** Rail padding above the first mark and below the last, per end. */
+const MARK_INSET = 6
+/** Height of a mark's pill, and the hit band it sits in. */
+const PILL_WIDTH = 20
+const PILL_HEIGHT = 2
+/** Fade band the mask reserves at a scrollable end. */
+const FADE_PX = 24
+/** The ladder's own ceiling; taller ladders scroll instead of running away. */
+const LADDER_MAX = 420
+/** Room the ladder leaves for the session's header and composer. */
+const LADDER_RESERVE = 64
+/** The preview card's height, which its clamp and centring both use. */
+const PREVIEW_HEIGHT = 100
+/** Text a preview body keeps before the card's own clamp takes over. */
+const BODY_MAX = 220
+/** Below this seat width the ladder is hidden, as the host hides its own. */
+const NARROW_SEAT = 900
 /**
- * Pixels from the column's top edge where the strip starts. The strip is
- * pulled down from the very top of the seat so it does not crowd the
- * session's header chrome above the first turn — about a turn's worth of
- * vertical room, so the first tick aligns with the first agent block.
+ * Grace period between the cursor leaving a mark and the preview closing. The
+ * path from one mark to the next crosses a 10px pitch, so an immediate close
+ * would flicker on the way.
  */
-const TOP_INSET = 120
+const CLOSE_DELAY_MS = 90
 /**
- * Pixels of bottom margin, so the strip does not reach the composer.
- * Small enough that the strip still spans the column.
+ * A click sets the active mark and the geometry rule must not override that
+ * pick while the smooth scroll is in flight: the scroll's own events would
+ * otherwise pick whichever larger neighbour takes over the viewport first.
  */
-const BOTTOM_INSET = 24
-/** Maximum characters of a label before it is truncated with an ellipsis. */
-const LABEL_MAX = 36
-/**
- * Grace period between the cursor leaving the rail and the panel closing.
- * The reader's path from a row to where they want to read crosses the gap
- * between strip and panel, so a longer-than-immediate close avoids flicker.
- */
-const CLOSE_DELAY_MS = 140
+const CLICK_STICKY_MS = 1500
 
 /**
- * One bookmark: a turn in the current session, with the row's first line of
- * text as a label. The label is computed once from the durable rows, since a
- * streaming line is, by definition, not the title the bookmark would point at.
+ * One bookmark: a turn in the current session, with the request's first line
+ * as its title and the first lines of the answer as its body. Both are read
+ * from the durable rows, since a streaming line is, by definition, not the
+ * text the bookmark would point at.
  */
 export interface Bookmark {
+  /** Block key: stable identity for the mark, and the jump target. */
   readonly key: string
-  readonly label: string
+  /** First non-empty line of the request; the preview's title row. */
+  readonly prompt: string
+  /** First lines of the turn's answer; empty hides the body row. */
+  readonly response: string
+  /** The turn's state, for the mark's colour and pulse. */
   readonly status: TurnBlock['status']
 }
 
-/** Build the list the rail renders, oldest first; fold order is the same.
+/** Collapse a row's display text to one line, truncated with an ellipsis. */
+function oneLine(text: string, fallback: string): string {
+  const line = sanitizeRowText(text).split('\n').map(part => part.trim()).find(part => part.length > 0) ?? ''
+  if (line.length === 0) return fallback
+  return line.length > BODY_MAX ? `${line.slice(0, BODY_MAX - 1)}…` : line
+}
+
+/** Collapse a row's display text to a short body: blank lines dropped, then capped. */
+function fewLines(text: string): string {
+  const kept = sanitizeRowText(text).split('\n').map(part => part.trim()).filter(part => part.length > 0)
+  const joined = kept.slice(0, 3).join('\n')
+  return joined.length > BODY_MAX ? `${joined.slice(0, BODY_MAX - 1)}…` : joined
+}
+
+/** Build the ladder the rail renders, oldest first; fold order is the same.
  *
- * Only blocks that render as agent cards are bookmarked. Slash-command
- * blocks (a permission switch and friends) draw one quiet marker line with
- * no card and no jump anchor, and collapsed no-op turns draw nothing at
- * all — a bookmark for either would read as an empty conversation.
+ * Only blocks that render as agent cards are bookmarked. Slash-command blocks
+ * (a permission switch and friends) draw one quiet marker line with no card
+ * and no jump anchor, and collapsed no-op turns draw nothing at all — a mark
+ * for either would read as an empty conversation.
+ * @param blocks - the fold's turn blocks, oldest first.
+ * @param emptyLabel - what the preview says for a request with no text.
+ * @returns one bookmark per agent turn, in fold order.
  */
-export function bookmarksOf(blocks: readonly TurnBlock[], t: TranslateNS<'dshellMode'>): readonly Bookmark[] {
+export function bookmarksOf(blocks: readonly TurnBlock[], emptyLabel: string): readonly Bookmark[] {
   const out: Bookmark[] = []
   for (const block of blocks) {
     const item = agentItemOf(block)
     if (item === undefined || item.kind !== 'agent') continue
     const asked = block.rows.find(row => row.role === 'user')
-    const raw = asked?.text ?? block.title
-    const line = sanitizeRowText(raw).split('\n').map(part => part.trim()).find(part => part.length > 0) ?? ''
-    const label = line.length > LABEL_MAX ? `${line.slice(0, LABEL_MAX - 1)}…` : line
-    out.push({ key: block.key, label: label.length > 0 ? label : t('bookmark.empty'), status: block.status })
+    const answered = block.rows.find(row => row.role === 'assistant')
+    out.push({
+      key: block.key,
+      prompt: oneLine(asked?.text ?? block.title, emptyLabel),
+      response: answered === undefined ? '' : fewLines(answered.text),
+      status: block.status,
+    })
   }
   return out
-}
-
-/** The colour a tick takes, by the turn's status. */
-function tickColor(theme: Theme, status: TurnBlock['status'], isLast: boolean): string {
-  if (isLast && status === 'running') return theme.accent
-  if (isLast) return theme.accentText
-  if (status === 'failed') return theme.danger
-  if (status === 'aborted') return theme.muted
-  return theme.borderStrong
 }
 
 /**
@@ -98,6 +128,9 @@ function tickColor(theme: Theme, status: TurnBlock['status'], isLast: boolean): 
  * so the block sits near the top of the column. The block elements are tagged
  * with `data-dshell-block-key` on the column, and the container is the same
  * scroll element the column manages.
+ * @param scroll - the column's scroll container, when mounted.
+ * @param key - the bookmark's block key.
+ * @returns whether a target was found and scrolled to.
  */
 function scrollToBlock(scroll: HTMLDivElement | null, key: string): boolean {
   if (scroll === null) return false
@@ -126,6 +159,9 @@ function scrollToBlock(scroll: HTMLDivElement | null, key: string): boolean {
  * containerTop)`, clipped to zero when the block is entirely above or
  * below the viewport. The block with the greatest visible height wins. If
  * no block has any visible height, there is no answer.
+ * @param scroll - the column's scroll container, when mounted.
+ * @param keys - the bookmark keys to consider, oldest first.
+ * @returns the dominating block's key, or undefined when none is visible.
  */
 function activeBlockKey(scroll: HTMLDivElement | null, keys: readonly string[]): string | undefined {
   if (scroll === null || keys.length === 0) return undefined
@@ -147,60 +183,172 @@ function activeBlockKey(scroll: HTMLDivElement | null, keys: readonly string[]):
   return bestKey
 }
 
+/** Whether the reader asked their platform to skip decorative motion. */
+function prefersReducedMotion(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/**
+ * Inject the rail's stylesheet once per page.
+ *
+ * The host navigator's own styles are CSS Modules in another package, so they
+ * cannot be imported; these rules restate its measurements, states, and tokens
+ * under dshell's own attribute scope. Every value comes from `--dsw-*` aliases
+ * that the host publishes on `<body>`, so the rail follows dsh's light and
+ * dark surfaces without dshell resolving either.
+ */
+export function injectBookmarkCss(): void {
+  if (typeof document === 'undefined' || document.getElementById('dshell-bookmark-css') !== null) return
+  const style = document.createElement('style')
+  style.id = 'dshell-bookmark-css'
+  style.textContent = `
+[data-dshell-bookmark-rail]{position:absolute;inset:0;z-index:2;pointer-events:none;container-type:inline-size;}
+[data-dshell-bookmark-frame]{position:absolute;top:50%;right:${String(FRAME_RIGHT)}px;width:${String(FRAME_WIDTH)}px;
+  max-height:min(max(0px,calc(100% - ${String(LADDER_RESERVE)}px)),${String(LADDER_MAX)}px);
+  transform:translateY(-50%);contain:layout;cursor:pointer;pointer-events:auto;}
+[data-dshell-bookmark-scroller]{position:relative;max-height:inherit;overflow-y:auto;
+  overscroll-behavior:contain;scrollbar-width:none;}
+[data-dshell-bookmark-scroller]::-webkit-scrollbar{display:none;}
+[data-dshell-bookmark-scroller][data-fade-top]{mask-image:linear-gradient(to bottom,transparent 0,#000 ${String(FADE_PX)}px,#000 100%);}
+[data-dshell-bookmark-scroller][data-fade-bottom]{mask-image:linear-gradient(to bottom,#000 0,#000 calc(100% - ${String(FADE_PX)}px),transparent 100%);}
+[data-dshell-bookmark-scroller][data-fade-top][data-fade-bottom]{mask-image:linear-gradient(to bottom,transparent 0,#000 ${String(FADE_PX)}px,#000 calc(100% - ${String(FADE_PX)}px),transparent 100%);}
+[data-dshell-bookmark-marks]{position:relative;}
+[data-dshell-bookmark-mark]{position:absolute;left:0;right:0;height:${String(MARK_PITCH)}px;padding:0;
+  border:0;border-radius:8px;background:transparent;cursor:pointer;}
+[data-dshell-bookmark-mark]::before{position:absolute;top:50%;right:0;width:${String(PILL_WIDTH)}px;height:${String(PILL_HEIGHT)}px;
+  border-radius:2px;background:var(--dsw-alias-border-l4);content:'';transform:translateY(-50%) scaleX(0.6);
+  transform-origin:right center;transition:transform 140ms ease,background-color 140ms ease;}
+[data-dshell-bookmark-mark][data-state=preview]::before{transform:translateY(-50%) scaleX(0.9);background:var(--dsw-alias-label-tertiary);}
+[data-dshell-bookmark-mark][data-state=active]::before{transform:translateY(-50%) scaleX(1);background:var(--dsw-alias-label-primary);}
+[data-dshell-bookmark-mark][data-failed]::before{background:var(--dsw-alias-state-error-primary);}
+[data-dshell-bookmark-mark][data-busy]::before{animation:dshell-bookmark-busy 1s ease-in-out infinite;}
+[data-dshell-bookmark-mark]:focus-visible{outline:none;}
+[data-dshell-bookmark-mark]:focus-visible::before{transform:translateY(-50%) scaleX(1);
+  background:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));}
+[data-dshell-bookmark-mark]:focus-visible::after{position:absolute;inset:0 0 0 auto;width:${String(PILL_WIDTH)}px;
+  border-radius:inherit;outline:1px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));
+  outline-offset:-1px;content:'';}
+[data-dshell-bookmark-preview]{position:absolute;right:calc(100% + 10px);box-sizing:border-box;
+  width:min(300px,calc(100cqw - 120px));max-height:${String(PREVIEW_HEIGHT)}px;overflow:hidden;padding:10px 12px;
+  border:0;border-radius:var(--dsw-radius-lg);color:var(--dsw-alias-label-primary);
+  background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel);pointer-events:none;
+  animation:dshell-bookmark-preview-enter 120ms ease-out;transition:top 140ms cubic-bezier(0.2,0.8,0.2,1);}
+[data-dshell-bookmark-prompt]{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;
+  -webkit-line-clamp:1;font:var(--dsw-font-xs-strong-13);}
+[data-dshell-bookmark-response]{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;
+  -webkit-line-clamp:3;margin-top:4px;color:var(--dsw-alias-label-caption);font:var(--dsw-font-xxs-12);}
+@keyframes dshell-bookmark-busy{0%,100%{opacity:1;}50%{opacity:0.35;}}
+@keyframes dshell-bookmark-preview-enter{from{opacity:0;transform:translateX(4px);}to{opacity:1;transform:translateX(0);}}
+@media (prefers-reduced-motion:reduce){
+  [data-dshell-bookmark-frame],[data-dshell-bookmark-scroller],[data-dshell-bookmark-mark]::before,
+  [data-dshell-bookmark-preview]{transition:none;animation:none;}
+}
+@container (max-width:${String(NARROW_SEAT)}px){[data-dshell-bookmark-frame]{display:none;}}`
+  document.head.append(style)
+}
+
 /** Props the block view passes in. */
 export interface BookmarkRailProps {
-  /** The bookmarks to show, oldest first; empty hides the rail. */
+  /** The bookmarks to show, oldest first; fewer than two hides the rail. */
   bookmarks: readonly Bookmark[]
   /** The scroll container the agent blocks live in, for jump targeting. */
   scrollContainer: HTMLDivElement | null
   /** Called when the user jumps to a bookmark — unsticks the tail-pin. */
   onJump: () => void
+  /** Translator for the marks' accessible names. */
+  t: TranslateNS<'dshellMode'>
 }
 
 /**
- * The right-edge bookmark strip.
+ * One mark: a button in the ladder whose pill carries the turn's state.
  *
- * State: `idle` (collapsed) or `hover` (mouse over the strip and panel). The
- * panel closes on `mouseleave` after a short grace period so the cursor can
- * cross the gap between strip and panel without flickering. Clicking a row
- * jumps the column to that block and updates the active highlight, but does
- * not pin the panel open — the panel still closes when the cursor leaves.
+ * The button is the rail's full width and one pitch tall, so the hit area is
+ * larger than the 20x2 pill drawn inside it. `onPointerMove` (not enter) is
+ * what opens the preview: moving between neighbouring marks then needs no
+ * leave/enter pair, which is what keeps the card from flickering as the
+ * pointer travels down the ladder.
+ */
+function Mark(props: {
+  bookmark: Bookmark
+  index: number
+  active: boolean
+  busy: boolean
+  described: boolean
+  label: string
+  previewId: string
+  onPreview: (key: string) => void
+  onNavigate: (key: string) => void
+  onFocusChange: (key: string | null) => void
+}): ReactElement {
+  const { bookmark, index } = props
+  return createElement('button', {
+    type: 'button',
+    'data-dshell-bookmark-mark': '',
+    'data-status': bookmark.status,
+    'data-state': props.active ? 'active' : props.described ? 'preview' : 'idle',
+    ...bookmark.status === 'failed' ? { 'data-failed': '' } : {},
+    ...props.busy ? { 'data-busy': '' } : {},
+    'aria-label': props.label,
+    ...props.active ? { 'aria-current': 'true' } : {},
+    ...props.busy ? { 'aria-busy': 'true' } : {},
+    ...props.described ? { 'aria-describedby': props.previewId } : {},
+    style: { top: MARK_INSET - MARK_PITCH / 2 + index * MARK_PITCH },
+    onPointerMove: () => { props.onPreview(bookmark.key) },
+    onClick: () => { props.onNavigate(bookmark.key) },
+    onFocus: () => { props.onFocusChange(bookmark.key) },
+    onBlur: () => { props.onFocusChange(null) },
+  })
+}
+
+/**
+ * The right-edge turn ladder.
+ *
+ * State: `activeKey` is the turn the reader is on — set by a click, then kept
+ * up to date from the geometry of what the column shows. `previewKey` is the
+ * mark the pointer or focus is on, which is the only thing that opens the
+ * preview card. The ladder centres the active mark only while the pointer is
+ * elsewhere, so it never moves under the hand that is using it.
  */
 export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
-  const theme = useDshellTheme()
-  const [hover, setHover] = useState(false)
-  // Reset hover when the session changes — identified by the bookmark key
-  // set, since block keys are stable per session. A fresh session's hover
-  // should not leak across from the previous one.
-  const identity = props.bookmarks.map(b => b.key).join('|')
-  useEffect(() => { setHover(false) }, [identity])
+  const { bookmarks } = props
+  const [previewKey, setPreviewKey] = useState<string | null>(null)
+  const [fades, setFades] = useState({ top: false, bottom: false })
+  const [previewTop, setPreviewTop] = useState(0)
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const pointerInsideRef = useRef(false)
+  const closeTimer = useRef<number | undefined>(undefined)
+  const clickedAt = useRef(0)
+  const previewId = useId()
 
-  const keys = useMemo(() => props.bookmarks.map(b => b.key), [props.bookmarks])
+  const keys = useMemo(() => bookmarks.map(b => b.key), [bookmarks])
   const lastKey = keys[keys.length - 1]
-  // The key the rail treats as "you are reading this turn". Initialised to
-  // the most recent turn so a brand-new session shows the same active
-  // highlight as before; the scroll observer below takes over once the user
-  // moves. `null` means "nothing to highlight" (empty session — but the
-  // empty case returns null earlier, so this branch is unreachable here).
+  const ladderHeight = bookmarks.length * MARK_PITCH + 2 * (MARK_INSET - MARK_PITCH / 2)
+
+  // Reset interaction state when the session changes — identified by the key
+  // set, since block keys are stable per session. A fresh session's preview
+  // should not leak across from the previous one.
+  const identity = keys.join('|')
+  useEffect(() => { setPreviewKey(null); pointerInsideRef.current = false }, [identity])
+
+  // The key the rail treats as "you are reading this turn". Initialised to the
+  // most recent turn so a brand-new session highlights what the reader just
+  // watched arrive; the scroll observer below takes over once they move.
   const [activeKey, setActiveKey] = useState<string | undefined>(() => lastKey)
   useEffect(() => { setActiveKey(lastKey) }, [lastKey])
+  const activeIndex = activeKey === undefined ? undefined : keys.indexOf(activeKey)
+  const previewIndex = previewKey === null ? undefined : keys.indexOf(previewKey)
 
-  // Track the block that dominates the viewport and update `activeKey` as
-  // the reader scrolls. An IntersectionObserver is the right tool: it is
-  // driven by the layout engine, not by a 16ms timer, and it does not need
-  // any per-scroll arithmetic. We observe the column's agent blocks; the
-  // callback runs when any of them crosses a threshold. A single threshold
-  // at the container's top is enough — the rest of the rule is in
-  // `activeBlockKey`, which decides which of the still-in-view blocks
-  // dominates.
+  useLayoutEffect(() => { injectBookmarkCss() }, [])
+
+  // Track the block that dominates the viewport and update `activeKey` as the
+  // reader scrolls. An IntersectionObserver is the right tool: it is driven by
+  // the layout engine, not by a 16ms timer, and it needs no per-scroll
+  // arithmetic. We observe the column's agent blocks; the callback runs when
+  // any of them crosses a threshold. A single threshold at the container's top
+  // is enough — the rest of the rule is in `activeBlockKey`.
   useEffect(() => {
     const scroll = props.scrollContainer
     if (scroll === null || keys.length === 0) return
-    // The root's bounding rect is the viewport we compare against, so the
-    // observer's root margin shrinks the effective viewport to the area the
-    // reader actually sees. A negative top margin pulls the upper boundary
-    // down by the same amount we use for the click target — so a block is
-    // "active" the moment its top crosses that line.
     const recompute = (): void => {
       if (Date.now() - clickedAt.current < CLICK_STICKY_MS) return
       const next = activeBlockKey(scroll, keys)
@@ -218,11 +366,11 @@ export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
       const el = scroll.querySelector(`[data-dshell-block-key="${CSS.escape(key)}"]`)
       if (el instanceof HTMLElement) observer.observe(el)
     }
-    // The click-sticky window suppresses geometry-based recomputation
-    // while the smooth scroll is in flight. A trusted `wheel` event is
-    // the natural moment the user takes over, and that is when the
-    // sticky should end — earlier than the timeout, when the user is
-    // already moving, so the highlight follows without lag.
+    // The click-sticky window suppresses geometry-based recomputation while the
+    // smooth scroll is in flight. A trusted `wheel` event is the natural moment
+    // the user takes over, and that is when the sticky should end — earlier
+    // than the timeout, when the user is already moving, so the highlight
+    // follows without lag.
     const onWheel = (event: WheelEvent): void => {
       if (event.isTrusted !== true) return
       clickedAt.current = 0
@@ -238,8 +386,59 @@ export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
     }
   }, [props.scrollContainer, identity, keys])
 
-  const open = hover
-  const closeTimer = useRef<number | undefined>(undefined)
+  // The mask fades mark the ends the ladder can still scroll towards.
+  const syncFades = useCallback((): void => {
+    const scroller = scrollerRef.current
+    if (scroller === null) return
+    const top = scroller.scrollTop > 1
+    const bottom = scroller.scrollTop < scroller.scrollHeight - scroller.clientHeight - 1
+    setFades(prev => prev.top === top && prev.bottom === bottom ? prev : { top, bottom })
+  }, [])
+
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (scroller === null) return
+    syncFades()
+    scroller.addEventListener('scroll', syncFades, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(() => { syncFades() })
+    observer?.observe(scroller)
+    return () => {
+      scroller.removeEventListener('scroll', syncFades)
+      observer?.disconnect()
+    }
+  }, [syncFades, ladderHeight])
+
+  // Keep the reader's own mark centred, but never while the pointer is on the
+  // ladder: moving the marks under the hand that is using them is worse than
+  // an off-centre active mark. Marks already inside the fade-free band stay put.
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (scroller === null || activeIndex === undefined || pointerInsideRef.current) return
+    const center = activeIndex * MARK_PITCH + MARK_INSET
+    const top = scroller.scrollTop
+    const height = scroller.clientHeight
+    if (height <= 0) return
+    if (center >= top + FADE_PX && center <= top + height - FADE_PX) return
+    const max = Math.max(0, ladderHeight - height)
+    const target = Math.max(0, Math.min(max, center - height / 2))
+    scroller.scrollTo({ top: target, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    syncFades()
+  }, [activeIndex, ladderHeight, syncFades])
+
+  // The card opens beside the mark it describes. Its offset is read once per
+  // preview, not on scroll: the card follows pointer and focus, and a ladder
+  // that scrolls under a stationary pointer is the auto-centring case above,
+  // which is suppressed while the pointer is inside.
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current
+    if (scroller === null || previewIndex === undefined) return
+    const height = scroller.clientHeight
+    const line = previewIndex * MARK_PITCH + MARK_INSET - scroller.scrollTop
+    setPreviewTop(Math.max(0, Math.min(height - PREVIEW_HEIGHT, line - PREVIEW_HEIGHT / 2)))
+  }, [previewIndex, identity])
+
   const cancelClose = useCallback((): void => {
     if (closeTimer.current !== undefined) {
       window.clearTimeout(closeTimer.current)
@@ -248,147 +447,72 @@ export function BookmarkRail(props: BookmarkRailProps): ReactElement | null {
   }, [])
   const scheduleClose = useCallback((): void => {
     cancelClose()
-    closeTimer.current = window.setTimeout(() => { setHover(false) }, CLOSE_DELAY_MS)
+    closeTimer.current = window.setTimeout(() => { setPreviewKey(null) }, CLOSE_DELAY_MS)
   }, [cancelClose])
   useEffect(() => () => cancelClose(), [cancelClose])
 
-  /**
-   * A click sets `activeKey` to the bookmark the reader asked for, and
-   * the geometry rule must not override that pick until either the user
-   * scrolls themselves or the click "stale" timeout expires. The smooth
-   * scroll fires a stream of `scroll` events on the way to its destination,
-   * each of which would otherwise call `recompute` and pick a different
-   * block the moment a larger neighbour takes over the viewport. The
-   * window is long enough to cover the smooth-scroll duration and the
-   * reader's first look at the destination, short enough that an
-   * intentional scroll never lags.
-   */
-  const clickedAt = useRef(0)
-  const CLICK_STICKY_MS = 1500
+  if (bookmarks.length < 2) return null
 
-  if (props.bookmarks.length === 0) return null
-  return createElement('div', {
-    'data-dshell-bookmark-rail': open ? 'hover' : 'idle',
-    onMouseEnter: () => { cancelClose(); setHover(true) },
-    onMouseLeave: () => { scheduleClose() },
-    style: {
-      position: 'absolute',
-      top: TOP_INSET,
-      right: 0,
-      bottom: BOTTOM_INSET,
-      width: open ? RAIL_WIDTH + ROW_WIDTH + 12 : RAIL_WIDTH,
-      display: 'flex',
-      flexDirection: 'row',
-      alignItems: 'stretch',
-      pointerEvents: 'auto',
-      transition: 'width 140ms ease',
-      zIndex: 2,
-    },
-  },
-    createElement('div', {
-      'data-dshell-bookmark-panel': '',
-      style: {
-        width: open ? ROW_WIDTH + 8 : 0,
-        overflow: 'hidden',
-        background: theme.menuBg,
-        border: `1px solid ${open ? theme.borderStrong : 'transparent'}`,
-        borderRadius: 8,
-        marginRight: 4,
-        opacity: open ? 1 : 0,
-        transition: 'opacity 120ms ease',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: open ? '6px 4px' : 0,
-        gap: 2,
-        boxShadow: open ? '0 8px 24px rgba(0, 0, 0, 0.35)' : 'none',
+  const preview = previewIndex === undefined ? undefined : bookmarks[previewIndex]
+  const described = preview !== undefined
+  return createElement('div', { 'data-dshell-bookmark-rail': '' },
+    createElement('nav', {
+      'data-dshell-bookmark-frame': '',
+      'aria-label': props.t('bookmark.rail'),
+      onPointerEnter: () => {
+        pointerInsideRef.current = true
+        cancelClose()
+      },
+      onPointerLeave: () => {
+        pointerInsideRef.current = false
+        scheduleClose()
       },
     },
-      ...props.bookmarks.map(bookmark => {
-        const isLast = bookmark.key === lastKey
-        const isActive = bookmark.key === activeKey
-        const row: CSSProperties = {
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '4px 8px',
-          borderRadius: 6,
-          cursor: 'pointer',
-          fontSize: 12,
-          // The active row reads as the turn the reader is on: full accent
-          // text and a tinted background. The "latest" row uses a fainter
-          // version of the same treatment so a click on the latest row does
-          // not change the panel's appearance — it is already where the
-          // reader is. Older rows stay neutral.
-          color: isActive ? theme.accentText : theme.text,
-          background: isActive
-            ? theme.accentFaint
-            : isLast
-              ? theme.faintFill
-              : 'transparent',
-          borderLeft: isActive
-            ? `2px solid ${theme.accent}`
-            : '2px solid transparent',
-          paddingLeft: isActive ? 6 : 8,
-          border: 'none',
-          textAlign: 'left',
-          width: '100%',
-          fontFamily: 'inherit',
-          fontWeight: isActive ? 500 : 400,
-        }
-        return createElement('button', {
-          key: bookmark.key,
-          type: 'button',
-          title: bookmark.label,
-          'data-dshell-bookmark-active': isActive ? 'true' : 'false',
-          style: { ...row, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-          onClick: () => {
-            if (scrollToBlock(props.scrollContainer, bookmark.key)) {
-              // Optimistic: jump immediately so the highlight follows the
-              // click without waiting for the IntersectionObserver's next
-              // tick. The observer will re-confirm the choice once the
-              // smooth scroll settles and the click guard has expired.
+      createElement('div', {
+        ref: scrollerRef,
+        'data-dshell-bookmark-scroller': '',
+        ...fades.top ? { 'data-fade-top': '' } : {},
+        ...fades.bottom ? { 'data-fade-bottom': '' } : {},
+      },
+        createElement('div', {
+          'data-dshell-bookmark-marks': '',
+          style: { height: ladderHeight },
+        },
+          ...bookmarks.map((bookmark, index) => createElement(Mark, {
+            key: bookmark.key,
+            bookmark,
+            index,
+            active: bookmark.key === activeKey,
+            busy: bookmark.key === lastKey && bookmark.status === 'running',
+            described: described && bookmark.key === previewKey,
+            label: props.t('bookmark.jump', { turn: index + 1 }),
+            previewId,
+            onPreview: (key: string) => { cancelClose(); setPreviewKey(key) },
+            onNavigate: (key: string) => {
+              if (!scrollToBlock(props.scrollContainer, key)) return
+              // Optimistic: jump immediately so the highlight follows the click
+              // without waiting for the observer's next tick. The observer
+              // re-confirms once the smooth scroll settles and the guard expires.
               clickedAt.current = Date.now()
-              setActiveKey(bookmark.key)
+              setActiveKey(key)
               props.onJump()
-            }
-          },
-        }, bookmark.label)
-      }),
-    ),
-    createElement('div', {
-      'data-dshell-bookmark-strip': '',
-      style: {
-        width: RAIL_WIDTH,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 4,
-        paddingTop: 6,
-        background: open ? 'transparent' : theme.faintFill,
-        borderRadius: 4,
-        flexShrink: 0,
+            },
+            onFocusChange: (key: string | null) => {
+              setPreviewKey(key)
+              if (key !== null) pointerInsideRef.current = true
+            },
+          })),
+        ),
+      ),
+      preview === undefined ? null : createElement('div', {
+        id: previewId,
+        role: 'tooltip',
+        'data-dshell-bookmark-preview': '',
+        style: { top: previewTop },
       },
-    },
-      ...props.bookmarks.map(bookmark => {
-        const isLast = bookmark.key === lastKey
-        const isActive = bookmark.key === activeKey
-        // The active tick glows in the accent border colour so the strip
-        // and the panel agree about which turn the reader is on.
-        return createElement('span', {
-          key: bookmark.key,
-          'data-dshell-bookmark-tick': bookmark.status,
-          'data-dshell-bookmark-tick-active': isActive ? 'true' : 'false',
-          style: {
-            display: 'block',
-            width: isActive ? 8 : 6,
-            height: 2,
-            background: isActive
-              ? theme.accent
-              : tickColor(theme, bookmark.status, isLast),
-            borderRadius: 1,
-          },
-        })
-      }),
+        createElement('div', { 'data-dshell-bookmark-prompt': '' }, preview.prompt),
+        preview.response === '' ? null : createElement('div', { 'data-dshell-bookmark-response': '' }, preview.response),
+      ),
     ),
   )
 }
