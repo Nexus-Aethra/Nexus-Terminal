@@ -34,6 +34,28 @@ function respond(body: SshResponse, status = 200): Response {
   })
 }
 
+/**
+ * Replace one session's live shell after its assignment changed.
+ *
+ * A session's terminal is spawned when it is opened, and the assignment can be
+ * recorded after that — the creation page writes it a round trip after the
+ * session exists — so a shell already running somewhere has to be replaced for
+ * the new plan to mean anything. Reached through the service name rather than
+ * an import: the bridge may load after this plugin, and a composition without
+ * it (no terminal) has nothing to replace. A session whose terminal never
+ * spawned needs nothing either: the next attach asks for a plan, and gets the
+ * new one.
+ *
+ * @param ctx - host context, for the terminal bridge's service.
+ * @param sessionId - the session whose shell to replace.
+ */
+async function respawnShell(ctx: Context, sessionId: string): Promise<void> {
+  const bridge = ctx.get('dshellTerminalBridge') as
+    | { respawnMain?: (id: string) => Promise<void> }
+    | undefined
+  await bridge?.respawnMain?.(sessionId).catch(() => { /* the panel reports the spawn */ })
+}
+
 /** Bind the route to the device registry. */
 export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
   const state = async (): Promise<Omit<SshResponse, 'error' | 'testResult'>> => ({
@@ -70,10 +92,11 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
       }
       case 'mount':
         return { ...await state(), mountPath: await deps.router.mountPath(input.deviceId, input.remoteRoot ?? null) }
-      case 'bind':
+      case 'bind': {
         // The remote directory is created inside `bind`, before the assignment
         // is recorded: the assignment is what makes a session routable, and the
         // shell it starts must not find the directory still missing.
+        const before = deps.router.assignmentForSession(input.sessionId)
         await deps.router.bind(
           input.sessionId,
           input.deviceId,
@@ -81,7 +104,12 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
           input.mount ?? null,
           deps.ctx,
         )
+        const after = deps.router.assignmentForSession(input.sessionId)
+        if (before?.deviceId !== after?.deviceId || before?.mount !== after?.mount) {
+          await respawnShell(deps.ctx, input.sessionId)
+        }
         return await state()
+      }
       case 'install': {
         // Deploy BEFORE reading state. `state()` reads the device list, and the
         // install is what writes the status the card renders onto those

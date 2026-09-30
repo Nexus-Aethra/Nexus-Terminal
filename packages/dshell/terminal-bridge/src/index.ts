@@ -527,6 +527,28 @@ export class DshellTerminalBridge extends Service {
     }
   }
 
+  /**
+   * Replace a session's live shell so a new spawn plan takes effect.
+   *
+   * An assignment can land after the session's terminal has already spawned —
+   * the creation page records a device one round trip after the session exists
+   * — and a shell cannot change which machine it runs on. Without this the
+   * reader keeps a local shell behind a device's name: the exact split the
+   * spawn-plan seam exists to prevent. The replacement is an ordinary respawn,
+   * so the scrollback is seeded from the persisted log, and attached clients
+   * learn about it the way they learn about any other shell death.
+   *
+   * @param dshSessionId - the session whose shell to replace.
+   */
+  async respawnMain(dshSessionId: string): Promise<void> {
+    const existing = this.recordFor(dshSessionId)
+    // No shell yet: nothing to replace — the next attach asks for a plan and
+    // gets the new one. An already-dead record is on its way out already.
+    if (existing === undefined || existing.dead !== undefined) return
+    this.markDead(existing, 'spawn plan changed')
+    await this.ensureMainShell(dshSessionId)
+  }
+
   /** The live main record for a dsh session, if one exists. */
   private recordFor(dshSessionId: string): MainRecord | undefined {
     for (const record of this.mains.values()) if (record.dshSessionId === dshSessionId) return record

@@ -313,6 +313,15 @@ when it contributes to model-visible state.
     hand a device session this machine's disk while every layer above
     reports a successful operation on the device, which is the risk this
     package exists to remove.
+  - **A binding that lands late replaces the shell it missed.** A session's
+    terminal is spawned when the session is opened, and the creation page
+    records the assignment a round trip after the session exists — so the
+    plan the shell was spawned under can be the *local* one. The bind route
+    therefore asks the terminal bridge (`respawnMain`) to replace a live
+    shell whenever the assignment's device or mapping actually changed; the
+    replacement is an ordinary respawn, so the scrollback survives. Without
+    it the spawn-plan seam's whole promise — no local shell behind a
+    device's name — would hold only for sessions born on a device.
   - **The mapping has an alias root** (`mappingFor`, the one place a
     mapping is built): a session created first and pointed at a device
     later — every session of the sidebar's terminal section — has a
