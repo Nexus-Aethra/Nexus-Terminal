@@ -1248,7 +1248,14 @@ export class DshellTerminalBridge extends Service {
     this.broadcast(record.dshSessionId, { kind: 'closed', reason, detail, ready: record.ready })
     // Release the dsh-side name reservation NOW so a same-tick respawn
     // (via ensureLiveMain) doesn't collide with the still-resident owner.
-    void this.ctx.terminals.kill(record.agent, record.ptyId, 'dshell: dead').catch(() => {})
+    // A PTY can outlive its context — teardown kills the child, and this exit
+    // callback then fires into a stopped context, where demanding the service
+    // throws and an exit handler must never take the host down with it.
+    try {
+      void this.ctx.terminals.kill(record.agent, record.ptyId, 'dshell: dead').catch(() => {})
+    } catch {
+      // Context already gone; the reservation dies with it.
+    }
     record.disposeTimer = setTimeout(() => { void this.disposeRecord(record) }, 200)
   }
 
