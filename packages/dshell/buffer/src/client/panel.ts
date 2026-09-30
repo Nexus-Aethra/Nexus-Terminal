@@ -177,6 +177,21 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
   // closed and content once opened, and a hook that first runs on the open
   // render would change the hook count between renders — the exact mistake
   // that once took the whole status card down (React #310).
+  //
+  // Closing does not unmount this component — the slot keeps the instance and
+  // only drops its DOM — so the view state survives a close. Opening again
+  // therefore starts from the top: a detail page (possibly of a pipe released
+  // since) or a half-typed form must not be what the reader lands on.
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (snapshot.open && !wasOpen.current) {
+      setDetailLink(undefined)
+      setCreating(false)
+      setView('list')
+    }
+    wasOpen.current = snapshot.open
+  }, [snapshot.open])
+
   const graphSessions: GraphSession[] = useMemo(() => {
     // A session dshell deleted is still in dsh's list until the next start, so
     // it is filtered here — its pipes are already gone, and a node without
