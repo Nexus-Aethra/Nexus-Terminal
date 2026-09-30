@@ -529,6 +529,15 @@ export interface BufferState {
    * deletion puts the session back in use while dsh still lists it.
    */
   readonly departed: readonly string[]
+  /**
+   * Where each pipe endpoint actually stands, in its own world's spelling:
+   * the device root a bound session runs in, keyed by session id. A bound
+   * session's own cwd is the directory it was created in on the host — a
+   * stand-in, not the world its shell and file tools answer from — so the
+   * UI labels peers from this map and falls back to the cwd only for
+   * sessions that are not bound. Absent keys mean "runs here".
+   */
+  readonly worlds: Readonly<Record<string, string>>
 }
 
 /**

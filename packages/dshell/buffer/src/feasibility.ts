@@ -45,6 +45,17 @@ export interface DeviceRoutingSeat {
   } | undefined
   /** Open one connection and report what answered; throws when it cannot. */
   test(deviceId: string, ctx: Context, remoteRoot?: string | null): Promise<string>
+  /**
+   * The stored assignment, even for a device that cannot be served right now:
+   * a label has to name the world a session stands in whether or not the
+   * device answers at this moment. Absent in a seat that only probes.
+   */
+  assignmentForSession?(sessionId: string): {
+    readonly deviceId: string
+    readonly remoteRoot?: string | undefined
+  } | undefined
+  /** The device's own record, for the directory it runs its sessions in. */
+  deviceFor?(deviceId: string): { readonly remoteRoot?: string | undefined } | undefined
 }
 
 /** How long a successful or failed device probe is trusted. */

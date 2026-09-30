@@ -264,7 +264,36 @@ export class BufferService {
       grants: [...this.grants],
       transfers: [...this.transfers.values()],
       departed: [...this.departed],
+      worlds: this.worlds(),
     }
+  }
+
+  /**
+   * Where each pipe endpoint stands, in its own world's spelling.
+   *
+   * A bound session's header cwd is the directory it was created in on this
+   * machine — the mount's stand-in — while its shell and file tools answer
+   * from the device. Labeling the peer with the stand-in reads as "this pipe
+   * ends in /home/wpp" for a peer that lives elsewhere, so the panel takes
+   * the device root the assignment names (the same knowledge `promptPipes`
+   * already puts in the agent-facing lines) and falls back to the cwd only
+   * where no binding exists.
+   */
+  private worlds(): Record<string, string> {
+    const worlds: Record<string, string> = {}
+    for (const link of this.links) {
+      for (const sessionId of [link.a, link.b]) {
+        if (sessionId in worlds) continue
+        const assignment = this.routing?.assignmentForSession?.(sessionId)
+        if (assignment === undefined) continue
+        const named = assignment.remoteRoot?.trim() ?? ''
+        const root = named.length > 0 && named !== '~'
+          ? named
+          : this.routing?.deviceFor?.(assignment.deviceId)?.remoteRoot?.trim() ?? named
+        if (root.length > 0) worlds[sessionId] = root
+      }
+    }
+    return worlds
   }
 
   /**

@@ -38,6 +38,12 @@ export interface BufferSnapshot {
    * id outlives its pipes and would otherwise draw as an orphan node.
    */
   readonly departed: readonly string[]
+  /**
+   * The device root each bound endpoint runs in, keyed by session id: the
+   * label beside a peer names the world it stands in, not the host-side
+   * stand-in directory its session was created with.
+   */
+  readonly worlds: Readonly<Record<string, string>>
   /** The last refusal or transport failure, shown until the next call. */
   readonly error: string | undefined
   /** Whether the host has answered at least once. */
@@ -47,7 +53,7 @@ export interface BufferSnapshot {
 }
 
 const EMPTY: BufferSnapshot = {
-  links: [], tickets: [], grants: [], transfers: [], departed: [],
+  links: [], tickets: [], grants: [], transfers: [], departed: [], worlds: {},
   error: undefined, loaded: false, open: false,
 }
 
@@ -237,6 +243,7 @@ export class BufferClientService extends Service {
       grants: body.grants,
       transfers: body.transfers ?? [],
       departed: body.departed ?? [],
+      worlds: body.worlds ?? {},
       error: body.error,
       loaded: true,
       open: this.snapshot.open,

@@ -142,11 +142,19 @@ function shortLabel(seat: SessionSeat | undefined, id: string): string {
   return seat?.getSnapshot().byId[id]?.displayTitle ?? id.slice(0, 8)
 }
 
-/** One label with the cwd, the way list rows render peers. */
-function labelFor(t: TranslateNS<'dshellBuffer'>, seat: SessionSeat | undefined, id: string): string {
+/** One label with the world it stands in, the way list rows render peers. */
+function labelFor(
+  t: TranslateNS<'dshellBuffer'>,
+  seat: SessionSeat | undefined,
+  worlds: Readonly<Record<string, string>>,
+  id: string,
+): string {
   const row = seat?.getSnapshot().byId[id]
   const title = row?.displayTitle ?? id.slice(0, 8)
-  return row?.cwd === undefined ? title : t('session.withCwd', { title, cwd: row.cwd })
+  // A bound session's cwd is the host-side stand-in; the world map names the
+  // device root it actually runs in, which is what a peer label should say.
+  const where = worlds[id] ?? row?.cwd
+  return where === undefined ? title : t('session.withCwd', { title, cwd: where })
 }
 
 /** Stable stand-ins so a composition without a sessions service still has hooks. */
@@ -223,12 +231,12 @@ export function PipePanel(props: PipePanelProps): ReactElement | null {
         return {
           id,
           label: row?.displayTitle ?? id.slice(0, 8),
-          sub: row?.cwd,
+          sub: snapshot.worlds[id] ?? row?.cwd,
           active: row?.running === true,
           current: id === current,
         }
       })
-  }, [sessionState, snapshot.links, snapshot.departed, showAll])
+  }, [sessionState, snapshot.links, snapshot.departed, snapshot.worlds, showAll])
 
   if (!snapshot.open) return null
 
@@ -377,9 +385,9 @@ function ListPane(props: ListSideProps & {
       sessionIds.length === 0
         ? createElement('div', { style: emptyStyle }, t('form.noTerminals'))
         : createElement('div', { style: rowStyle },
-          sessionSelect(left, setLeft, sessionIds, id => labelFor(t, seat, id)),
+          sessionSelect(left, setLeft, sessionIds, id => labelFor(t, seat, snapshot.worlds, id)),
           createElement('span', { style: dimStyle }, '↔'),
-          sessionSelect(right, setRight, sessionIds, id => labelFor(t, seat, id)),
+          sessionSelect(right, setRight, sessionIds, id => labelFor(t, seat, snapshot.worlds, id)),
         ),
       createElement('input', {
         style: fieldStyle,
@@ -415,7 +423,7 @@ function ListPane(props: ListSideProps & {
             onClick: () => { props.onOpenDetail(link.id) },
           },
             createElement('span', { style: { ...growStyle, fontWeight: 500 } },
-              `${labelFor(t, seat, link.a)} ↔ ${labelFor(t, seat, link.b)}`
+              `${labelFor(t, seat, snapshot.worlds, link.a)} ↔ ${labelFor(t, seat, snapshot.worlds, link.b)}`
               + (link.label === undefined ? '' : ` · ${link.label}`)),
             link.description === undefined ? null : createElement('span', {
               style: { ...dimStyle, flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -457,7 +465,7 @@ function DetailPane(props: ListSideProps & {
     createElement('div', { style: backRowStyle },
       createElement('button', { style: smallButtonStyle, onClick: props.onBack }, t('action.back')),
       createElement('span', { style: { fontWeight: 600 } },
-        `${labelFor(t, sessions, link.a)} ↔ ${labelFor(t, sessions, link.b)}`),
+        `${labelFor(t, sessions, snapshot.worlds, link.a)} ↔ ${labelFor(t, sessions, snapshot.worlds, link.b)}`),
       link.label === undefined ? null : createElement('span', { style: dimStyle }, link.label),
       createElement('span', { style: { flex: '1 1 auto' } }),
       createElement('button', {
