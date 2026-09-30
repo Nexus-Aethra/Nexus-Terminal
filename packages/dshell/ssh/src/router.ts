@@ -93,14 +93,33 @@ class BindingStore {
   async load(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
+    this.entries = await this.read()
+  }
+
+  /**
+   * Re-read the document over the cache.
+   *
+   * Every host on this machine shares one bindings document, so the in-memory
+   * map is a cache of the last read or write, never the truth: a host that
+   * answers from a stale cache mislabels sessions, and a host that writes one
+   * deletes every binding another host recorded after its startup. Anything
+   * that answers or mutates therefore refreshes first.
+   */
+  async refresh(): Promise<void> {
+    this.loaded = true
+    this.entries = await this.read()
+  }
+
+  private async read(): Promise<Map<string, Assignment>> {
+    const entries = new Map<string, Assignment>()
     try {
       const parsed = JSON.parse(await readFile(this.path(), 'utf8')) as unknown
-      if (typeof parsed !== 'object' || parsed === null) return
+      if (typeof parsed !== 'object' || parsed === null) return entries
       for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
         // A bare string is the shape written before sessions could pick their
         // own remote directory; it still means "this device, its directory".
         if (typeof value === 'string' && value.length > 0) {
-          this.entries.set(sessionId, { deviceId: value })
+          entries.set(sessionId, { deviceId: value })
           continue
         }
         if (typeof value !== 'object' || value === null) continue
@@ -109,7 +128,7 @@ class BindingStore {
         if (typeof deviceId !== 'string' || deviceId.length === 0) continue
         const remoteRoot = record.remoteRoot
         const mount = record.mount
-        this.entries.set(sessionId, {
+        entries.set(sessionId, {
           deviceId,
           ...typeof remoteRoot === 'string' && remoteRoot.length > 0 ? { remoteRoot } : {},
           ...typeof mount === 'string' && mount.length > 0 ? { mount } : {},
@@ -118,6 +137,7 @@ class BindingStore {
     } catch {
       // No assignments yet.
     }
+    return entries
   }
 
   get(sessionId: string): Assignment | undefined {
@@ -130,6 +150,10 @@ class BindingStore {
 
   /**
    * Assign or clear one session's device, durably.
+   *
+   * Read-modify-write: the change is applied to what is on disk NOW, so two
+   * hosts binding different sessions keep each other's rows.
+   *
    * @param sessionId - session to assign.
    * @param deviceId - device, or null to run locally again.
    * @param remoteRoot - session directory on that device; null clears the
@@ -144,34 +168,47 @@ class BindingStore {
     remoteRoot: string | null = null,
     mount: string | null = null,
   ): Promise<void> {
-    await this.load()
-    if (deviceId === null) this.entries.delete(sessionId)
+    const entries = await this.read()
+    if (deviceId === null) entries.delete(sessionId)
     else {
       const override = remoteRoot === null || remoteRoot.trim() === '' ? {} : { remoteRoot: remoteRoot.trim() }
       const mounted = mount === null || mount.trim() === '' ? {} : { mount: mount.trim() }
-      this.entries.set(sessionId, { deviceId, ...override, ...mounted })
+      entries.set(sessionId, { deviceId, ...override, ...mounted })
     }
-    await this.write()
+    this.entries = entries
+    await this.write(entries)
   }
 
   /**
-   * Give one assignment the mount it was written without, in memory.
-   * @param sessionId - assigned session.
-   * @param mount - local directory standing in for its tree.
-   * @returns whether anything changed, so the caller knows to {@link write}.
+   * Give assignments the mounts they were written without, durably.
+   *
+   * Merged into what is on disk now, like {@link set}, because the startup
+   * backfill that calls this runs in every host and must not trade rows.
+   *
+   * @param mounts - mount directory per session that lacks one.
+   * @returns whether anything reached disk.
    */
-  adoptMount(sessionId: string, mount: string): boolean {
-    const entry = this.entries.get(sessionId)
-    if (entry === undefined || entry.mount !== undefined) return false
-    this.entries.set(sessionId, { ...entry, mount })
+  async adoptMounts(mounts: ReadonlyMap<string, string>): Promise<boolean> {
+    if (mounts.size === 0) return false
+    const entries = await this.read()
+    let adopted = false
+    for (const [sessionId, mount] of mounts) {
+      const entry = entries.get(sessionId)
+      if (entry === undefined || entry.mount !== undefined) continue
+      entries.set(sessionId, { ...entry, mount })
+      adopted = true
+    }
+    if (!adopted) return false
+    this.entries = entries
+    await this.write(entries)
     return true
   }
 
   /** Write the assignments down, through a temporary so a reader never sees half. */
-  async write(): Promise<void> {
+  private async write(entries: Map<string, Assignment>): Promise<void> {
     await mkdir(dirname(this.path()), { recursive: true })
     const temporary = `${this.path()}.tmp`
-    await writeFile(temporary, JSON.stringify(Object.fromEntries(this.entries), null, 2), 'utf8')
+    await writeFile(temporary, JSON.stringify(Object.fromEntries(entries), null, 2), 'utf8')
     await rename(temporary, this.path())
   }
 }
@@ -263,7 +300,7 @@ export class SshRouter {
 
   /** Every session→device assignment. */
   async assignments(): Promise<readonly AssignmentView[]> {
-    await this.bindings.load()
+    await this.bindings.refresh()
     return this.bindings.all()
   }
 
@@ -513,6 +550,7 @@ export class SshRouter {
     sessionId: string,
     sessionCwd?: string,
   ): Promise<{ argv: readonly string[]; env: Record<string, string> } | undefined> {
+    await this.bindings.refresh()
     let assignment = this.bindings.get(sessionId)
     // Creating a device session and recording its assignment are two round
     // trips, and the visible terminal can attach between them. A session whose
@@ -522,6 +560,7 @@ export class SshRouter {
     if (assignment === undefined && sessionCwd !== undefined && isUnder(mountBase(), sessionCwd)) {
       for (let attempt = 0; attempt < PENDING_BIND_ATTEMPTS && assignment === undefined; attempt += 1) {
         await new Promise(resolve => setTimeout(resolve, PENDING_BIND_WAIT_MS))
+        await this.bindings.refresh()
         assignment = this.bindings.get(sessionId)
       }
       if (assignment === undefined) throw new Error(unboundMountMessage(sessionCwd, this.t))
@@ -758,7 +797,7 @@ export class SshRouter {
    * would only add a mapping nothing can honour.
    */
   private async adoptMounts(): Promise<void> {
-    let adopted = false
+    const mounts = new Map<string, string>()
     for (const entry of this.bindings.all()) {
       if (entry.mount !== undefined) continue
       const device = this.connections.get(entry.deviceId)
@@ -766,9 +805,9 @@ export class SshRouter {
       const root = entry.remoteRoot ?? device.remoteRoot
       const mount = mountFor(entry.deviceId, root.trim().length === 0 ? '~' : root)
       await mkdir(mount, { recursive: true })
-      adopted = this.bindings.adoptMount(entry.sessionId, mount) || adopted
+      mounts.set(entry.sessionId, mount)
     }
-    if (adopted) await this.bindings.write()
+    await this.bindings.adoptMounts(mounts)
   }
 }
 

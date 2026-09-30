@@ -322,6 +322,20 @@ when it contributes to model-visible state.
     replacement is an ordinary respawn, so the scrollback survives. Without
     it the spawn-plan seam's whole promise — no local shell behind a
     device's name — would hold only for sessions born on a device.
+  - **The bindings document is shared by every host on the machine, so it
+    is read-modify-write.** The web host and the desktop host run side by
+    side over one `bindings.json`; a store that caches it at startup and
+    writes the cache back whole turns the other host's binds into
+    deletions, and a session whose row vanished keeps its live shell while
+    its pill falls back to this machine — the pill naming one machine and
+    the terminal answering from another. Every mutation therefore applies
+    to what is on disk now, and every listing re-reads, so two hosts keep
+    each other's rows.
+  - **A shell's death never takes the host down.** Teardown kills the PTY
+    and the exit callback then fires into a stopped context; demanding a
+    required service there throws, and an uncaught throw in an exit
+    handler used to exit the whole host — every session in it "dropping"
+    at once. `markDead` treats the reservation release as best-effort.
   - **The mapping has an alias root** (`mappingFor`, the one place a
     mapping is built): a session created first and pointed at a device
     later — every session of the sidebar's terminal section — has a
