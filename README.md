@@ -71,7 +71,7 @@ To run one anyway: `dsh plugin --profile <name> allow-version <package@version> 
 # One package: the bundle is the patch layer, it depends on the other ten dshell
 # packages, and dshell-ssh carries the one dsh package a stock profile does not
 # ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.10
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.11
 
 dsh web
 ```
