@@ -239,7 +239,7 @@ export function CreationPanel({ sessionId, sessions, device, presets, t }: Props
         },
       },
         createElement('span', { style: { display: 'inline-flex', flex: 'none', alignItems: 'center', justifyContent: 'center' } },
-          createElement(DshIconView, { name: 'code', size: 24, color: 'var(--dsw-alias-label-primary)' })),
+          createElement(DshIconView, { name: 'whaleTail', size: 24, color: 'var(--dsw-alias-label-primary)' })),
         createElement('span', null, t('creation.title')),
       ),
       // The chip row: the run location where dsh puts the workspace, the preset

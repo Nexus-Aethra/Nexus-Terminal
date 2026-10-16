@@ -10,6 +10,7 @@ making a targeted change.
 | [`dshell-roadmap.md`](./dshell-roadmap.md) | Picking the next phase to implement |
 | [`dshell-packages.md`](./dshell-packages.md) | Looking up which plugin owns a feature |
 | [`dshell-upgrade-0.1.6.md`](./dshell-upgrade-0.1.6.md) | Moving the dsh version: the adaptation and testing roadmaps for one upgrade |
+| [`dshell-handoff-2026-10.md`](./dshell-handoff-2026-10.md) | Taking the work over from someone: live state, uncommitted changes, open items, demo assets |
 
 ## Document roles
 
@@ -26,6 +27,11 @@ making a targeted change.
   testing work that makes the next move cheaper. Read it when the harness
   version changes; fold its lessons back into the four above once the target
   version is the one `main` runs.
+- `dshell-handoff-2026-10.md` is *one handover*, not a standing document: it
+  records the live state (what is released, what sits uncommitted, what is
+  blocked and why) with the readings that were true on 2026-10-16. It goes
+  stale as soon as the branch is committed or released — rewrite it at the next
+  handover rather than maintaining it.
 
 ## Source of truth for dsh
 

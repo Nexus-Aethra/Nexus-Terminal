@@ -78,8 +78,8 @@ export function agentItemOf(block: TurnBlock): ViewItem | undefined {
  * the count of task blocks that had already started. Segments sharing a region
  * are contiguous in the stream, so concatenating them rebuilds that stretch of
  * terminal output verbatim.
- * @param blocks - the folded agent task blocks, in start order.
- * @param segments - the PTY text with its arrival times, oldest first.
+ * @param hostBlocks - the host's ordered shell, turn and command carriers.
+ * @param fold - the folded agent and command blocks, in start order.
  * @returns the items in display order: region, task, region, task, … region.
  */
 export function assembleTimeline(
@@ -98,7 +98,10 @@ export function assembleTimeline(
     // One turn can fold into several blocks (a supervised phase change splits
     // it), so consume every block that carries this turn.
     for (const block of fold.blocks) {
-      if (block.turn !== host.turn || used.has(block.key)) continue
+      const matches = host.turn === undefined
+        ? host.commandId !== undefined && block.commandId === host.commandId
+        : block.turn === host.turn
+      if (!matches || used.has(block.key)) continue
       used.add(block.key)
       const item = agentItemOf(block)
       if (item !== undefined) items.push(item)

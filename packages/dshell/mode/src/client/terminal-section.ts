@@ -255,7 +255,7 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     const rowEl = document.createElement('div')
     rowEl.style.cssText = 'display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;box-sizing:border-box;' +
       `border-radius:${RADIUS};cursor:pointer;color:${LABEL_PRIMARY}`
-    const mark = dshIcon('code', 16)
+    const mark = dshIcon('whaleTail', 16)
     mark.style.color = LABEL_TERTIARY
     mark.style.flex = 'none'
     const titleEl = document.createElement('span')

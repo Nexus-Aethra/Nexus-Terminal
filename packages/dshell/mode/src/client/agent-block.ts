@@ -7,6 +7,9 @@
  */
 
 import { createElement, useEffect, useMemo, useState, type ReactElement } from 'react'
+import { TextShimmer } from '@deepseek-ai/dsh-client-ui-primitives'
+import { WHALE_TAIL_PATH } from './dsh-icons.js'
+import runningWhaleMask from './running-whale@2x.png'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { TurnBlock } from './blocks.js'
 import { SESSION_ROW_KEY, sanitizeRowText, type SessionRow } from './session-rows.js'
@@ -22,20 +25,6 @@ type ModeTranslate = TranslateNS<'dshellMode'>
 /** A foldable row: one hover target, so the whole line reads as the control. */
 const FOLD_STYLE = { margin: '0 -6px', padding: '1px 6px', borderRadius: '6px', cursor: 'pointer' } as const
 
-/**
- * dsh's official fish silhouette path, inlined so this package stays free of an
- * extra `@deepseek-ai/dsh-client-ui-primitives` import. The source is
- * `dsh/packages/client/ui-primitives/src/FishLogo.tsx` (the `FISH_LOGO_PATH`
- * constant), reproduced verbatim — same viewBox, same geometry — and used at
- * 16px in the agent-block fold header so the running state reads as the brand
- * mark rather than a generic character glyph.
- */
-const FISH_PATH = 'M22.9168 1.43018C22.6713 1.31018 22.5658 1.53918 22.4223 1.65519C22.3733 1.69269 22.3318 1.74169 22.2903 1.78669C21.9317 2.1697 21.5127 2.42121 20.9657 2.39121C20.1657 2.34621 19.4827 2.59771 18.8787 3.20973C18.7502 2.45521 18.3236 2.0047 17.6746 1.71569C17.3351 1.56568 16.9916 1.41518 16.7536 1.08867C16.5876 0.856163 16.5421 0.597155 16.4591 0.341647C16.4061 0.187643 16.3536 0.0301382 16.1761 0.00363739C15.9836 -0.0263635 15.9081 0.135141 15.8326 0.270145C15.5306 0.822162 15.4136 1.43018 15.4251 2.0462C15.4516 3.43174 16.0366 4.53527 17.1991 5.3203C17.3311 5.4103 17.3651 5.5003 17.3236 5.63181C17.2441 5.90231 17.1501 6.16482 17.0671 6.43533C17.0141 6.60784 16.9351 6.64584 16.7501 6.57033C16.1121 6.30383 15.5611 5.90931 15.074 5.4328C14.2475 4.63328 13.5 3.75075 12.568 3.05973C12.349 2.89822 12.13 2.74822 11.9034 2.60522C10.9524 1.68169 12.028 0.923165 12.277 0.833162C12.5375 0.739159 12.3675 0.41615 11.5259 0.42015C10.6844 0.42365 9.91439 0.705658 8.93286 1.08117C8.78935 1.13767 8.63835 1.17867 8.48384 1.21267C7.59332 1.04367 6.66829 1.00617 5.70226 1.11517C3.88321 1.31768 2.43016 2.1777 1.36213 3.64575C0.0790928 5.4103 -0.222916 7.41536 0.146595 9.50642C0.535106 11.7105 1.66014 13.535 3.38869 14.9616C5.18125 16.4406 7.24581 17.1657 9.60138 17.0266C11.0319 16.9441 12.6245 16.7526 14.421 15.2321C14.874 15.4576 15.3496 15.5476 16.1381 15.6151C16.7456 15.6716 17.3306 15.5851 17.7836 15.4911C18.4931 15.3411 18.4441 14.6841 18.1876 14.5636C16.1081 13.595 16.5646 13.9891 16.1496 13.67C17.2061 12.42 18.8202 10.1979 19.3182 7.17235C19.3672 6.83834 19.4297 6.36783 19.4222 6.09732C19.4182 5.93231 19.4562 5.86831 19.6447 5.84931C20.1657 5.78931 20.6712 5.64681 21.1357 5.3913C22.4833 4.65528 23.0268 3.44624 23.1548 1.9972C23.1738 1.77569 23.1508 1.54668 22.9168 1.43018ZM11.1749 14.4736C9.15936 12.889 8.18184 12.3675 7.77832 12.39C7.40081 12.4125 7.46881 12.8445 7.55182 13.126C7.63882 13.404 7.75182 13.5955 7.91033 13.8396C8.01983 14.0011 8.09533 14.2411 7.80083 14.4216C7.15181 14.8231 6.02327 14.2866 5.97027 14.2601C4.65673 13.4865 3.5587 12.4655 2.78467 11.069C2.03715 9.72493 1.60314 8.28289 1.53164 6.74384C1.51264 6.37233 1.62214 6.24082 1.99215 6.17332C2.47916 6.08332 2.98118 6.06432 3.46769 6.13582C5.52476 6.43633 7.27581 7.35586 8.74385 8.8129C9.58188 9.64243 10.2159 10.634 10.8689 11.6025C11.5634 12.631 12.3105 13.611 13.262 14.4146C13.598 14.6961 13.866 14.9101 14.1225 15.0681C13.349 15.1546 12.058 15.1731 11.1749 14.4746L11.1749 14.4736ZM12.141 8.25988C12.141 8.09488 12.273 7.96338 12.439 7.96338C12.4765 7.96338 12.5105 7.97088 12.541 7.98188C12.5825 7.99688 12.6205 8.01938 12.6505 8.05338C12.7035 8.10588 12.7335 8.18088 12.7335 8.25988C12.7335 8.42489 12.6015 8.55639 12.4355 8.55639C12.2695 8.55639 12.141 8.42489 12.141 8.25988ZM15.1415 9.79893C14.949 9.87793 14.7565 9.94544 14.5715 9.95294C14.2845 9.96794 13.9715 9.85143 13.8015 9.70893C13.5375 9.48742 13.3485 9.36342 13.2695 8.97691C13.2355 8.8119 13.2545 8.55639 13.2845 8.40989C13.3525 8.09438 13.277 7.89187 13.0545 7.70787C12.8735 7.55786 12.643 7.51636 12.39 7.51636C12.2955 7.51636 12.209 7.47486 12.1445 7.44136C12.039 7.38886 11.9519 7.25735 12.035 7.09585C12.0615 7.04335 12.19 6.91584 12.22 6.89334C12.5635 6.69784 12.9595 6.76184 13.326 6.90834C13.6655 7.04735 13.9225 7.30236 14.292 7.66287C14.6695 8.09838 14.7375 8.21838 14.9525 8.54539C15.1225 8.8009 15.277 9.06341 15.3831 9.36392C15.4471 9.55142 15.3641 9.70493 15.1415 9.79893Z'
-
-/** The fish silhouette's intrinsic box, in user units. */
-const FISH_VB_W = 23.16
-const FISH_VB_H = 17.04
-
 let foldCssInjected = false
 
 /** The plugin ships one client bundle, so the fold stylesheet is injected once. */
@@ -49,46 +38,14 @@ function injectFoldCss(): void {
     // Chevron rotation.
     '[data-dshell-chevron]{opacity:.65;transition:transform 120ms ease,opacity 120ms ease}',
     '[data-dshell-fold]:hover [data-dshell-chevron]{opacity:1}',
-    // Brand-coloured shimmer on the running agent block's "深度求索中…" line,
-    // adapted from dsh's stock turnStatus (ChatView.module.css): the same
-    // linear-gradient sweep on the text. This is the only place the transcript
-    // uses the brand blue — internal rows stay monochrome and let the
-    // header's colour do the running-signal work.
-    '[data-dshell-running-text]{',
-    '  background:linear-gradient(90deg,var(--dsw-static-deepseek-500) 0%,var(--dsw-static-deepseek-500) 40%,var(--dsw-static-deepseek-200) 50%,var(--dsw-static-deepseek-500) 60%,var(--dsw-static-deepseek-500) 100%);',
-    '  background-position:100% 0;background-size:250% 100%;',
-    '  -webkit-background-clip:text;background-clip:text;',
-    '  color:transparent;-webkit-text-fill-color:transparent;',
-    '  animation:dshell-running-shimmer 1.8s linear infinite;',
-    '}',
-    '@keyframes dshell-running-shimmer{to{background-position:0 0}}',
-    // The running fish mark in the fold header shares the same brand
-    // colour as the running text so the row reads as one piece.
-    '[data-dshell-running-fish]{color:var(--dsw-static-deepseek-500)}',
-    // A slow opacity breath on a live thinking label, so the reader can
-    // see the row is still in flight without re-reading the label.
-    '[data-dshell-thinking-glyph]{animation:dshell-thinking-breathe 1.4s ease-in-out infinite}',
-    '@keyframes dshell-thinking-breathe{0%,100%{opacity:.35}50%{opacity:1}}',
-    // Internal rows adopt dsh's stock "running" affordance: a 300px sweep
-    // band that crosses the row on the page background, not on the text.
-    // The band is the page's own skeleton tone so the running signal reads
-    // as "the page is paying attention", not "this row is coloured".
-    // Column-specific overrides aren't needed because every internal row
-    // is the same height as the fold body.
-    '[data-dshell-running-row]{position:relative;overflow:hidden}',
-    '[data-dshell-running-row]::after{',
-    '  content:"";position:absolute;inset-block:0;left:0;width:300px;',
-    '  background:linear-gradient(90deg,transparent 0%,var(--dsw-alias-bg-skeleton) 55%,transparent 100%);',
-    '  animation:dshell-row-sweep 2.6s ease-out infinite;',
-    '  pointer-events:none;',
-    '}',
-    '@keyframes dshell-row-sweep{0%{left:-300px}90%,100%{left:100%}}',
-    // Honour the OS-level reduced-motion preference: stop every animation
-    // and fall back to the static brand colour on the header.
-    '@media (prefers-reduced-motion:reduce){',
-    '  [data-dshell-running-text]{background-position:0 0;background-size:100% 100%;animation:none}',
-    '  [data-dshell-running-row]::after{animation:none;display:none}',
-    '  [data-dshell-thinking-glyph]{animation:none;opacity:1}',
+    '[data-dshell-running-text]{color:var(--dsw-alias-label-deep-diving);--dsw-alias-label-shimmer:var(--dsw-alias-label-deep-diving-shimmer)}',
+    '[data-dshell-whale-animated]{display:none;position:absolute;inset:0}',
+    '[data-dshell-whale-still]{display:initial}',
+    '@supports (mask-mode:alpha) and (mask-image:url("")){',
+    '  @media (prefers-reduced-motion:no-preference) and (forced-colors:none){',
+    '    [data-dshell-whale-tail][data-running] [data-dshell-whale-animated]{display:block;background:currentColor;mask-position:center;mask-size:100% 100%;mask-repeat:no-repeat;mask-mode:alpha;will-change:transform}',
+    '    [data-dshell-whale-tail][data-running] [data-dshell-whale-still]{display:none}',
+    '  }',
     '}',
   ].join('\n')
   document.head.append(style)
@@ -104,7 +61,7 @@ type ToolStepModel = { key: string; label: string; command: string | undefined; 
 export type ImageLoader = MessageImageLoader
 type Step =
   | { kind: 'text'; key: string; row: SessionRow; duration: number | undefined }
-  | { kind: 'tool'; key: string; label: string; command: string | undefined; output: string | undefined; images: readonly unknown[] | undefined }
+  | { kind: 'tool'; key: string; label: string; callGroup?: string | undefined; command: string | undefined; output: string | undefined; images: readonly unknown[] | undefined }
   | { kind: 'group'; key: string; label: string; items: ToolStepModel[] }
 
 /** Tool names the reader knows by their job rather than their identifier. */
@@ -137,16 +94,23 @@ export function formatDuration(t: ModeTranslate, ms: number): string {
  * @param rows - the block's rows, oldest first.
  * @param startedAt - when the task opened, the first row's baseline.
  * @param t - the bound translator, for the tool-call labels.
+ * @param resultRows - the full task's rows, including results after steering.
  * @returns the steps, in display order.
  */
-export function buildSteps(rows: readonly SessionRow[], startedAt: number, t: ModeTranslate): Step[] {
+export function buildSteps(rows: readonly SessionRow[], startedAt: number, t: ModeTranslate, resultRows: readonly SessionRow[] = rows): Step[] {
   const results = new Map<string, SessionRow>()
-  for (const row of rows) {
+  const calls = new Set<string>()
+  for (const row of resultRows) {
     if (row.role === 'tool' && row.callId !== undefined) results.set(row.callId, row)
+    if (row.role === 'call' && row.callId !== undefined) calls.add(row.callId)
   }
   const steps: Step[] = []
   for (const [index, row] of rows.entries()) {
-    if (row.role === 'tool') continue // rendered with its call
+    if (row.role === 'tool') {
+      if (row.callId !== undefined && calls.has(row.callId)) continue
+      steps.push({ kind: 'tool', key: row.key, label: toolLabel(row.label ?? t(SESSION_ROW_KEY.tool), t), command: undefined, output: row.text, images: row.images })
+      continue
+    }
     // A thinking row's span is the wait *before* it: thinking and the answer
     // it produces are sections of one event and share that event's timestamp.
     const previous = rows[index - 1]?.time ?? startedAt
@@ -156,6 +120,7 @@ export function buildSteps(rows: readonly SessionRow[], startedAt: number, t: Mo
         kind: 'tool',
         key: row.key,
         label: toolLabel(row.label ?? t(SESSION_ROW_KEY.call), t),
+        callGroup: row.callGroup,
         command: row.command,
         output: result?.text,
         images: result?.images,
@@ -178,10 +143,10 @@ function groupRuns(steps: readonly Step[], t: ModeTranslate): Step[] {
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     if (step === undefined) continue
-    if (step.kind !== 'tool') { out.push(step); continue }
+    if (step.kind !== 'tool' || step.callGroup === undefined) { out.push(step); continue }
     const run: ToolStepModel[] = []
     let cursor = index
-    for (let scan = steps[cursor]; scan?.kind === 'tool'; scan = steps[cursor]) {
+    for (let scan = steps[cursor]; scan?.kind === 'tool' && scan.callGroup === step.callGroup && scan.label === step.label; scan = steps[cursor]) {
       run.push({ key: scan.key, label: scan.label, command: scan.command, output: scan.output, images: scan.images })
       cursor += 1
     }
@@ -354,7 +319,7 @@ function ToolGroup(props: { step: Extract<Step, { kind: 'group' }>; theme: Theme
         // doesn't gain a second accent tier.
         style: { fontWeight: 600, color: theme.muted },
       }, String(step.items.length)),
-      createElement('span', null, t('agent.group.commands')),
+      createElement('span', null, t('agent.group.calls')),
       createElement(Chevron, { open, theme }),
     ),
     ...(open
@@ -378,16 +343,8 @@ function TextStep(props: { step: Extract<Step, { kind: 'text' }>; theme: Theme; 
       createElement('div', {
         style: { display: 'flex', alignItems: 'baseline', gap: '6px', color: theme.muted, fontSize: 12 },
       },
-        // Thinking rows get dsh's official `IconThinkOutline14` mark — the
-        // same small brain glyph dsh's stock ReasoningRow uses. Live
-        // thinking rows (duration === undefined) carry a 1.4s opacity
-        // breath on the label so the reader can see one is still in
-        // flight without re-reading it. Reduced-motion drops the breath.
         createElement(ThinkMark),
-        createElement('span', {
-          'data-dshell-thinking-glyph': step.duration === undefined ? '' : undefined,
-          style: { color: 'var(--dsw-alias-label-tertiary)' },
-        }, t(SESSION_ROW_KEY.reasoning)),
+        createElement(TextShimmer, { active: step.duration === undefined, children: t(SESSION_ROW_KEY.reasoning) }),
         step.duration === undefined ? null : createElement('span', null, t('agent.reasoning.duration', { duration: formatDuration(t, step.duration) })),
         createElement(Chevron, { open, theme }),
       ),
@@ -420,40 +377,25 @@ function TextStep(props: { step: Extract<Step, { kind: 'text' }>; theme: Theme; 
   }, sanitizeRowText(row.text))
 }
 
-/**
-/**
- * The dsh brand fish, drawn at 16px in the fold header. It signals "this
- * block" rather than "any row of this block" — dsh's stock ChatView uses
- * the same fish for the parent turn surface, and reserves the running
- * affordance for the header alone. The body rows use a small per-action
- * icon (see ThinkMark, ToolMark), not the fish.
- *
- * `tone: 'shimmer'` lets the surrounding text shimmer paint the fish via
- * `currentColor`; on a non-running fold (done or failed) the mark is just
- * the muted silhouette. Error affordance lives on the row's left rail and
- * the "已中断" word, not on the mark — dsh's stock rule is "colour on the
- * part the reader has to act on, not on the whole row, and never on the
- * mark" (IconApiOutline14 with StateDot(state=error) overlays the dot,
- * the mark itself stays neutral).
- */
-function FishMark(props: { tone: 'shimmer' | 'muted' }): ReactElement {
-  const h = (16 * FISH_VB_H) / FISH_VB_W
-  const style: Record<string, string | number> = { flex: '0 0 auto', alignSelf: 'center' }
-  if (props.tone === 'shimmer') {
-    // The brand colour comes from the `[data-dshell-running-fish]` rule so
-    // the same animation hook can re-paint the fish when the running state
-    // changes; a future palette swap is one rule change.
-    style['data-dshell-running-fish'] = ''
-  }
-  return createElement('svg', {
-    width: 16,
-    height: h,
-    viewBox: `0 0 ${FISH_VB_W} ${FISH_VB_H}`,
-    fill: 'currentColor',
+function WhaleMark(props: { running: boolean }): ReactElement {
+  return createElement('span', {
+    'data-dshell-whale-tail': '',
+    'data-running': props.running ? '' : undefined,
     'aria-hidden': 'true',
-    style,
+    style: {
+      position: 'relative', display: 'inline-flex', flex: '0 0 auto', alignSelf: 'center',
+      width: 14, height: 14, contain: 'strict', overflow: 'hidden',
+      color: props.running ? 'var(--dsw-alias-label-deep-diving)' : 'var(--dsw-alias-label-tertiary)',
+    },
   },
-    createElement('path', { d: FISH_PATH }),
+    props.running ? createElement('span', {
+      'data-dshell-whale-animated': '',
+      style: { maskImage: `url("data:image/png;base64,${runningWhaleMask}")` },
+    }) : null,
+    createElement('svg', {
+      'data-dshell-whale-still': '',
+      width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none',
+    }, createElement('path', { d: WHALE_TAIL_PATH, stroke: 'currentColor', strokeWidth: 1 })),
   )
 }
 
@@ -558,10 +500,8 @@ interface CardSegment {
   readonly key: string
   /** The human message that opened this segment; absent before the first one. */
   readonly ask: SessionRow | undefined
-  /** Thinking, tool calls and shell rows, in stream order. */
-  readonly process: readonly SessionRow[]
-  /** The model's prose, in stream order. */
-  readonly answers: readonly SessionRow[]
+  /** Prose, thinking and tool rows in their original order. */
+  readonly rows: readonly SessionRow[]
 }
 
 /**
@@ -581,31 +521,24 @@ interface CardSegment {
 export function segmentsOf(rows: readonly SessionRow[]): CardSegment[] {
   const segments: CardSegment[] = []
   let ask: SessionRow | undefined
-  let process: SessionRow[] = []
-  let answers: SessionRow[] = []
+  let body: SessionRow[] = []
   const flush = (): void => {
-    // An empty stretch only survives as the card's first segment: the summary
-    // line is rendered with it, so a turn the model has not answered yet still
-    // gets its card.
-    if (ask !== undefined || process.length > 0 || answers.length > 0 || segments.length === 0) {
+    if (ask !== undefined || body.length > 0) {
       segments.push({
         key: ask === undefined ? `seg:${String(segments.length)}` : `seg:${ask.key}`,
         ask,
-        process,
-        answers,
+        rows: body,
       })
     }
     ask = undefined
-    process = []
-    answers = []
+    body = []
   }
   for (const row of rows) {
     if (row.role === 'user') { flush(); ask = row; continue }
-    if (row.role === 'assistant') answers.push(row)
-    else process.push(row)
+    body.push(row)
   }
   flush()
-  return segments
+  return segments.length > 0 ? segments : [{ key: 'seg:0', ask: undefined, rows: [] }]
 }
 
 /**
@@ -635,13 +568,13 @@ export function AgentBlock(props: { block: TurnBlock; theme: Theme; loadImage: I
   // answers are parsed once.
   const segments = useMemo(() => segmentsOf(block.rows).map(segment => ({
     ...segment,
-    steps: buildSteps(segment.process, segment.ask?.time ?? block.startedAt, t),
-    // Answers are written to be read: render their markdown rather than the raw
-    // syntax they arrived in.
-    answers: segment.answers.flatMap(row => [
-      ...renderMarkdown(sanitizeRowText(row.text), theme, row.key),
-      createElement(RowImages, { key: `${row.key}:img`, images: row.images, loadImage: props.loadImage, theme, t }),
-    ]),
+    steps: buildSteps(segment.rows, segment.ask?.time ?? block.startedAt, t, block.rows).map(step => ({
+      step,
+      answer: step.kind === 'text' && step.row.role === 'assistant' ? [
+        ...renderMarkdown(sanitizeRowText(step.row.text), theme, step.row.key),
+        createElement(RowImages, { key: `${step.key}:img`, images: step.row.images, loadImage: props.loadImage, theme, t }),
+      ] : undefined,
+    })),
   })), [block.rows, block.rows.length, block.startedAt, theme, props.loadImage, t])
   const tokens = formatTokens(block.tokens)
   const failed = block.status === 'failed' || block.status === 'aborted'
@@ -704,23 +637,15 @@ export function AgentBlock(props: { block: TurnBlock; theme: Theme; loadImage: I
         onClick: () => { setExpanded(value => !value) },
         style: {
           display: 'flex', alignItems: 'baseline', gap: '6px',
-          // A failed block reads as a stopped session, not an alert. The whole
-          // row stays on the same muted label tier as a normal-done block; the
-          // failure is signalled by a thin left rail in the error alias, the
-          // error-toned fish, and the "已中断" word. This matches dsh's stock
-          // philosophy: colour is reserved for the part of the line the
-          // reader has to act on, not the whole row.
           color: theme.muted, fontSize: 12,
           margin: '6px -6px 4px', padding: '1px 6px 1px 8px', borderRadius: '6px', cursor: 'pointer',
           borderLeft: failed ? '2px solid var(--dsw-alias-state-error-primary)' : '2px solid transparent',
         },
       },
-        running
-          ? createElement(FishMark, { tone: 'shimmer' })
-          : createElement(FishMark, { tone: 'muted' }),
+        createElement(WhaleMark, { running }),
         running
           ? createElement('span', { 'data-dshell-running-text': '' },
-              t('agent.running', { duration: formatDuration(t, endedAt - block.startedAt) }))
+              createElement(TextShimmer, { active: true, children: t('agent.running', { duration: formatDuration(t, endedAt - block.startedAt) }) }))
           : createElement('span', null,
               failed
                 ? t('agent.interrupted', { duration: formatDuration(t, endedAt - block.startedAt) })
@@ -728,28 +653,17 @@ export function AgentBlock(props: { block: TurnBlock; theme: Theme; loadImage: I
         tokens === undefined ? null : createElement('span', null, `· ${tokens}`),
         createElement(Chevron, { open: expanded, theme }),
       ),
-      // Fold body: when the block is running, a single running-row container
-      // gives every internal step dsh's stock "sweep" running signal. When
-      // the block is done or failed, no container — the steps read as a quiet
-      // monochrome archive. The notice line that used to render below the
-      // answer (a red "AI 回答已中断 · 22:43") was a duplicate of the fold
-      // header; the header now carries the failure state on its own, so the
-      // duplicate is gone. The in-flight reasoning line closes the last
-      // segment, so a stream still being written never lands above it.
-      !expanded || segment.steps.length === 0
-        ? null
-        : createElement('div', {
-          key: `${segment.key}:steps`,
-          ...running ? { 'data-dshell-running-row': '' } : {},
-        },
-          ...segment.steps.map(step => (step.kind === 'tool'
-            ? createElement(ToolStep, { key: step.key, step, theme, loadImage: props.loadImage, t })
-            : step.kind === 'group'
-              ? createElement(ToolGroup, { key: step.key, step, theme, loadImage: props.loadImage, t })
-              : createElement(TextStep, { key: step.key, step, theme, loadImage: props.loadImage, t }))),
-          index === segments.length - 1 ? liveReasoning : null,
-        ),
-      ...segment.answers,
+      ...segment.steps.map(({ step, answer }) => answer !== undefined
+        ? createElement('div', { key: step.key, 'data-dshell-step-kind': 'answer' }, ...answer)
+        : !expanded ? null : createElement('div', {
+          key: step.key,
+          'data-dshell-step-kind': step.kind,
+        }, step.kind === 'tool'
+          ? createElement(ToolStep, { step, theme, loadImage: props.loadImage, t })
+          : step.kind === 'group'
+            ? createElement(ToolGroup, { step, theme, loadImage: props.loadImage, t })
+            : createElement(TextStep, { step, theme, loadImage: props.loadImage, t }))),
+      expanded && index === segments.length - 1 ? liveReasoning : null,
     ].filter(node => node !== null)),
     liveText === undefined
       ? null

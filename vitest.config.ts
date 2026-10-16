@@ -22,6 +22,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
+      react: fileURLToPath(new URL('./packages/dshell/mode/node_modules/react', import.meta.url)),
       '@nexus-aethra/dshell-std': fileURLToPath(new URL('./packages/dshell/std/src/index.ts', import.meta.url)),
     },
   },
