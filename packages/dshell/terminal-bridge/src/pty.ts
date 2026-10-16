@@ -4,7 +4,10 @@
  * dsh's terminal-bash backend sanitizes all ANSI out of scrollback (a
  * documented line-oriented decision), which starves a real terminal
  * canvas. This backend owns the dshell main shells instead: a plain
- * node-pty bash with TERM=xterm-256color, raw bytes retained and
+ * node-pty bash with TERM=xterm-256color and a UTF-8 locale the shell can
+ * actually render with (`shell-locale.ts` — the ambient `LC_ALL=C.UTF-8`
+ * an agent sandbox leaves behind makes uutils' `ls` shell-escape every
+ * non-ASCII filename), raw bytes retained and
  * streamed to the bridge verbatim (colors, cursor control, readline
  * redraws all reach the browser). The agent-facing surface
  * (`terminal_read`, send viewports, motd) is ANSI-stripped so tool
@@ -36,6 +39,7 @@ import type {
 } from '@deepseek-ai/dsh-terminal'
 import type { TerminalBackendSpawnSpec } from '@deepseek-ai/dsh-terminal'
 import type { DshellTerminalBridgeHostTranslator } from './host-locales.js'
+import { shellLocale } from './shell-locale.js'
 
 /** Retention bounds for one raw session (mirrors dsh's own defaults). */
 const RETAINED_MAX_BYTES = 4 * 1024 * 1024
@@ -284,6 +288,11 @@ class LocalRawSession implements DshellPtySession {
     rows: number,
     private readonly t: DshellTerminalBridgeHostTranslator,
     plan: PtySpawnPlan = LOCAL_SHELL,
+    /**
+     * A real UTF-8 locale to run under, resolved from the ambient one when
+     * that is a C-family name (`shellLocale`); undefined leaves it alone.
+     */
+    locale: string | undefined = undefined,
   ) {
     const [file, ...args] = plan.argv
     if (file === undefined) throw new Error('dshell PTY: spawn plan has no program')
@@ -292,7 +301,12 @@ class LocalRawSession implements DshellPtySession {
       cols,
       rows,
       ...(cwd === undefined || cwd === '' ? {} : { cwd }),
-      env: { ...process.env, TERM: 'xterm-256color', ...plan.env } as Record<string, string>,
+      env: {
+        ...process.env,
+        ...(locale === undefined ? {} : { LC_ALL: locale }),
+        TERM: 'xterm-256color',
+        ...plan.env,
+      } as Record<string, string>,
     })
     this.pid = this.pty.pid
     this.redirected = plan !== LOCAL_SHELL
@@ -557,6 +571,7 @@ export class DshellPtyBackend implements TerminalBackend {
       this.rows,
       this.t,
       plan ?? LOCAL_SHELL,
+      await shellLocale(),
     )
     this.sessions.set(spec.sessionId as TerminalSessionId, session)
     // Unnamed spawns are other plugins creating shells in dshell's world; the

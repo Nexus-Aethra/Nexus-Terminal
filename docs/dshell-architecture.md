@@ -289,6 +289,26 @@ interface PtyBuffer {
 `dshell-mode` reads `ctx.dshellPtyBuffer.get(agent)` at agent-mode
 submit time. The 4 KiB cap is checked at UTF-8 boundary alignment.
 
+### 6.1 The shell's environment
+
+The shell's locale is inherited from whatever launched the harness, and the
+ambient value is not always one a terminal can render with. `C.UTF-8` is the
+usual suspect: glibc resolves it, but uutils coreutils (Ubuntu 25.10's
+`rust-coreutils`, which ships `/bin/ls`) decides its quoting from the locale
+NAME and reads every `C`/`POSIX` family name — `C.UTF-8` included — as ASCII,
+so `ls` on a terminal shell-escapes each non-ASCII byte of a filename
+(`''$'\346\226\207\346\241\243'`). `LC_CTYPE` is not read at all, so a
+lone `LC_CTYPE=zh_CN.UTF-8` leaves bash in UTF-8 while `ls` still escapes.
+
+`shell-locale.ts` therefore resolves the `LC_ALL` every spawned shell runs
+under, once per process: an ambient locale that already names a real UTF-8
+codeset is kept, a deliberate non-UTF-8 locale is left alone, and a C-family
+ambient is upgraded — to the installed spelling of a UTF-8 locale the
+environment already names (an `LANG` shadowed by `LC_ALL=C.UTF-8`, which is
+what an agent sandbox leaves behind), else to one the machine has per
+`locale -a`, preferring the ambient language. `TERM=xterm-256color` is set
+alongside it, and a device spawn plan's own `env` still wins over both.
+
 ## 7. Per-session mode store (browser)
 
 ```tsc
