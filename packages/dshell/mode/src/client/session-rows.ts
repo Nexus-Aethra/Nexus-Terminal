@@ -33,6 +33,8 @@ export interface SessionRow {
   readonly label?: string | undefined
   /** `tool-call` correlation id, so a later result can name its tool. */
   readonly callId?: string | undefined
+  /** Assistant message containing this batch of calls. */
+  readonly callGroup?: string | undefined
   /** Event time, so a row can report how long it ran. */
   readonly time: number
   /** A tool call's own command, when its arguments name one. */
@@ -159,7 +161,7 @@ export function rowOf(
   key: string,
   text: string,
   time: number,
-  extra: { label?: string; callId?: string; command?: string | undefined; images?: readonly unknown[] } = {},
+  extra: { label?: string; callId?: string; callGroup?: string; command?: string | undefined; images?: readonly unknown[] } = {},
 ): SessionRow | null {
   const body = text.replace(/\n+$/, '')
   // An image-only message is still a message: without this the row vanishes
@@ -208,23 +210,38 @@ export function sessionRowsOf(event: SessionEventLike, toolNames: Map<string, st
     return row === null ? [] : [row]
   }
   if (event.type === 'assistant/message') {
-    const content = event.data.message.content
     const rows: SessionRow[] = []
     const base = `${event.type}:${event.seq}`
-    const reasoning = rowOf('reasoning', `${base}:r`, reasoningOfBlocks(content), event.time, { label: t('row.reasoning') })
-    if (reasoning !== null) rows.push(reasoning)
-    const answer = rowOf('assistant', `${base}:t`, textOfBlocks(content), event.time, { images: imagesOf(content) })
-    if (answer !== null) rows.push(answer)
-    toolCallsOfBlocks(content, t).forEach((call, index) => {
-      toolNames.set(call.id, call.name)
-      const preview = compactArguments(call.args)
-      const row = rowOf('call', `${base}:c${String(index)}`, preview, event.time, {
-        label: call.name,
-        callId: call.id,
-        command: commandOfArgs(call.args),
+    let role: 'assistant' | 'reasoning' | undefined
+    let run: Record<string, unknown>[] = []
+    let start = 0
+    let callIndex = 0
+    const flush = (): void => {
+      if (role === undefined) return
+      const row = rowOf(role, `${base}:${role}:${String(start)}`, role === 'reasoning' ? reasoningOfBlocks(run) : textOfBlocks(run), event.time, {
+        ...role === 'reasoning' ? { label: t('row.reasoning') } : { images: imagesOf(run) },
       })
       if (row !== null) rows.push(row)
-    })
+      role = undefined
+      run = []
+    }
+    for (const [index, block] of contentBlocks(event.data.message.content).entries()) {
+      if (block.type === 'tool-call') {
+        flush()
+        for (const call of toolCallsOfBlocks([block], t)) {
+          toolNames.set(call.id, call.name)
+          const row = rowOf('call', `${base}:c${String(callIndex++)}`, compactArguments(call.args), event.time, {
+            label: call.name, callId: call.id, callGroup: base, command: commandOfArgs(call.args),
+          })
+          if (row !== null) rows.push(row)
+        }
+      } else if (block.type === 'text' || block.type === 'reasoning' || block.type === 'image') {
+        const next = block.type === 'reasoning' ? 'reasoning' : 'assistant'
+        if (role !== next) { flush(); role = next; start = index }
+        run.push(block)
+      }
+    }
+    flush()
     return rows
   }
   if (event.type === 'tool/result') {

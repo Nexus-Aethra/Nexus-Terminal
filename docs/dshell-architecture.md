@@ -529,9 +529,18 @@ not cancelled hands its removed prompt ids to the running turn, and the
 splices itself for this reason — the rule belongs to the fold, not to the view
 that drives it.
 
-Within a card, rows are cut into one **segment** per human message: the request,
-then the work and the answers it produced. A card with one request cuts into one
-segment and renders exactly as it always has.
+Within a card, rows are cut into one **segment** per human message, preserving
+prose, reasoning and tool calls in their original order. Folding hides only the
+process rows; answers remain at their original positions rather than collecting
+below every tool. Adjacent calls from the same assistant message and tool kind
+share a counted group; answers and steering messages break that group. Results
+update their call by `callId`, even when a steering message separates them.
+A result whose call is outside the loaded history remains visible at its own
+position instead of being dropped.
+
+The task header and terminal session rows use dsh's whale-tail artwork, not its
+full brand logo. Running headers reuse the native APNG mask and `TextShimmer`,
+with the native static-tail fallback for reduced motion and forced colors.
 
 ### A shell region is as tall as its screen, not as its log
 
