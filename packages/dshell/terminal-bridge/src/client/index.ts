@@ -56,6 +56,7 @@ export interface PtyBlock {
   readonly seq: number
   readonly kind: 'shell' | 'agent'
   readonly turn?: number | undefined
+  readonly commandId?: string | undefined
   readonly startedAt: number
   readonly endedAt?: number | undefined
   readonly text: string

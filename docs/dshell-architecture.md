@@ -515,6 +515,12 @@ therefore append it to the running block:
 - The two surfaces would then disagree about the session's shape while showing
   the same events.
 
+Slash commands such as `/compact` have no turn number. Their folded blocks
+match the host carriers by `commandId`; an absent turn number is never an
+identity match. Older carriers without a command identity use the folded
+block's timestamp, so compaction commands cannot pull later commands or
+turn-less history into an earlier position.
+
 Steering is not a property of the durable `user/message`; it has to be
 reconstructed, and dsh's own client already defines how (ui-chat's
 `SteeringHistory`, which this fold mirrors): a `next-step` inbox splice that is

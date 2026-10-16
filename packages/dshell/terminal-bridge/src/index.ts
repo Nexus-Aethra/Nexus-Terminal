@@ -380,11 +380,11 @@ export class DshellTerminalBridge extends Service {
     }, 'dshell-bridge: teardown')
     // Turn boundaries come from the session itself, so a block is cut exactly
     // where the agent took over and where it handed the terminal back.
-    ctx.on('session/event', (session: Session, event: { type?: string; data?: unknown }) => {
+    ctx.on('session/event', (session: Session, event: { type?: string; data?: unknown; time?: number }) => {
       const sessionId = String(session.id)
       const record = this.recordFor(sessionId)
       if (record === undefined) return
-      const data = (event.data ?? {}) as { turn?: number }
+      const data = (event.data ?? {}) as { turn?: number; commandId?: string }
       if (event.type === 'turn/start') {
         record.blocks.startTurn(data.turn)
         this.broadcast(sessionId, { kind: 'blocks', blocks: record.blocks.snapshot() })
@@ -398,7 +398,7 @@ export class DshellTerminalBridge extends Service {
         // command's marker falls back to tail insertion while every later
         // PTY byte keeps appending to the still-open shell region, so the
         // marker renders permanently below output that came after it.
-        record.blocks.startTurn(undefined)
+        record.blocks.startTurn(undefined, event.time, data.commandId)
         this.broadcast(sessionId, { kind: 'blocks', blocks: record.blocks.snapshot() })
       } else if (event.type === 'command/done') {
         record.blocks.endTurn()

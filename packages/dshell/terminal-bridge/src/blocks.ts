@@ -23,6 +23,8 @@ export interface PtyBlock {
   readonly kind: 'shell' | 'agent'
   /** Turn number for an agent block, so its content can be found by turn. */
   turn?: number | undefined
+  /** Slash-command identity; absent in older persisted carriers. */
+  readonly commandId?: string | undefined
   /** Epoch ms the block opened. */
   readonly startedAt: number
   /** Epoch ms the block closed; absent while it is open. */
@@ -112,11 +114,12 @@ export class BlockLog {
    * A turn started: close whatever was open and open the agent block.
    * @param turn - the turn number the session reported.
    * @param time - when it started.
+   * @param commandId - slash-command identity when no turn is opened.
    */
-  startTurn(turn: number | undefined, time: number = Date.now()): PtyBlock {
+  startTurn(turn: number | undefined, time: number = Date.now(), commandId?: string): PtyBlock {
     const current = this.blocks.at(-1)
     if (current !== undefined && current.endedAt === undefined) current.endedAt = time
-    return this.open('agent', turn, time)
+    return this.open('agent', turn, time, commandId)
   }
 
   /** A turn ended: close the agent block; the next output opens a shell one. */
@@ -137,8 +140,11 @@ export class BlockLog {
     await this.save()
   }
 
-  private open(kind: PtyBlock['kind'], turn: number | undefined, time: number): PtyBlock {
-    const block: PtyBlock = { seq: this.nextSeq++, kind, turn, startedAt: time, text: '' }
+  private open(kind: PtyBlock['kind'], turn: number | undefined, time: number, commandId?: string): PtyBlock {
+    const block: PtyBlock = {
+      seq: this.nextSeq++, kind, turn, startedAt: time, text: '',
+      ...commandId === undefined ? {} : { commandId },
+    }
     this.blocks.push(block)
     this.trim()
     this.scheduleSave()
@@ -185,5 +191,5 @@ function asBlock(value: unknown): PtyBlock | undefined {
   }
   if (typeof record.turn === 'number') block.turn = record.turn
   if (typeof record.endedAt === 'number') block.endedAt = record.endedAt
-  return block
+  return typeof record.commandId === 'string' ? { ...block, commandId: record.commandId } : block
 }

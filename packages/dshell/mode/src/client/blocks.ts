@@ -52,6 +52,8 @@ export interface TurnBlock {
   readonly key: string
   /** Turn number, once `turn/start` names it. */
   turn: number | undefined
+  /** Slash-command identity shared with its host timeline carrier. */
+  commandId?: string
   /** Header title: the in-progress todo item, else the request's first line. */
   title: string
   status: 'running' | 'done' | 'aborted' | 'failed'
@@ -368,6 +370,7 @@ export function foldEvent(fold: BlockFold, event: SessionEventLike, t: ModeTrans
     if (open === undefined || open.rows.every(row => row.role === 'command')) {
       if (open !== undefined) { open.status = 'done'; fold.open = undefined }
       const block = openBlock(fold, time, '')
+      block.commandId = String(event.data.commandId)
       block.rows.push(...rows)
       noteStep(block, event)
       return
