@@ -55,9 +55,16 @@ dshell 是 **dsh**（DeepSeek Harness）的一组插件。它不修改 dsh 的�
 
 ### 装进 dsh
 
-前置：**dsh** `0.2.0-rc.2`——桌面版，或者命令行版（`npm install -g @deepseek-ai/dsh@next`）；
+前置：**dsh** `0.2.1-rc.2`——桌面版，或者命令行版（`npm install -g @deepseek-ai/dsh@next`）；
 以及 `PATH` 上的 **Node 24.21.0** 与 **pnpm 9.15.0**（`dsh plugin` 是转发给 pnpm 执行的）。
-`0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-rc.2`、`0.2.0-rc.1` 这几条线也能用；npm 上的 `@latest` 目前是 `0.1.7-rc.2`。
+npm 上 `0.2.1-rc.2` 是 `next` 标签，`latest` 是 `0.2.0-rc.2`。
+
+装哪个 dshell 版本，取决于你手上的 dsh：
+
+| dsh | dshell |
+|---|---|
+| `0.2.1-rc.2` | **`0.1.14-alpha.1`**——npm 的 `alpha` 标签；预发布版，所以 `@latest` 不会解析到它 |
+| `0.2.0-rc.2`、`0.2.0-rc.1`、`0.1.7-rc.2`、`0.1.6-alpha.2`、`0.1.5-rc.2` | **`0.1.13`**——npm 的 `latest` 标签 |
 
 dsh 会拿插件声明的每个 `@deepseek-ai/dsh-*` peer 去校验自己的版本，只要有一个不匹配就**整个
 bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 dsh 版本。硬要跑某一版：
@@ -67,7 +74,7 @@ bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 ds
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，
 # dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.13
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.1
 
 dsh web
 ```
@@ -75,7 +82,7 @@ dsh web
 dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
 
 **桌面版**里同样的事情有一个窗口入口：`设置 → 插件`，填
-`@nexus-aethra/dshell-bundle@0.1.13`（它从 npmjs 安装，并精确锁定版本）。
+`@nexus-aethra/dshell-bundle@0.1.14-alpha.1`（它从 npmjs 安装，并精确锁定版本）。
 
 > 跳过第 2 步不会致命——dsh 照样启动，只是那两行报 `did not activate`，其余功能都在。之所以
 > 列出来，是因为 SSH 设备会话与 AI 的终端工具都要从 profile 里解析这两个包名。
