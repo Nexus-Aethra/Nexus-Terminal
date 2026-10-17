@@ -298,6 +298,19 @@ export class SshRouter {
     return await this.devices.list()
   }
 
+  /**
+   * One device's host and port, for a question about its trust rather than
+   * about its configuration.
+   *
+   * @param deviceId - device to look up.
+   * @returns the destination, or undefined when the device is unknown.
+   */
+  async destinationOf(deviceId: string): Promise<{ host: string; port: number } | undefined> {
+    const views = await this.list()
+    const view = views.find(candidate => candidate.id === deviceId)
+    return view === undefined ? undefined : { host: view.host, port: view.port }
+  }
+
   /** Every session→device assignment. */
   async assignments(): Promise<readonly AssignmentView[]> {
     await this.bindings.refresh()

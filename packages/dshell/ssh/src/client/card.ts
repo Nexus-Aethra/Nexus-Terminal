@@ -9,12 +9,12 @@
  */
 
 import {
-  createElement, useState, useSyncExternalStore,
+  createElement, useCallback, useEffect, useState, useSyncExternalStore,
   type CSSProperties, type ChangeEvent, type ReactElement,
 } from 'react'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellSshKey } from './locales.js'
-import type { DeviceAuth, DeviceHelperStatus, DeviceView } from '../protocol.js'
+import type { DeviceAuth, DeviceHelperStatus, DeviceView, SshKeyFile, TrustedHostKey } from '../protocol.js'
 import type { SshClientService } from './service.js'
 // Type-only: pulls this namespace's key merge (`PropsLocale<'dshellSsh'>`).
 import type {} from './locales.js'
@@ -89,6 +89,53 @@ const primaryStyle: CSSProperties = {
   cursor: 'pointer', borderRadius: 8, padding: '7px 14px', fontSize: 13, gridColumn: '2 / -1', justifySelf: 'end',
 }
 
+/**
+ * The key picker: one quiet trigger, and the list only while it is open.
+ *
+ * A disclosure rather than a `<select>` because the entries are file names, not
+ * short labels, and a native select truncates them into indistinguishable
+ * `id_…` rows.
+ */
+const keyPickerStyle: CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: 8, gridColumn: '1 / -1',
+}
+const smallActionStyle: CSSProperties = {
+  border: '0.5px solid var(--dsw-alias-border-l4)', background: 'transparent',
+  color: 'inherit', cursor: 'pointer', borderRadius: 8, padding: '4px 10px', fontSize: 12,
+}
+const keyListStyle: CSSProperties = {
+  display: 'flex', flexWrap: 'wrap', gap: 6, gridColumn: '1 / -1',
+}
+const keyItemStyle: CSSProperties = {
+  border: '0.5px solid var(--dsw-alias-border-l4)', background: 'transparent',
+  color: 'inherit', cursor: 'pointer', borderRadius: 8, padding: '4px 10px',
+  fontSize: 12, fontFamily: 'monospace',
+  // A file name is one unbreakable token, and these sit in a wrapped row.
+  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+}
+
+/** The trust row under a device: label, fingerprint, and the two actions. */
+const trustStyle: CSSProperties = {
+  flexBasis: '100%', minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+  fontSize: 12, opacity: 0.85,
+}
+const trustLabelStyle: CSSProperties = { opacity: 0.6 }
+const trustValueStyle: CSSProperties = {
+  fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  maxWidth: 260,
+}
+const trustBadgeStyle: CSSProperties = {
+  border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: 999, padding: '1px 7px', opacity: 0.7,
+}
+const confirmStyle: CSSProperties = {
+  flexBasis: '100%', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+  border: '1px solid #f87171', borderRadius: 8, padding: '8px 10px', opacity: 1,
+}
+const dangerActionStyle: CSSProperties = {
+  border: '1px solid #f87171', background: 'transparent', color: '#f87171', cursor: 'pointer',
+  borderRadius: 8, padding: '3px 10px', fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0,
+}
+
 /** Disclosure chevron, drawn to match the sibling cards without importing dsh icons. */
 function Chevron({ open }: { open: boolean }): ReactElement {
   return createElement('svg', {
@@ -113,6 +160,7 @@ const BLANK = {
   name: '', host: '', port: '22', user: '', remoteRoot: '',
   auth: 'key' as DeviceAuth,
   secret: '',
+  passphrase: '',
 }
 
 /** Sliding segmented control: two labels, one highlight that follows the pick. */
@@ -194,12 +242,21 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const { ssh, t } = props
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
+  const [keys, setKeys] = useState<readonly SshKeyFile[] | undefined>(undefined)
+  const [keysOpen, setKeysOpen] = useState(false)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
+  // Fetched once, the first time the picker is opened: the list is the harness
+  // user's own `~/.ssh`, it cannot change under the form, and asking for it on
+  // every render would make opening the card read the filesystem.
+  const loadKeys = (): void => {
+    if (keys !== undefined) return
+    void ssh.listKeys().then(setKeys)
+  }
   const edit = (field: keyof typeof BLANK, value: string): void => {
     setForm(current => ({ ...current, [field]: value }))
   }
   const pickAuth = (next: DeviceAuth): void => {
-    setForm(current => ({ ...current, auth: next, secret: '' }))
+    setForm(current => ({ ...current, auth: next, secret: '', passphrase: '' }))
   }
   const submit = (): void => {
     void ssh.save({
@@ -215,6 +272,9 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       ...form.secret.trim() === '' ? {} : form.auth === 'password'
         ? { password: form.secret }
         : { key: form.secret },
+      // Same omitted/empty semantics as the key itself: an untouched box keeps
+      // whatever is stored, an emptied one removes it.
+      ...form.passphrase === '' ? {} : { passphrase: form.passphrase },
     })
     setForm(BLANK)
   }
@@ -228,6 +288,7 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       remoteRoot: device.remoteRoot,
       auth: device.auth,
       secret: '',
+      passphrase: '',
     })
   }
 
@@ -295,6 +356,7 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
               title: helperDetail(device.helper),
             }, helperLine(t, device.helper))
             : null,
+          createElement(HostTrustLine, { device, ssh, t }),
         )),
         createElement('div', { style: formStyle },
           createElement('input', {
@@ -334,12 +396,64 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
               autoComplete: 'new-password',
               onChange: (event: ChangeEvent<HTMLInputElement>) => { edit('secret', event.target.value) },
             })
-            : createElement('textarea', {
-              style: keyStyle,
-              placeholder: t('form.keyPlaceholder'),
-              value: form.secret,
-              onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { edit('secret', event.target.value) },
-            }),
+            : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              createElement('textarea', {
+                style: keyStyle,
+                placeholder: t('form.keyPlaceholder'),
+                value: form.secret,
+                onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { edit('secret', event.target.value) },
+              }),
+              // Offered here rather than above the box because the box is the
+              // fallback: most people keeping a key on disk would rather point at
+              // it than paste a blob they then have to keep out of the clipboard.
+              createElement('div', { style: keyPickerStyle },
+                createElement('button', {
+                  type: 'button',
+                  style: smallActionStyle,
+                  onClick: () => {
+                    loadKeys()
+                    setKeysOpen(value => !value)
+                  },
+                }, t('form.keyPick')),
+                // Says which of "not asked yet", "asking" and "nothing there"
+                // applies, because a trigger that silently does nothing reads as
+                // a broken form.
+                keys !== undefined && keys.length === 0 && keysOpen
+                  ? createElement('span', { style: noteStyle }, t('form.keyPickEmpty'))
+                  : null,
+              ),
+              keysOpen && keys !== undefined && keys.length > 0
+                ? createElement('div', { style: keyListStyle },
+                  ...keys.map(key => createElement('button', {
+                    key: key.path,
+                    type: 'button',
+                    style: keyItemStyle,
+                    title: key.path,
+                    onClick: () => {
+                      void ssh.readKey(key.path).then((body) => {
+                        // A refused read leaves the box exactly as it was: an
+                        // emptied secret would be saved as "remove this key".
+                        if (body === undefined) return
+                        setForm(current => ({ ...current, secret: body }))
+                        setKeysOpen(false)
+                      })
+                    },
+                  }, key.name)),
+                )
+                : null,
+              // Only a key can be unlocked, so the box exists only in key mode —
+              // a passphrase beside a password is a secret nothing would read.
+              form.auth === 'key'
+                ? createElement('input', {
+                  style: fieldStyle,
+                  type: 'password',
+                  placeholder: t('form.passphrasePlaceholder'),
+                  value: form.passphrase,
+                  autoComplete: 'new-password',
+                  onChange: (event: ChangeEvent<HTMLInputElement>) => { edit('passphrase', event.target.value) },
+                })
+                : null,
+            ),
           createElement('div', { style: noteStyle },
             form.auth === 'password' ? t('form.passwordNote') : t('form.keyNote')),
           snapshot.error !== undefined ? createElement('div', { style: errorStyle }, snapshot.error) : null,
@@ -356,8 +470,88 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   )
 }
 
-/** Pick the right key per state, since template-literal keys are not typed. */
-function helperLabel(
+/**
+ * What this plugin trusts for one device, and the way to change that.
+ *
+ * Its whole point is to be readable BEFORE anything goes wrong. A reader who
+ * needs to compare a fingerprint is, by definition, in the middle of something
+ * having gone wrong — so a fingerprint that is only shown when a connection
+ * fails is a fingerprint nobody has written down.
+ *
+ * The revoke is two steps because it is irreversible in the one direction that
+ * matters: once the record is gone, the next connection trusts whatever answers,
+ * with no second look. The confirmation therefore states the consequence rather
+ * than asking "are you sure".
+ */
+function HostTrustLine(props: {
+  device: DeviceView
+  ssh: SshClientService
+  t: TranslateNS<'dshellSsh'>
+}): ReactElement {
+  const { device, ssh, t } = props
+  const [keys, setKeys] = useState<readonly TrustedHostKey[] | undefined>(undefined)
+  const [confirming, setConfirming] = useState(false)
+  const load = useCallback((): void => {
+    void ssh.hostKeys(device.id).then(setKeys)
+  }, [device.id, ssh])
+  // Asked for on mount rather than on the button: this line is the record of
+  // what is trusted, and a row that showed nothing until it was clicked would
+  // not be a record.
+  useEffect(() => { load() }, [load])
+  // A different device is a different trust decision; the panel must not survive it.
+  useEffect(() => { setConfirming(false) }, [device.id])
+
+  return createElement('div', { style: trustStyle },
+    createElement('span', { style: trustLabelStyle }, t('device.trustLabel')),
+    keys === undefined || keys.length === 0
+      ? createElement('span', { style: trustValueStyle }, t('device.trustNone'))
+      : createElement('span', { style: trustValueStyle, title: keys.map(k => k.fingerprint).join('\n') },
+        // One entry is the normal case; several key types on one host would
+        // otherwise wrap the row, and the full set stays in the tooltip.
+        `${keys[0]?.keyType ?? ''} ${shortFingerprint(keys[0]?.fingerprint)}`),
+    device.hasPassphrase === true ? createElement('span', { style: trustBadgeStyle }, t('device.passphrase')) : null,
+    createElement('button', {
+      type: 'button',
+      style: actionStyle,
+      disabled: keys === undefined || keys.length === 0,
+      onClick: load,
+    }, t('device.trustRefresh')),
+    createElement('button', {
+      type: 'button',
+      style: actionStyle,
+      disabled: keys === undefined || keys.length === 0,
+      onClick: () => { setConfirming(true) },
+    }, t('device.trustRevoke')),
+    confirming
+      ? createElement('span', { style: confirmStyle },
+        createElement('span', { style: { flex: '1 1 180px', minWidth: 0 } }, t('device.trustRevokeConfirm')),
+        createElement('button', {
+          type: 'button',
+          style: dangerActionStyle,
+          onClick: () => {
+            setConfirming(false)
+            // Revoke, then re-read: the reply is the state the card renders, so
+            // it must be the state the file is in after the change, not a guess.
+            void ssh.revokeHostKey(device.id).then(setKeys)
+          },
+        }, t('device.trustRevokeNow')),
+        createElement('button', {
+          type: 'button',
+          style: actionStyle,
+          onClick: () => { setConfirming(false) },
+        }, t('device.trustRevokeCancel')),
+      )
+      : null,
+  )
+}
+
+/** The tail of a `SHA256:…` fingerprint, which is where its entropy is. */
+function shortFingerprint(fingerprint: string | undefined): string {
+  if (fingerprint === undefined) return ''
+  return fingerprint.length <= 20 ? fingerprint : `…${fingerprint.slice(-19)}`
+}
+
+/** Pick the right key per state, since template-literal keys are not typed. */function helperLabel(
   t: (key: DshellSshKey) => string,
   state: 'absent' | 'present' | 'mismatch',
 ): string {

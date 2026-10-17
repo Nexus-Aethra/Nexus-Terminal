@@ -130,6 +130,15 @@ export interface PtyStreamState {
    * that names the way out (bind a device).
    */
   localUnsupported: boolean
+  /**
+   * Host-reported: this failure is one the user can act on.
+   *
+   * Separate from `reason` for the same reason `localUnsupported` is: the view
+   * has to CHOOSE a presentation, and the message text alone does not say which
+   * one. A wrong passphrase and a refused password are both "Permission denied"
+   * to the reader, and they need opposite things.
+   */
+  failure: 'passphrase' | 'hostKey' | undefined
 }
 
 /** Browser render-buffer cap per session: the canvas replays from this store. */
@@ -222,6 +231,7 @@ export class PtyStreamService extends Service {
     exhausted: false,
     since: Date.now(),
     localUnsupported: false,
+    failure: undefined,
   })
 
   /** OS identity from the server's `info` frame (bash prompt material). */
@@ -727,6 +737,7 @@ export class PtyStreamService extends Service {
         since: Date.now(),
         // A new session has not failed yet, whatever the last one did.
         localUnsupported: false,
+        failure: undefined,
       })
     } else {
       this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now() })
@@ -844,6 +855,7 @@ export class PtyStreamService extends Service {
         status: 'closed',
         reason: typeof frame.reason === 'string' ? frame.reason : undefined,
         detail: typeof frame.detail === 'string' ? frame.detail : undefined,
+        failure: frame.failure,
         ...typeof frame.ready === 'boolean' ? { ready: frame.ready } : {},
       })
       this.scheduleRetry()

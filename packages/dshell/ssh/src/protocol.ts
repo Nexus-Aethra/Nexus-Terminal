@@ -17,4 +17,7 @@
 // package's, and both halves of every plugin read the same declaration there.
 // Re-exported so existing importers keep one import site per package.
 export { DSHELL_SSH_PATH, SSH_SETTINGS_NAMESPACE } from '@nexus-aethra/dshell-std'
-export type { DeviceAuth, DeviceView, DeviceHelperStatus, DeviceInput, DeviceBinding, SshRequest, SshResponse } from '@nexus-aethra/dshell-std'
+export type {
+  DeviceAuth, DeviceView, DeviceHelperStatus, DeviceInput, DeviceBinding,
+  SshKeyFile, TrustedHostKey, SshRequest, SshResponse,
+} from '@nexus-aethra/dshell-std'

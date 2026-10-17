@@ -136,17 +136,29 @@ function destination(target: { user: string; host: string }): string {
   return `${target.user}@${target.host}`
 }
 
-/** Environment a device's connection needs, beyond the harness defaults. */
+/**
+ * Environment a device's connection needs, beyond the harness defaults.
+ *
+ * Both a password and a key passphrase arrive through the same askpass hook, so
+ * this is set whenever EITHER is stored, and the hook is pointed at whichever one
+ * this connection will actually be asked for. A key device is never asked for a
+ * password and a password device is never asked for a passphrase, so pointing at
+ * the right one needs no branch on the prompt text.
+ *
+ * @param device - the resolved connection.
+ * @returns the environment additions, empty when nothing may be asked.
+ */
 export function sshEnv(device: DeviceConnection): Record<string, string> {
-  if (device.auth !== 'password' || device.secretFile === undefined) return {}
+  const askpassFile = device.auth === 'password' ? device.secretFile : device.passphraseFile
+  if (askpassFile === undefined) return {}
   return {
-    // ssh runs $SSH_ASKPASS and reads the password from its stdout. REQURE
+    // ssh runs $SSH_ASKPASS and reads the answer from its stdout. REQURE
     // forces the hook even where a tty could be probed for one.
     SSH_ASKPASS: device.askpassFile,
     SSH_ASKPASS_REQUIRE: 'force',
     // Some builds still require a DISPLAY before consulting askpass.
     DISPLAY: 'dshell:0',
-    DSHELL_SSH_PASSWORD_FILE: device.secretFile,
+    DSHELL_SSH_ASKPASS_FILE: askpassFile,
   }
 }
 
@@ -163,8 +175,16 @@ function authArgs(device: DeviceConnection): string[] {
     ]
   }
   return [
-    // Nothing to prompt for on a key device: fail instead of waiting.
-    '-o', 'BatchMode=yes',
+    // `BatchMode` is what decides whether ssh may ASK at all, and askpass is an
+    // ask — so an encrypted key is the one case that must not carry it. It is
+    // also the only reason the askpass hook exists on a key device at all, and
+    // it stays off every other key device: leaving it off there would turn a
+    // fast, clear refusal into something that waits on a hook nobody answers.
+    ...device.passphraseFile === undefined ? ['-o', 'BatchMode=yes'] : [
+      // The passphrase comes from askpass, so a second attempt would only replay
+      // the same rejected secret and turn a refusal into a wait.
+      '-o', 'NumberOfPasswordPrompts=1',
+    ],
     ...device.secretFile === undefined ? [] : [
       // With a stored key, use ONLY it. Without this the harness user's ssh
       // agent is still consulted — `ssh -vv` shows the agent's identity being

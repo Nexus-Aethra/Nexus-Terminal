@@ -303,13 +303,26 @@ export function apply(ctx: Context): void {
   // bundle: only the runtime service key, which is what the cast pins down.
   const sshHost = ctx as unknown as {
     inject(keys: readonly string[], callback: (scope: {
-      /** The SSH client service, reduced to what the block view asks of it. */
-      dshellSsh: SshSeat & {
+      /**
+       * The SSH client service, reduced to what the block view asks of it.
+       *
+       * Declared with the host-key members returning RECORDS, because that is
+       * what the SSH plugin's service really returns — the seat the block view
+       * sees is built below, and the reduction to plain fingerprints happens
+       * there, once.
+       */
+      dshellSsh: {
         getSnapshot(): {
           devices: readonly { id: string; name: string }[]
           bindings: readonly { sessionId: string; deviceId: string }[]
         }
         bind(sessionId: string, deviceId: string | null): Promise<void>
+        revealSettings(): boolean
+        bindingOf(sessionId: string): { deviceId: string } | undefined
+        hostKeys(deviceId: string): Promise<readonly { fingerprint: string }[]>
+        probeHostKey(deviceId: string): Promise<{ fingerprint: string } | undefined>
+        revokeHostKey(deviceId: string): Promise<unknown>
+        subscribe(listener: () => void): () => void
       }
     }) => void): unknown
   }
@@ -381,6 +394,11 @@ export function apply(ctx: Context): void {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
       revealSettings: () => ssh.revealSettings(),
+      // Fingerprints only: the panel draws two strings, and reducing here means
+      // the view never learns a host-key record exists.
+      hostKeys: async deviceId => (await ssh.hostKeys(deviceId)).map(key => key.fingerprint),
+      probeHostKey: async deviceId => (await ssh.probeHostKey(deviceId))?.fingerprint,
+      revokeHostKey: async deviceId => { await ssh.revokeHostKey(deviceId) },
       subscribe: listener => ssh.subscribe(listener),
     }
   })

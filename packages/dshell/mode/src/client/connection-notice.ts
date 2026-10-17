@@ -37,7 +37,7 @@ export type ConnectionView =
        * this terminal can run, so the screen says so and offers the one way
        * forward instead of a retry that cannot work.
        */
-      phase: 'connecting' | 'failed' | 'unsupported'
+      phase: 'connecting' | 'failed' | 'unsupported' | 'hostKey'
     }
   /**
    * A line appended after the output: either the link is up but the shell has
@@ -63,6 +63,17 @@ export interface ConnectionFacts {
    * reader's real question is not "why did it fail" but "what can I do instead".
    */
   localUnsupported: boolean
+  /**
+   * Host-reported: this failure is one the user can act on.
+   *
+   * `hostKey` is checked before every other rule and only for a bound session,
+   * because it is the one failure where the retry button is not just useless but
+   * misleading: `ssh` will refuse again, identically, until the record is dropped
+   * deliberately. `passphrase` does NOT get a screen of its own — the remedy is
+   * re-entering a secret in the device form, and this panel has no business
+   * being where that form lives.
+   */
+  failure: PtyStreamState['failure']
 }
 
 /**
@@ -90,10 +101,14 @@ export interface ConnectionFacts {
  * @returns what to render.
  */
 export function connectionView(facts: ConnectionFacts): ConnectionView {
-  const { status, ready, attempt, bound, localUnsupported } = facts
+  const { status, ready, attempt, bound, localUnsupported, failure } = facts
   // Only for a LOCAL session: a device session runs its shell on the device,
   // so the host platform is not what stands between the reader and a prompt.
   if (localUnsupported && !bound && status !== 'idle') return { kind: 'panel', phase: 'unsupported' }
+  // A changed host key needs a decision, and only a device can present one. It
+  // outranks the failed-connection form because that form's answer — retry — is
+  // precisely what cannot work here.
+  if (bound && failure === 'hostKey' && status !== 'idle') return { kind: 'panel', phase: 'hostKey' }
   if (status === 'idle') return { kind: 'none' }
   if (status === 'connecting') {
     if (bound) {
@@ -201,7 +216,7 @@ export interface ConnectionPanelProps extends ConnectionActions {
   /** Device display name, when the session is bound to one; undefined otherwise. */
   device: string | undefined
   /** `connecting` while the shell has not answered; `failed` once it cannot. */
-  phase: 'connecting' | 'failed' | 'unsupported'
+  phase: 'connecting' | 'failed' | 'unsupported' | 'hostKey'
   /** Why it failed, as the host reported it. */
   reason: string | undefined
   /** The connection diagnostic found in the terminal output, if any. */
@@ -217,6 +232,56 @@ export interface ConnectionPanelProps extends ConnectionActions {
   sessionKey: string | undefined
   /** The bound translator for this package's copy. */
   t: ModeTranslate
+  /**
+   * `hostKey` only: what this plugin currently trusts, and what the device
+   * claims instead.
+   *
+   * Both are fetched when this screen mounts, not before, because the scan opens
+   * a connection to the very host whose identity is in question — it is only
+   * worth paying for once the reader is already looking at the answer.
+   */
+  hostKeys?: HostKeyFacts | undefined
+}
+
+/** The two fingerprints a changed host key has to be judged against. */
+export interface HostKeyFacts {
+  /** What this plugin recorded, which `ssh` refused. */
+  trusted: readonly string[]
+  /**
+   * What the device presents now.
+   *
+   * Unauthenticated: it came from the same channel that is under suspicion, so
+   * it is shown for COMPARISON against a fingerprint the reader obtained some
+   * other way, and never as something to accept on sight.
+   */
+  claimed: string | undefined
+  /** True once both sides are known; false while either is still loading. */
+  ready: boolean
+}
+
+/**
+ * Two fingerprints side by side, so the comparison the screen is asking for is
+ * the comparison the eye actually makes.
+ *
+ * @param t - this package's bound copy, for the two labels.
+ * @param theme - the resolved theme.
+ * @param facts - the two sides; nothing is drawn until both are known.
+ * @returns the pair, or null while it is still loading.
+ */
+function fingerprintPair(t: ModeTranslate, theme: Theme, facts: HostKeyFacts | undefined): ReactElement | null {
+  if (facts === undefined || !facts.ready) return null
+  const box = (label: string, value: string): ReactElement => createElement('div', {
+    style: { flex: '1 1 150px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 },
+  },
+    createElement('span', { style: { fontSize: 11, color: theme.muted } }, label),
+    createElement('span', {
+      style: { fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: theme.text },
+    }, value),
+  )
+  return createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 2 } },
+    box(t('connection.hostKey.trusted'), facts.trusted[0] ?? t('connection.hostKey.none')),
+    box(t('connection.hostKey.claimed'), facts.claimed ?? t('connection.hostKey.none')),
+  )
 }
 
 /**
@@ -232,11 +297,14 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
   const { t } = props
   const seconds = useElapsed(props.since)
   const unsupported = props.phase === 'unsupported'
+  const hostKey = props.phase === 'hostKey'
   // Primary on the unsupported screen, where it is the only way forward.
   const settings = useSettingsLink(t, theme, props.onSettings, props.sessionKey, unsupported)
   const failed = props.phase === 'failed'
   const address = props.device === undefined ? t('connection.device') : props.device
-  const detail = failed ? props.detail ?? props.reason : undefined
+  // A host-key screen shows the fingerprints instead: the diagnostic line is
+  // ssh's own banner, which states the problem and nothing the reader can use.
+  const detail = failed || hostKey ? props.detail ?? props.reason : undefined
   const progress = props.attempt > 0
     ? t('connection.reconnecting', { attempt: props.attempt, max: props.maxAttempts })
     : t('connection.waited', { seconds })
@@ -262,27 +330,32 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
         gap: 10,
         padding: '18px 20px',
         borderRadius: 10,
-        border: `1px solid ${failed ? theme.danger : theme.borderStrong}`,
+        border: `1px solid ${failed || hostKey ? theme.danger : theme.borderStrong}`,
         background: theme.menuBg,
         color: theme.text,
         fontSize: 13,
       },
     },
       createElement('div', {
-        style: { fontSize: 14, fontWeight: 600, color: failed ? theme.danger : theme.text },
+        style: { fontSize: 14, fontWeight: 600, color: failed || hostKey ? theme.danger : theme.text },
       }, unsupported
         ? t('connection.panel.unsupported')
-        : failed
-          ? t('connection.panel.failed', { address })
-          : t('connection.panel.connecting', { address })),
+        : hostKey
+          ? t('connection.panel.hostKey', { address })
+          : failed
+            ? t('connection.panel.failed', { address })
+            : t('connection.panel.connecting', { address })),
       createElement('div', { style: { color: theme.muted, lineHeight: 1.5 } },
         unsupported
           ? t('connection.panel.unsupported.detail')
-          : failed
-            ? props.exhausted
-              ? t('connection.retriesFailed', { max: props.maxAttempts })
-              : t('connection.notEstablished')
-            : progress),
+          : hostKey
+            ? t('connection.panel.hostKey.detail')
+            : failed
+              ? props.exhausted
+                ? t('connection.retriesFailed', { max: props.maxAttempts })
+                : t('connection.notEstablished')
+              : progress),
+      fingerprintPair(t, theme, props.hostKeys),
       detail === undefined || detail === ''
         ? null
         : createElement('div', { style: detailStyle(theme) }, detail),
@@ -291,15 +364,23 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
         : createElement('div', { style: { fontSize: 11, color: theme.muted } }, settings.hint),
       // No retry on the unsupported screen: binding a device is the only action
       // that can change the outcome, and a retry button beside it would only
-      // invite the reader to press the thing that cannot work.
+      // invite the reader to press the thing that cannot work. The host-key
+      // screen's action is REVOKE-then-reconnect, for the same reason — and
+      // that button is supplied by the caller, because only it holds the device
+      // id the revoke needs.
       createElement('div', { style: { display: 'flex', gap: 8, marginTop: 2 } },
-        unsupported
+        unsupported || hostKey
           ? null
           : createElement('button', {
             type: 'button',
             style: actionStyle(theme, true),
             onClick: props.onRetry,
           }, t('connection.retry')),
+        hostKey ? createElement('button', {
+          type: 'button',
+          style: actionStyle(theme, true),
+          onClick: props.onRetry,
+        }, t('connection.hostKey.trustAnyway')) : null,
         settings.node,
       ),
     ),

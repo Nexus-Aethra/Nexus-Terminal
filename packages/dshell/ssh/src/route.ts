@@ -11,6 +11,8 @@
 import type { ConnectionFetchRoute } from '@deepseek-ai/dsh-client-connection'
 import type { Context } from '@deepseek-ai/cordis'
 import type { DshellSshTranslate } from './host-locales.js'
+import { listLocalKeys, readLocalKey } from './local-keys.js'
+import { listTrustedHostKeys, probeHostKey, revokeTrustedHostKeys } from './host-key.js'
 import { DSHELL_SSH_PATH, type SshRequest, type SshResponse } from './protocol.js'
 import type { SshRouter } from './router.js'
 
@@ -118,6 +120,39 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         // it, which only happens on a reload.
         const helper = await deps.router.installHelper(input.deviceId, deps.ctx)
         return { ...await state(), helper }
+      }
+      case 'listKeys': {
+        // Answered without the device list: this is a property of the harness
+        // user's home directory, and it is asked before any device exists.
+        return { ...await state(), keys: await listLocalKeys() }
+      }
+      case 'readKey': {
+        // A path the browser supplied, so the answer is decided entirely by
+        // whether the host recognises it as one of the keys it just listed.
+        const body = await readLocalKey(input.path)
+        return {
+          ...await state(),
+          ...(body === undefined ? { error: deps.t('error.unknownKey') } : { keyBody: body }),
+        }
+      }
+      case 'hostKeys': {
+        const at = await deps.router.destinationOf(input.deviceId)
+        if (at === undefined) return { ...await state(), error: deps.t('error.unknownDevice', { id: input.deviceId }) }
+        return { ...await state(), hostKeys: await listTrustedHostKeys(at.host, at.port) }
+      }
+      case 'revokeHostKey': {
+        const at = await deps.router.destinationOf(input.deviceId)
+        if (at === undefined) return { ...await state(), error: deps.t('error.unknownDevice', { id: input.deviceId }) }
+        // Read state AFTER, and re-read the keys rather than reporting what was
+        // removed: the reply is what the card renders, so it must be the state
+        // the file is actually in afterwards.
+        await revokeTrustedHostKeys(at.host, at.port)
+        return { ...await state(), hostKeys: await listTrustedHostKeys(at.host, at.port) }
+      }
+      case 'probeHostKey': {
+        const at = await deps.router.destinationOf(input.deviceId)
+        if (at === undefined) return { ...await state(), error: deps.t('error.unknownDevice', { id: input.deviceId }) }
+        return { ...await state(), probe: await probeHostKey(at.host, at.port) }
       }
       default:
         return { ...await state(), error: deps.t('error.unknownAction') }

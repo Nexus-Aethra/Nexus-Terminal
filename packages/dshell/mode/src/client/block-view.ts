@@ -30,7 +30,9 @@ import { clearStream, createFold, foldEvent, noteLiveChunk, type BlockFold } fro
 import { AgentBlock, UserBubble } from './agent-block.js'
 import { assembleTimeline, type ViewItem } from './block-model.js'
 import { createSpanTerminal, SPAN_FONT, SPAN_FONT_SIZE, SPAN_LINE_HEIGHT } from './block-terminal.js'
-import { ConnectionNotice, ConnectionPanel, connectionView } from './connection-notice.js'
+import {
+  ConnectionNotice, ConnectionPanel, connectionView, type HostKeyFacts,
+} from './connection-notice.js'
 import {
   injectTodoCardCss, setTodoPanelSuppressed,
   type PipeSeat, type TodoItem,
@@ -54,6 +56,20 @@ export interface SshSeat {
   devices(): readonly { id: string; name: string }[]
   /** Open the SSH settings card; false when the entry could not be found. */
   revealSettings(): boolean
+  /** What this plugin currently trusts for one device, by fingerprint. */
+  hostKeys(deviceId: string): Promise<readonly string[]>
+  /**
+   * What one device's host presents now.
+   *
+   * Unauthenticated — offered so the reader can compare it against the trusted
+   * fingerprint they already hold, never to be trusted on sight.
+   */
+  probeHostKey(deviceId: string): Promise<string | undefined>
+  /**
+   * Drop what is recorded for one device, so the next connection trusts
+   * whatever it presents. Resolves once the record is gone.
+   */
+  revokeHostKey(deviceId: string): Promise<void>
   subscribe(listener: () => void): () => void
 }
 
@@ -486,9 +502,41 @@ export function BlockView(props: {
     attempt: pty.attempt,
     bound: binding !== undefined,
     localUnsupported: current && pty.localUnsupported,
+    failure: current ? pty.failure : undefined,
   })
   const retry = useCallback((): void => { props.pty.reconnect() }, [props.pty])
   const openSettings = ssh === undefined ? undefined : (): boolean => ssh.revealSettings()
+
+  // Both fingerprints for the changed-key screen, fetched only while it is up:
+  // the scan opens a connection to the host under suspicion, so it is not worth
+  // paying for on a terminal that is working.
+  const deviceId = binding?.deviceId
+  const [hostKeys, setHostKeys] = useState<HostKeyFacts | undefined>(undefined)
+  useEffect(() => {
+    if (connection.kind !== 'panel' || connection.phase !== 'hostKey' || ssh === undefined || deviceId === undefined) {
+      setHostKeys(undefined)
+      return
+    }
+    let live = true
+    void Promise.all([ssh.hostKeys(deviceId), ssh.probeHostKey(deviceId)])
+      .then(([trusted, claimed]) => {
+        if (live) setHostKeys({ trusted, claimed, ready: true })
+      })
+      .catch(() => {
+        // A refusal here leaves the screen standing on its own wording, which is
+        // the point: the reader must not read "both unknown" as "nothing to see".
+        if (live) setHostKeys({ trusted: [], claimed: undefined, ready: true })
+      })
+    return () => { live = false }
+  }, [connection.kind === 'panel' ? connection.phase : '', deviceId, ssh])
+
+  // Trust-and-reconnect is revoke THEN reconnect, never a relaxed check: the
+  // next connection still goes through the normal path and records whatever the
+  // device presents, so the decision stays the user's and not the flag's.
+  const trustAnyway = useCallback((): void => {
+    if (ssh === undefined || deviceId === undefined) return
+    void ssh.revokeHostKey(deviceId).then(() => { props.pty.reconnect() })
+  }, [deviceId, props.pty, ssh])
 
   // Follow the tail unless the reader has scrolled away.
   const pinned = useRef(true)
@@ -605,7 +653,10 @@ export function BlockView(props: {
         maxAttempts: pty.maxAttempts,
         exhausted: pty.exhausted,
         sessionKey: id,
-        onRetry: retry,
+        // On the changed-key screen the retry IS the revoke, so it is the
+        // caller's composed action rather than the plain reconnect.
+        onRetry: connection.phase === 'hostKey' ? trustAnyway : retry,
+        ...connection.phase === 'hostKey' ? { hostKeys } : {},
         ...openSettings === undefined ? {} : { onSettings: openSettings },
         t,
       })

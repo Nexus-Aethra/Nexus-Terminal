@@ -73,6 +73,52 @@ const SSH_DIAGNOSTIC =
   /(ssh:|kex_exchange_identification|Connection (?:refused|timed out|closed|reset)|Permission denied|Host key verification failed|Could not resolve hostname|No route to host|Network is unreachable|Operation timed out)/i
 
 /**
+ * A failure the reader has a way to DO something about, as opposed to one they
+ * can only wait out.
+ *
+ * Every ssh failure arrives as text on a stream that is torn down with the
+ * session, so the whole diagnostic has to be recovered from it. Most failures
+ * need nothing but a line to read: a refused connection is retried, a stalled
+ * handshake is waited on. These two are different — both are a decision the
+ * user has to make, and both are recoverable, which is exactly why they are
+ * named here instead of being left for the reader to recognise in prose:
+ *
+ *  - `passphrase`: the stored secret for this device was refused. Nothing about
+ *    the network is wrong, so retrying cannot help, and the user has to re-enter
+ *    it.
+ *  - `hostKey`: the device presented a different host key than the one this
+ *    plugin recorded. That is what a reinstall looks like, and also what an
+ *    interposed host looks like, so it is never resolved automatically.
+ *
+ * Anything else is undefined and keeps the existing presentation.
+ */
+export type SshFailure = 'passphrase' | 'hostKey'
+
+/**
+ * The actionable failure in a stretch of terminal output, if there is one.
+ *
+ * Matched over the whole text rather than over the diagnostic line alone: ssh
+ * prints the passphrase complaint on one line and the host-key banner across
+ * several, so which of the two happened is only readable once both are in view.
+ * Unchanged keys never reach here — a refused password is `Permission denied`,
+ * which is deliberately NOT matched, because the user is not being asked to
+ * supply anything.
+ *
+ * @param text - raw terminal output, ANSI included.
+ * @returns the failure kind, or undefined when the output describes none.
+ */
+export function classifySshFailure(text: string): SshFailure | undefined {
+  const plain = stripAnsi(text)
+  // Checked before the passphrase complaint: a changed host key makes ssh offer
+  // to retry with a different key, and that retry is what draws the
+  // "Load key ... incorrect passphrase" line. Reading it as a bad passphrase
+  // would send the user to fix a secret that is perfectly correct.
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(plain)) return 'hostKey'
+  if (/incorrect passphrase|Enter passphrase for key/i.test(plain)) return 'passphrase'
+  return undefined
+}
+
+/**
  * The last connection diagnostic in a stretch of terminal output.
  *
  * A device session's terminal is a local `ssh` process, so "cannot connect"

@@ -41,6 +41,13 @@ export interface WireFrame {
    * screen from this rather than reading the message text for a hint of it.
    */
   localUnsupported?: boolean
+  /**
+   * `closed` frames: a failure the reader can act on, when the message alone
+   * does not say which action. A refused password and a wrong passphrase both
+   * arrive as one line of ssh prose, and only one of them is fixable by
+   * re-entering a secret.
+   */
+  failure?: 'passphrase' | 'hostKey'
   /** `info` frames: OS identity the dock uses to build bash prompts. */
   user?: string
   host?: string

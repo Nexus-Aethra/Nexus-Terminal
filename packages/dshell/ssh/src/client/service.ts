@@ -9,7 +9,8 @@
 
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
-  DSHELL_SSH_PATH, type DeviceBinding, type DeviceInput, type DeviceHelperStatus, type DeviceView, type SshRequest, type SshResponse,
+  DSHELL_SSH_PATH, type DeviceBinding, type DeviceInput, type DeviceHelperStatus, type DeviceView,
+  type SshKeyFile, type TrustedHostKey, type SshRequest, type SshResponse,
 } from '../protocol.js'
 
 declare module '@deepseek-ai/cordis' {
@@ -143,8 +144,7 @@ export class SshClientService extends Service {
     await this.send({ action: 'test', deviceId, remoteRoot }, { strict: true })
   }
 
-  /**
-   * Deploy this build's helper to one device, content-addressed by digest.
+  /** Deploy this build's helper to one device, content-addressed by digest.
    *
    * The reply carries the resulting {@link DeviceHelperStatus}, which the
    * snapshot publishes so the device card can show the deployment's outcome
@@ -152,6 +152,67 @@ export class SshClientService extends Service {
    */
   async install(deviceId: string): Promise<void> {
     await this.send({ action: 'install', deviceId }, { strict: true })
+  }
+
+  /**
+   * The private keys in the harness user's `~/.ssh`, for the form's picker.
+   *
+   * Returned rather than published: this is a property of the home directory,
+   * not of the device registry, and putting it on the snapshot would make every
+   * unrelated re-render depend on a filesystem read.
+   *
+   * @returns the keys, empty when there is no `~/.ssh` or nothing in it.
+   */
+  async listKeys(): Promise<readonly SshKeyFile[]> {
+    return (await this.send({ action: 'listKeys' })).keys ?? []
+  }
+
+  /**
+   * One listed key's contents.
+   *
+   * @param path - a path from {@link listKeys}.
+   * @returns the key text, or undefined when the host refuses the path.
+   */
+  async readKey(path: string): Promise<string | undefined> {
+    return (await this.send({ action: 'readKey', path })).keyBody
+  }
+
+  /**
+   * What this plugin currently trusts for one device.
+   *
+   * @param deviceId - device to ask about.
+   * @returns the recorded host keys, empty when the device has never connected.
+   */
+  async hostKeys(deviceId: string): Promise<readonly TrustedHostKey[]> {
+    return (await this.send({ action: 'hostKeys', deviceId })).hostKeys ?? []
+  }
+
+  /**
+   * Drop what is recorded for one device, so the next connection trusts whatever
+   * it presents.
+   *
+   * Deliberately separate from "trust the new one": revoking is the half of the
+   * decision a user can take from a trusted channel, and the trust itself only
+   * happens on the connection that follows.
+   *
+   * @param deviceId - device whose record to drop.
+   * @returns the keys still recorded afterwards.
+   */
+  async revokeHostKey(deviceId: string): Promise<readonly TrustedHostKey[]> {
+    return (await this.send({ action: 'revokeHostKey', deviceId })).hostKeys ?? []
+  }
+
+  /**
+   * What one device's host presents right now.
+   *
+   * Unauthenticated: this is for showing beside the trusted fingerprint so the
+   * user can compare them somewhere else, never for trusting.
+   *
+   * @param deviceId - device to scan.
+   * @returns the offered key, or undefined when the host answered nothing.
+   */
+  async probeHostKey(deviceId: string): Promise<TrustedHostKey | undefined> {
+    return (await this.send({ action: 'probeHostKey', deviceId })).probe
   }
 
   /**

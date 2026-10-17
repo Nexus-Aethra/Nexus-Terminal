@@ -672,6 +672,14 @@ export interface DeviceView {
   readonly auth: DeviceAuth
   /** Whether the secret for {@link auth} (key or password) is stored. */
   readonly hasSecret: boolean
+  /**
+   * Whether a passphrase for the stored key is stored alongside it.
+   *
+   * A key with no passphrase is the common case and needs no `ssh` interaction,
+   * while a key with one cannot connect at all unless ssh is allowed to ask —
+   * so the device card's two states are different, not cosmetic.
+   */
+  readonly hasPassphrase?: boolean | undefined
   /** Helper deployment state, when known. Absent for compositions that have not checked. */
   readonly helper?: DeviceHelperStatus | undefined
 }
@@ -697,6 +705,45 @@ export interface DeviceInput {
    * {@link key}.
    */
   readonly password?: string | undefined
+  /**
+   * Passphrase for the stored key, used when `auth` is `key`. Same
+   * omitted/empty semantics as {@link key}: omitted leaves it, empty removes it.
+   *
+   * Only meaningful WITH a key — a passphrase for no key is refused rather than
+   * stored, because ssh would never read it and a stored secret nothing reads is
+   * the exact shape of a credential nobody rotates.
+   */
+  readonly passphrase?: string | undefined
+}
+
+/**
+ * One private key sitting in the harness user's `~/.ssh`, offered as an
+ * alternative to pasting its contents.
+ *
+ * Naming it rather than its path is deliberate: `name` is what the reader
+ * recognises, and `path` is what has to come back to be read, so the browser
+ * sends the path back untouched and the host decides whether it may still be
+ * read (see the `readKey` action).
+ */
+export interface SshKeyFile {
+  readonly name: string
+  readonly path: string
+}
+
+/**
+ * One host key this plugin currently trusts, as OpenSSH spells it.
+ *
+ * A device may present several (an ed25519 and an rsa, say), so this is one
+ * ENTRY rather than one fingerprint per destination.
+ */
+export interface TrustedHostKey {
+  /** The host field as known_hosts spells it: bare, or `[host]:port`. */
+  readonly host: string
+  readonly port: number
+  /** `SHA256:…`, OpenSSH's own spelling. */
+  readonly fingerprint: string
+  /** `ssh-ed25519`, `ecdsa-sha2-nistp256`, … */
+  readonly keyType: string
 }
 
 /** One session's device binding, kept host-side because execution routing needs it. */
@@ -760,6 +807,29 @@ export type SshRequest =
     readonly action: 'install'
     readonly deviceId: string
   }
+  /** Private keys in the harness user's `~/.ssh`, for the device form's picker. */
+  | { readonly action: 'listKeys' }
+  /**
+   * One of those keys' contents, so the form can offer the file without the
+   * browser ever holding a path it could read on its own. The host re-checks
+   * that the path is still inside `~/.ssh`.
+   */
+  | { readonly action: 'readKey'; readonly path: string }
+  /** The host keys this plugin records as trusted for one device. */
+  | { readonly action: 'hostKeys'; readonly deviceId: string }
+  /**
+   * Drop what is recorded for one device, so the next connection trusts whatever
+   * it presents. The way out of a host key that changed for a legitimate reason.
+   */
+  | { readonly action: 'revokeHostKey'; readonly deviceId: string }
+  /**
+   * What one device's host presents RIGHT NOW, for side-by-side comparison with
+   * what is trusted.
+   *
+   * Unauthenticated by construction: it arrives over the very connection whose
+   * identity is in question, so a UI may show it but must never trust it.
+   */
+  | { readonly action: 'probeHostKey'; readonly deviceId: string }
 
 /** One response body; `error` is a refusal the UI shows verbatim. */
 export interface SshResponse {
@@ -774,6 +844,14 @@ export interface SshResponse {
    * (`install` action or the eventual three-phase `test` extension).
    */
   readonly helper?: DeviceHelperStatus | undefined
+  /** Host keys currently trusted, answering `hostKeys`. */
+  readonly hostKeys?: readonly TrustedHostKey[] | undefined
+  /** What the device presents now, answering `probeHostKey`. */
+  readonly probe?: TrustedHostKey | undefined
+  /** Private keys found in `~/.ssh`, answering `listKeys`. */
+  readonly keys?: readonly SshKeyFile[] | undefined
+  /** One key's contents, answering `readKey`. */
+  readonly keyBody?: string | undefined
   readonly error?: string | undefined
 }
 

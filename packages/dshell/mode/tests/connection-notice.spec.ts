@@ -14,7 +14,7 @@ import { connectionView, type ConnectionFacts } from '../src/client/connection-n
 /** The facts a session is in by default: an idle local session, nothing wrong. */
 function facts(over: Partial<ConnectionFacts> = {}): ConnectionFacts {
   return {
-    status: 'idle', ready: false, attempt: 0, bound: false, localUnsupported: false, ...over,
+    status: 'idle', ready: false, attempt: 0, bound: false, localUnsupported: false, failure: undefined, ...over,
   }
 }
 
@@ -79,5 +79,45 @@ describe('the screens that were already there', () => {
 
   it('says nothing at all about a local session that is merely starting', () => {
     expect(connectionView(facts({ status: 'connecting' }))).toEqual({ kind: 'none' })
+  })
+})
+
+describe('a host key that changed', () => {
+  it('gets a screen, because the only way out is a decision, not a retry', () => {
+    expect(connectionView(facts({ status: 'error', bound: true, failure: 'hostKey' })))
+      .toEqual({ kind: 'panel', phase: 'hostKey' })
+  })
+
+  it('outranks the never-came-up screen', () => {
+    // Both are full screens for a bound session; the changed key is the more
+    // specific fact and the retry it would otherwise offer cannot work.
+    expect(connectionView(facts({ status: 'error', bound: true, ready: false, failure: 'hostKey' })))
+      .toEqual({ kind: 'panel', phase: 'hostKey' })
+  })
+
+  it('still gets a screen for a shell that HAD answered', () => {
+    // A terminal the reader was working in loses its link because the machine
+    // was rebuilt: the marker rule would hide that behind a retry.
+    expect(connectionView(facts({ status: 'error', bound: true, ready: true, failure: 'hostKey' })))
+      .toEqual({ kind: 'panel', phase: 'hostKey' })
+  })
+
+  it('never applies to a local session', () => {
+    // Nothing here runs ssh, so there is no host key to have changed.
+    expect(connectionView(facts({ status: 'error', failure: 'hostKey' })))
+      .toEqual({ kind: 'notice', tone: 'failed' })
+  })
+
+  it('says nothing about an idle session', () => {
+    expect(connectionView(facts({ bound: true, failure: 'hostKey' }))).toEqual({ kind: 'none' })
+  })
+})
+
+describe('a passphrase that was refused', () => {
+  // Deliberately NOT a screen: the remedy is re-entering a secret in the device
+  // form, and this panel is not where that form lives.
+  it('keeps the ordinary failure presentation', () => {
+    expect(connectionView(facts({ status: 'error', bound: true, failure: 'passphrase' })))
+      .toEqual({ kind: 'panel', phase: 'failed' })
   })
 })

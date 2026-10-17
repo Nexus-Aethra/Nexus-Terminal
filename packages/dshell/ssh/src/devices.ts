@@ -28,6 +28,14 @@ interface DeviceRecord {
   auth: DeviceAuth
   /** Absolute path of the stored key or password file. */
   secretFile?: string
+  /**
+   * Absolute path of the stored passphrase for {@link secretFile}.
+   *
+   * A separate file rather than an option beside it, because the two answer to
+   * different prompts: `ssh` reads the key and its passphrase through one
+   * askpass hook, and the hook can only be pointed at one file.
+   */
+  passphraseFile?: string
   /** Last observed helper deployment on this device, when checks have run. */
   helper?: DeviceHelperStatus
 }
@@ -46,15 +54,29 @@ export interface DeviceConnection {
   readonly auth: DeviceAuth
   /** Stored key or password file, when one exists. */
   readonly secretFile: string | undefined
+  /**
+   * Stored passphrase file, when the key needs one.
+   *
+   * The connection carries both because `ssh` will only be allowed to ASK when
+   * this is present: see {@link sshEnv} and `authArgs` in `runner.ts`.
+   */
+  readonly passphraseFile: string | undefined
   /** The askpass helper every password-auth connection points ssh at. */
   readonly askpassFile: string
 }
 
 /** Stored secret path of a parsed record, accepting the legacy field name. */
-function readSecretPath(raw: Record<string, unknown>): { secretFile?: string } {
+function readSecretPath(raw: Record<string, unknown>): { secretFile?: string; passphraseFile?: string } {
   for (const field of ['secretFile', 'keyFile']) {
     const value = raw[field]
-    if (typeof value === 'string' && value.length > 0) return { secretFile: value }
+    if (typeof value === 'string' && value.length > 0) {
+      return {
+        secretFile: value,
+        ...typeof raw.passphraseFile === 'string' && raw.passphraseFile.length > 0
+          ? { passphraseFile: raw.passphraseFile }
+          : {},
+      }
+    }
   }
   return {}
 }
@@ -159,6 +181,7 @@ export class DeviceStore {
       remoteRoot: record.remoteRoot,
       auth: record.auth,
       secretFile: record.secretFile,
+      passphraseFile: record.passphraseFile,
       askpassFile: this.askpassPath,
     }
   }
@@ -187,6 +210,7 @@ export class DeviceStore {
         : (existing?.remoteRoot ?? '~'),
       auth,
       ...existing?.secretFile === undefined ? {} : { secretFile: existing.secretFile },
+      ...existing?.passphraseFile === undefined ? {} : { passphraseFile: existing.passphraseFile },
     }
     const record: DeviceRecord = {
       ...baseRecord,
@@ -204,6 +228,17 @@ export class DeviceStore {
         await this.removeSecret(record)
       } else {
         record.secretFile = await this.writeSecret(record.id, auth, submitted)
+      }
+    }
+    // A passphrase for a key that is not there would be a stored secret nothing
+    // can ever read, which is the shape of a credential nobody rotates.
+    if (input.passphrase !== undefined) {
+      if (auth !== 'key' || record.secretFile === undefined) {
+        if (input.passphrase !== '') throw new Error(t('error.passphraseWithoutKey'))
+      } else if (input.passphrase === '') {
+        await this.removePassphrase(record)
+      } else {
+        record.passphraseFile = await this.writePassphrase(record.id, input.passphrase)
       }
     }
     this.records = existing === undefined
@@ -257,6 +292,9 @@ export class DeviceStore {
       remoteRoot: record.remoteRoot,
       auth: record.auth,
       hasSecret: record.secretFile !== undefined,
+      // Reported only when it means something: a password-auth device has no
+      // key to unlock, so a passphrase there would be a secret nothing reads.
+      hasPassphrase: record.auth === 'key' && record.passphraseFile !== undefined,
       helper: record.helper,
     }
   }
@@ -283,23 +321,46 @@ export class DeviceStore {
   }
 
   private async removeSecret(record: DeviceRecord): Promise<void> {
+    await this.removePassphrase(record)
     if (record.secretFile === undefined) return
     await rm(record.secretFile, { force: true })
     delete record.secretFile
   }
 
+  /** Write a key's passphrase with owner-only permissions. */
+  private async writePassphrase(deviceId: string, passphrase: string): Promise<string> {
+    await mkdir(this.secretDir, { recursive: true, mode: 0o700 })
+    const path = join(this.secretDir, `${deviceId}.passphrase`)
+    // The askpass helper strips the trailing newline, the same way it strips
+    // one from a password.
+    await writeFile(path, `${passphrase}\n`, { mode: 0o600 })
+    await chmod(path, 0o600)
+    return path
+  }
+
+  private async removePassphrase(record: DeviceRecord): Promise<void> {
+    if (record.passphraseFile === undefined) return
+    await rm(record.passphraseFile, { force: true })
+    delete record.passphraseFile
+  }
+
   /**
-   * Write the askpass helper. ssh has no password flag, so password auth goes
-   * through OpenSSH's own hook: ssh executes this script and reads the password
-   * from its stdout, and the script reads whichever file the connection names
-   * in `DSHELL_SSH_PASSWORD_FILE`.
+   * Write the askpass helper. ssh has no flag for any of its secrets, so all of
+   * them go through OpenSSH's own hook: ssh executes this script and reads the
+   * answer from its stdout, and the script reads whichever file the connection
+   * names in `DSHELL_SSH_ASKPASS_FILE`.
+   *
+   * One file rather than a branch on the prompt is deliberate. A key device
+   * authenticates by public key and can therefore never be asked for a password,
+   * and a password device is never asked for a passphrase, so the prompt text
+   * would only ever be re-deriving what the connection already knows.
    */
   private async writeAskpass(): Promise<void> {
     await mkdir(this.root(), { recursive: true, mode: 0o700 })
     const body = [
       '#!/bin/sh',
-      '# dshell-ssh: hands ssh the password stored for one device (see askpassPath).',
-      'cat "$DSHELL_SSH_PASSWORD_FILE"',
+      '# dshell-ssh: hands ssh the secret stored for one device (see askpassPath).',
+      'cat "$DSHELL_SSH_ASKPASS_FILE"',
       '',
     ].join('\n')
     await writeFile(this.askpassPath, body, { mode: 0o700 })

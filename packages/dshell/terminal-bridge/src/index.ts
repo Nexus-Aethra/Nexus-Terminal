@@ -42,7 +42,7 @@ import { hostCopy, type DshellTerminalBridgeHostTranslator } from './host-locale
 import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
-import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, diagnosticTail, exitLabel, type DshellPtySession } from './pty.js'
+import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifySshFailure, diagnosticTail, exitLabel, type DshellPtySession, type SshFailure } from './pty.js'
 import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
@@ -221,7 +221,7 @@ interface MainRecord extends ShellRecord {
    * after the grace. The diagnostic and readiness travel with it so a client
    * that binds after the death still gets the whole story.
    */
-  dead?: { reason: string; detail?: string | undefined; ready: boolean; time: number }
+  dead?: { reason: string; detail?: string | undefined; ready: boolean; time: number; failure?: SshFailure | undefined }
   /** Pending dispose handle, kept so a rapid respawn can cancel it. */
   disposeTimer?: NodeJS.Timeout
 }
@@ -256,7 +256,7 @@ interface AgentRecord extends ShellRecord {
    * shell's startup and lose.
    */
   readonly initSettled: Promise<void>
-  dead?: { reason: string; detail?: string | undefined; ready: boolean; time: number }
+  dead?: { reason: string; detail?: string | undefined; ready: boolean; time: number; failure?: SshFailure | undefined }
   /** Pending dispose handle, kept so a rapid respawn can cancel it. */
   disposeTimer?: NodeJS.Timeout
 }
@@ -1233,8 +1233,10 @@ export class DshellTerminalBridge extends Service {
    */
   private markDead(record: MainRecord, reason: string): void {
     if (record.dead !== undefined) return
-    const detail = diagnosticTail(record.buffer.text())
-    record.dead = { reason, detail, ready: record.ready, time: Date.now() }
+    const text = record.buffer.text()
+    const detail = diagnosticTail(text)
+    const failure = classifySshFailure(text)
+    record.dead = { reason, detail, ready: record.ready, time: Date.now(), failure }
     record.stopOutput()
     record.stopExit()
     record.stopForeground()
@@ -1245,7 +1247,7 @@ export class DshellTerminalBridge extends Service {
     // dead PTY is an endless 100ms loop. Dropping them is what the shell's
     // death means anyway.
     record.inputQueue.length = 0
-    this.broadcast(record.dshSessionId, { kind: 'closed', reason, detail, ready: record.ready })
+    this.broadcast(record.dshSessionId, { kind: 'closed', reason, detail, ready: record.ready, failure })
     // Release the dsh-side name reservation NOW so a same-tick respawn
     // (via ensureLiveMain) doesn't collide with the still-resident owner.
     // A PTY can outlive its context — teardown kills the child, and this exit
@@ -1280,17 +1282,25 @@ export class DshellTerminalBridge extends Service {
    */
   private markAgentDead(record: AgentRecord, reason: string): void {
     if (record.dead !== undefined) return
+    const text = record.buffer.text()
     record.dead = {
       reason,
-      detail: diagnosticTail(record.buffer.text()),
+      detail: diagnosticTail(text),
       ready: record.ready,
       time: Date.now(),
+      failure: classifySshFailure(text),
     }
     record.stopOutput()
     record.stopExit()
     record.stopOutput = () => {}
     record.stopExit = () => {}
-    this.broadcastAgent(record.dshSessionId, { kind: 'closed', reason, detail: record.dead.detail, ready: record.ready })
+    this.broadcastAgent(record.dshSessionId, {
+      kind: 'closed',
+      reason,
+      detail: record.dead.detail,
+      ready: record.ready,
+      failure: record.dead.failure,
+    })
     void this.ctx.terminals.kill(record.agent, record.ptyId, 'dshell: agent shell dead').catch(() => {})
   }
 
@@ -1534,7 +1544,9 @@ export class DshellTerminalBridge extends Service {
       stream: 'agent',
       live: record !== undefined && record.dead === undefined,
       ready: record?.ready ?? false,
-      ...record?.dead === undefined ? {} : { reason: record.dead.reason, detail: record.dead.detail },
+      ...record?.dead === undefined
+        ? {}
+        : { reason: record.dead.reason, detail: record.dead.detail, failure: record.dead.failure },
     })
     if (record !== undefined) {
       this.sendFrame(client, {
@@ -1568,7 +1580,7 @@ export class DshellTerminalBridge extends Service {
   private attachToSession(
     client: PtySubscriber,
     dshSessionId: string,
-    priorDead?: { reason: string; detail?: string | undefined; ready: boolean },
+    priorDead?: { reason: string; detail?: string | undefined; ready: boolean; failure?: SshFailure | undefined },
   ): void {
     void this.ensureMainShell(dshSessionId).then((record) => {
       this.adopt(client, dshSessionId)
@@ -1578,6 +1590,7 @@ export class DshellTerminalBridge extends Service {
           reason: priorDead.reason,
           detail: priorDead.detail,
           ready: priorDead.ready,
+          failure: priorDead.failure,
         })
       }
       this.pushSnapshot(client, record)
