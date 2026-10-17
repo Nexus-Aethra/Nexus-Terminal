@@ -485,6 +485,7 @@ export function BlockView(props: {
     ready: pty.ready,
     attempt: pty.attempt,
     bound: binding !== undefined,
+    localUnsupported: current && pty.localUnsupported,
   })
   const retry = useCallback((): void => { props.pty.reconnect() }, [props.pty])
   const openSettings = ssh === undefined ? undefined : (): boolean => ssh.revealSettings()

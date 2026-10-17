@@ -30,7 +30,15 @@ export type ConnectionView =
    * (`connecting`) or never succeeded (`failed`). Drawn over the seat, because
    * there is nothing behind it worth reading.
    */
-  | { kind: 'panel'; phase: 'connecting' | 'failed' }
+  | {
+      kind: 'panel'
+      /**
+       * `unsupported` is not a failure to retry: the host machine has no shell
+       * this terminal can run, so the screen says so and offers the one way
+       * forward instead of a retry that cannot work.
+       */
+      phase: 'connecting' | 'failed' | 'unsupported'
+    }
   /**
    * A line appended after the output: either the link is up but the shell has
    * not answered, or a working terminal's connection ended.
@@ -47,6 +55,14 @@ export interface ConnectionFacts {
   attempt: number
   /** Whether the session is bound to a device; local sessions never get a panel. */
   bound: boolean
+  /**
+   * Host-reported: this machine cannot host a local shell.
+   *
+   * Checked FIRST, before every other rule, because it outranks them: a Windows
+   * host makes the retry button useless and the device name irrelevant, and the
+   * reader's real question is not "why did it fail" but "what can I do instead".
+   */
+  localUnsupported: boolean
 }
 
 /**
@@ -74,7 +90,10 @@ export interface ConnectionFacts {
  * @returns what to render.
  */
 export function connectionView(facts: ConnectionFacts): ConnectionView {
-  const { status, ready, attempt, bound } = facts
+  const { status, ready, attempt, bound, localUnsupported } = facts
+  // Only for a LOCAL session: a device session runs its shell on the device,
+  // so the host platform is not what stands between the reader and a prompt.
+  if (localUnsupported && !bound && status !== 'idle') return { kind: 'panel', phase: 'unsupported' }
   if (status === 'idle') return { kind: 'none' }
   if (status === 'connecting') {
     if (bound) {
@@ -160,6 +179,7 @@ function useSettingsLink(
   theme: Theme,
   onSettings: (() => boolean) | undefined,
   sessionKey: string | undefined,
+  primary = false,
 ): { node: ReactElement | null; hint: string | undefined } {
   const [hint, setHint] = useState<string | undefined>(undefined)
   // A different session's failure is a different situation.
@@ -168,7 +188,7 @@ function useSettingsLink(
     ? null
     : createElement('button', {
       type: 'button',
-      style: actionStyle(theme, false),
+      style: actionStyle(theme, primary),
       onClick: () => {
         if (onSettings() !== true) setHint(t('connection.settingsHint'))
       },
@@ -181,7 +201,7 @@ export interface ConnectionPanelProps extends ConnectionActions {
   /** Device display name, when the session is bound to one; undefined otherwise. */
   device: string | undefined
   /** `connecting` while the shell has not answered; `failed` once it cannot. */
-  phase: 'connecting' | 'failed'
+  phase: 'connecting' | 'failed' | 'unsupported'
   /** Why it failed, as the host reported it. */
   reason: string | undefined
   /** The connection diagnostic found in the terminal output, if any. */
@@ -211,7 +231,9 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
   const theme = useDshellTheme()
   const { t } = props
   const seconds = useElapsed(props.since)
-  const settings = useSettingsLink(t, theme, props.onSettings, props.sessionKey)
+  const unsupported = props.phase === 'unsupported'
+  // Primary on the unsupported screen, where it is the only way forward.
+  const settings = useSettingsLink(t, theme, props.onSettings, props.sessionKey, unsupported)
   const failed = props.phase === 'failed'
   const address = props.device === undefined ? t('connection.device') : props.device
   const detail = failed ? props.detail ?? props.reason : undefined
@@ -248,25 +270,36 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
     },
       createElement('div', {
         style: { fontSize: 14, fontWeight: 600, color: failed ? theme.danger : theme.text },
-      }, failed ? t('connection.panel.failed', { address }) : t('connection.panel.connecting', { address })),
+      }, unsupported
+        ? t('connection.panel.unsupported')
+        : failed
+          ? t('connection.panel.failed', { address })
+          : t('connection.panel.connecting', { address })),
       createElement('div', { style: { color: theme.muted, lineHeight: 1.5 } },
-        failed
-          ? props.exhausted
-            ? t('connection.retriesFailed', { max: props.maxAttempts })
-            : t('connection.notEstablished')
-          : progress),
+        unsupported
+          ? t('connection.panel.unsupported.detail')
+          : failed
+            ? props.exhausted
+              ? t('connection.retriesFailed', { max: props.maxAttempts })
+              : t('connection.notEstablished')
+            : progress),
       detail === undefined || detail === ''
         ? null
         : createElement('div', { style: detailStyle(theme) }, detail),
       settings.hint === undefined
         ? null
         : createElement('div', { style: { fontSize: 11, color: theme.muted } }, settings.hint),
+      // No retry on the unsupported screen: binding a device is the only action
+      // that can change the outcome, and a retry button beside it would only
+      // invite the reader to press the thing that cannot work.
       createElement('div', { style: { display: 'flex', gap: 8, marginTop: 2 } },
-        createElement('button', {
-          type: 'button',
-          style: actionStyle(theme, true),
-          onClick: props.onRetry,
-        }, t('connection.retry')),
+        unsupported
+          ? null
+          : createElement('button', {
+            type: 'button',
+            style: actionStyle(theme, true),
+            onClick: props.onRetry,
+          }, t('connection.retry')),
         settings.node,
       ),
     ),

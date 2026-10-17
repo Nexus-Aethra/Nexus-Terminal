@@ -42,7 +42,7 @@ import { hostCopy, type DshellTerminalBridgeHostTranslator } from './host-locale
 import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
-import { DshellPtyBackend, diagnosticTail, exitLabel, type DshellPtySession } from './pty.js'
+import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, diagnosticTail, exitLabel, type DshellPtySession } from './pty.js'
 import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
@@ -1502,6 +1502,10 @@ export class DshellTerminalBridge extends Service {
         stream: 'agent',
         message: this.describeSpawnError(error),
         sessionId: dshSessionId,
+        // Structured, because the client has to CHOOSE a presentation from it:
+        // a machine that cannot host a local shell needs a screen of its own,
+        // and reading that out of the message text would be a guess.
+        ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
       })
     })
   }
@@ -1580,7 +1584,12 @@ export class DshellTerminalBridge extends Service {
     }, (error: unknown) => {
       // Stay bound: the client's retry is a frame on this very socket.
       this.adopt(client, dshSessionId)
-      this.sendFrame(client, { kind: 'error', message: this.describeSpawnError(error), sessionId: dshSessionId })
+      this.sendFrame(client, {
+        kind: 'error',
+        message: this.describeSpawnError(error),
+        sessionId: dshSessionId,
+        ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
+      })
     })
   }
 
@@ -1597,7 +1606,12 @@ export class DshellTerminalBridge extends Service {
       this.adopt(client, dshSessionId)
       this.pushSnapshot(client, record)
     }, (error: unknown) => {
-      this.sendFrame(client, { kind: 'error', message: this.describeSpawnError(error), sessionId: dshSessionId })
+      this.sendFrame(client, {
+        kind: 'error',
+        message: this.describeSpawnError(error),
+        sessionId: dshSessionId,
+        ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
+      })
     })
   }
 

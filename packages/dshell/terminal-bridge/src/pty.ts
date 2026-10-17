@@ -260,6 +260,28 @@ export type PtySpawnPlanResolver = (
 /** The default local interactive shell, unchanged from before this seam existed. */
 const LOCAL_SHELL: PtySpawnPlan = { argv: ['/bin/bash', '--noprofile', '--norc', '-i'] }
 
+/**
+ * Whether THIS machine can host the local shell at all.
+ *
+ * `/bin/bash` is the one program in the whole suite that has no Windows
+ * spelling, and dshell's terminal is that program's output — so on Windows a
+ * local session has nothing to show and the honest move is to say so rather than
+ * let a spawn fail with ENOENT. A session BOUND to a device is unaffected: its
+ * plan is the ssh line, which runs on the far machine, and Windows is a perfectly
+ * good place to run an `ssh` client from.
+ *
+ * Not probed for a Windows POSIX shell (Git Bash, WSL): that would be a
+ * different product decision — the completion oracle, the POSIX quoting and the
+ * AI's own terminal tools all assume the shell speaks POSIX, and finding
+ * `/bin/bash` on a Windows host is not the same as dshell being able to use it.
+ * The refusal below is the cheaper, more honest half.
+ */
+export const LOCAL_SHELL_SUPPORTED = process.platform !== 'win32'
+
+/** Why a local session cannot run here, when it cannot. */
+export const LOCAL_SHELL_UNSUPPORTED_REASON =
+  'dshell 的集成终端需要一个 POSIX shell；这台机器是 Windows，本地起不了。绑一台设备就能用。'
+
 /** One raw PTY session owned by the dshell backend. */
 class LocalRawSession implements DshellPtySession {
   motd = ''
@@ -564,6 +586,11 @@ export class DshellPtyBackend implements TerminalBackend {
       sessionId: spec.owner?.id === undefined ? undefined : String(spec.owner.id),
       cwd: spec.cwd,
     })
+    // Checked against the RESOLVED plan, so a device session — whose plan is the
+    // ssh line — is never refused for being on a Windows host.
+    if (plan === undefined && !LOCAL_SHELL_SUPPORTED) {
+      throw new TerminalError(LOCAL_SHELL_UNSUPPORTED_REASON, 'NO_SESSION')
+    }
     const session = new LocalRawSession(
       spec.sessionId as TerminalSessionId,
       spec.cwd,

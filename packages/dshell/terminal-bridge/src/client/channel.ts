@@ -35,6 +35,12 @@ export interface WireFrame {
   ready?: boolean
   /** `agent-info` frames: whether the agent shell exists at all. */
   live?: boolean
+  /**
+   * `error` frames: the host machine has no shell this terminal could run, so
+   * the failure is the platform and not the session. The client picks a whole
+   * screen from this rather than reading the message text for a hint of it.
+   */
+  localUnsupported?: boolean
   /** `info` frames: OS identity the dock uses to build bash prompts. */
   user?: string
   host?: string

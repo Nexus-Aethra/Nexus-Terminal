@@ -120,6 +120,16 @@ export interface PtyStreamState {
   exhausted: boolean
   /** When the current connection attempt started, for the view's elapsed count. */
   since: number
+  /**
+   * Host-reported: this machine cannot host a local shell at all.
+   *
+   * A separate fact from `reason` because the view has to CHOOSE a
+   * presentation from it. A local session that merely failed gets a marker
+   * appended to output the user was reading; one that failed because the
+   * platform has no shell for it has no output to append to, and gets a screen
+   * that names the way out (bind a device).
+   */
+  localUnsupported: boolean
 }
 
 /** Browser render-buffer cap per session: the canvas replays from this store. */
@@ -211,6 +221,7 @@ export class PtyStreamService extends Service {
     maxAttempts: MAX_AUTO_ATTEMPTS,
     exhausted: false,
     since: Date.now(),
+    localUnsupported: false,
   })
 
   /** OS identity from the server's `info` frame (bash prompt material). */
@@ -714,6 +725,8 @@ export class PtyStreamService extends Service {
         maxAttempts: MAX_AUTO_ATTEMPTS,
         exhausted: false,
         since: Date.now(),
+        // A new session has not failed yet, whatever the last one did.
+        localUnsupported: false,
       })
     } else {
       this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now() })
@@ -837,6 +850,7 @@ export class PtyStreamService extends Service {
       return
     }
     if (frame.kind === 'error') {
+      if (frame.localUnsupported === true) this.patch({ localUnsupported: true })
       this.patch({
         status: 'error',
         reason: typeof frame.message === 'string' ? frame.message : undefined,
