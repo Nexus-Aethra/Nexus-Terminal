@@ -20,4 +20,5 @@ export { DSHELL_SSH_PATH, SSH_SETTINGS_NAMESPACE } from '@nexus-aethra/dshell-st
 export type {
   DeviceAuth, DeviceView, DeviceHelperStatus, DeviceInput, DeviceBinding,
   SshKeyFile, TrustedHostKey, SshRequest, SshResponse,
+  CredentialKind, CredentialView, CredentialInput, VaultGroupView,
 } from '@nexus-aethra/dshell-std'

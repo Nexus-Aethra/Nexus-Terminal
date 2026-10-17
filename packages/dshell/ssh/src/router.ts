@@ -21,6 +21,8 @@ import type { ShellExecRequest, ShellExecSpec } from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
+import { CredentialStore } from './credentials.js'
+import { SecretVault } from './vault.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
 import { localHelperArtifact } from './connection.js'
@@ -216,6 +218,10 @@ class BindingStore {
 /** Devices, their assignments, and the per-call decision they drive. */
 export class SshRouter {
   private readonly devices: DeviceStore
+  /** The group registry and the unlock state, shared with every reader. */
+  readonly vault: SecretVault
+  /** The credential library devices point at. */
+  readonly credentials: CredentialStore
   private readonly bindings: BindingStore
   private connections = new Map<string, DeviceConnection>()
   private ready: Promise<void>
@@ -256,7 +262,11 @@ export class SshRouter {
    * the path is actually used.
    */
   constructor(root: () => string) {
-    this.devices = new DeviceStore(root)
+    // One vault instance for the process: the whole point of an unlock is that
+    // the device store, the credential store and the card all see the same one.
+    this.vault = new SecretVault(root)
+    this.credentials = new CredentialStore(root, this.vault)
+    this.devices = new DeviceStore(root, this.credentials)
     this.bindings = new BindingStore(() => join(root(), 'bindings.json'))
     // Eagerly, and deliberately: `targetForSession` below is synchronous
     // because `spawn`/`resolve` cannot await, so this cache has to be filled

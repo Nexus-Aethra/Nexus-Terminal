@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import type { DshellSshTranslate } from './host-locales.js'
 import type { DeviceAuth, DeviceInput, DeviceView } from './protocol.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
+import type { CredentialStore } from './credentials.js'
 
 /** A stored device record; the secret path is absent when none is stored. */
 interface DeviceRecord {
@@ -26,6 +27,14 @@ interface DeviceRecord {
   remoteRoot: string
   /** Login method; `key` may still have no stored secret (the ambient agent). */
   auth: DeviceAuth
+  /**
+   * The vault credential this device logs in with, instead of its own files.
+   *
+   * Preferred whenever present. The inline paths below are what every device
+   * had before the vault existed and stay readable, but a device holding both
+   * would have two answers to the same question with only one of them rotated.
+   */
+  credentialId?: string
   /** Absolute path of the stored key or password file. */
   secretFile?: string
   /**
@@ -104,6 +113,9 @@ function asRecord(value: unknown): DeviceRecord | undefined {
     // login-method split carry it, and dropping it would silently detach an
     // already-stored key from its device.
     ...readSecretPath(raw),
+    ...(typeof raw.credentialId === 'string' && raw.credentialId.length > 0
+      ? { credentialId: raw.credentialId }
+      : {}),
     ...(helper === undefined ? {} : { helper }),
   }
 }
@@ -144,7 +156,7 @@ export class DeviceStore {
    *   read when it is needed rather than captured: the data root is a setting,
    *   settled while the composition is still running (see `std/data-root.ts`).
    */
-  constructor(private readonly root: () => string) {}
+  constructor(private readonly root: () => string, private readonly credentials: CredentialStore) {}
 
   /** The device document path. */
   private get documentPath(): string {
@@ -180,8 +192,12 @@ export class DeviceStore {
       user: record.user,
       remoteRoot: record.remoteRoot,
       auth: record.auth,
-      secretFile: record.secretFile,
-      passphraseFile: record.passphraseFile,
+      ...(record.credentialId === undefined
+        ? { secretFile: record.secretFile, passphraseFile: record.passphraseFile }
+        : {
+          secretFile: await this.credentials.usablePath(record.credentialId, 'secret', record.id),
+          passphraseFile: await this.credentials.usablePath(record.credentialId, 'passphrase', record.id),
+        }),
       askpassFile: this.askpassPath,
     }
   }
@@ -222,7 +238,15 @@ export class DeviceStore {
     // Switching the login method retires the other secret: a stored password
     // must not linger on a device that now authenticates by key.
     if (existing !== undefined && existing.auth !== auth) await this.removeSecret(record)
-    const submitted = auth === 'password' ? input.password : input.key
+    // Pointing a device at a credential retires its inline secret: leaving the
+    // files in place would keep a copy of the key alive that nothing rotates and
+    // that the device no longer reads.
+    if (input.credentialId !== undefined && input.credentialId !== record.credentialId) {
+      await this.removeSecret(record)
+      record.credentialId = input.credentialId
+    }
+    const submitted = record.credentialId !== undefined ? undefined
+      : auth === 'password' ? input.password : input.key
     if (submitted !== undefined) {
       if (submitted.trim() === '') {
         await this.removeSecret(record)
@@ -291,7 +315,8 @@ export class DeviceStore {
       user: record.user,
       remoteRoot: record.remoteRoot,
       auth: record.auth,
-      hasSecret: record.secretFile !== undefined,
+      ...(record.credentialId === undefined ? {} : { credentialId: record.credentialId }),
+      hasSecret: record.secretFile !== undefined || record.credentialId !== undefined,
       // Reported only when it means something: a password-auth device has no
       // key to unlock, so a passphrase there would be a secret nothing reads.
       hasPassphrase: record.auth === 'key' && record.passphraseFile !== undefined,

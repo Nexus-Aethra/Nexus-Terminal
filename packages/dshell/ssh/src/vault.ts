@@ -1,0 +1,406 @@
+/**
+ * The secret vault: named groups of credentials, each group its own policy.
+ *
+ * A group is either token-protected — its secrets sealed with AES-256-GCM under
+ * a key stretched from a token the user chose, one salt per group — or plain.
+ * Devices do not hold secrets; they reference a credential, so rotating a key
+ * that thirty machines log in with is one edit rather than thirty.
+ *
+ * **Read the file, not the policy.** Whether a stored secret is sealed is
+ * decided by the marker on its first line, never by what the group currently
+ * says. That is what makes a group's policy changeable: flip a group to
+ * token-protected and the secrets already in it are still readable, because
+ * they were never lying about being plain.
+ *
+ * **What a sealed group resists, and what it does not.** It resists the disk —
+ * copy the `dshell/ssh` directory away and every credential in a sealed group is
+ * a sealed blob. It does NOT resist a process running as the same user while the
+ * group is unlocked, because `ssh` is an external binary that must be handed a
+ * file it can open; the plaintext therefore exists for as long as the unlock
+ * does. That boundary is where every vault that has to feed a foreign binary
+ * stops. The honest summary is: locked means clean, unlocked means in use.
+ *
+ * **A plain group is not protected at all**, and the UI says so rather than
+ * letting an unencrypted row look like it sits inside a vault.
+ *
+ * GCM rather than a plain cipher is load-bearing. A wrong token under an
+ * unauthenticated mode decrypts to garbage that is then sent to a remote host as
+ * a password, which reads to the user as "your password was rejected"; GCM's tag
+ * fails loudly and the reader is told the token was wrong.
+ *
+ * A group's token is not stored, hashed or recoverable anywhere. Losing it means
+ * re-entering every credential in that group — there is no reset, and adding one
+ * would mean storing something that defeats the encryption.
+ */
+
+import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'node:crypto'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { promisify } from 'node:util'
+
+// `scrypt` is overloaded, and promisify resolves the overload WITHOUT options,
+// which would silently drop the memory-hardness parameters that are the whole
+// point of using it. Pinned to the four-argument form so they are checked.
+const scryptDerive = promisify(scrypt) as (
+  password: string | Uint8Array,
+  salt: string | Uint8Array,
+  keylen: number,
+  options: { N: number; r: number; p: number; maxmem: number },
+) => Promise<Buffer>
+
+/** File format marker, so a plain secret is recognisable without a policy. */
+export const SEAL_MARKER = 'dshell-vault-v1'
+
+/** scrypt parameters. N=16384,r=8,p=1 needs 16 MB, inside Node's default cap. */
+export const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 } as const
+const SCRYPT_MAXMEM = 32 * 1024 * 1024
+const KEY_BYTES = 32
+const IV_BYTES = 12
+const TAG_BYTES = 16
+const SALT_BYTES = 16
+
+/** The plaintext a group's verifier seals, so a token can be checked cheaply. */
+const VERIFIER_PLAINTEXT = SEAL_MARKER
+
+/** A group's key derivation, as it lives on disk. */
+export interface GroupKdf {
+  algo: 'scrypt'
+  N: number
+  r: number
+  p: number
+  /** base64. */
+  salt: string
+}
+
+/** One group, as stored. */
+export interface VaultGroup {
+  id: string
+  name: string
+  /** Whether credentials in this group are sealed. */
+  sealed: boolean
+  /** Present exactly when {@link sealed}. */
+  kdf?: GroupKdf
+  /** GCM(iv || tag || ciphertext) of the verifier; present when sealed. */
+  verifier?: string
+}
+
+interface VaultDocument {
+  v: 1
+  groups: VaultGroup[]
+}
+
+/** What a group looks like to the UI: no key material, ever. */
+export interface GroupView {
+  readonly id: string
+  readonly name: string
+  readonly sealed: boolean
+  /** Sealed and not currently open: its credentials cannot be read right now. */
+  readonly locked: boolean
+}
+
+/** A token that does not open a group, as distinct from a store unreadable. */
+export class VaultLockedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'VaultLockedError'
+  }
+}
+
+/** A fresh, path-safe group id. */
+function newId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}${randomBytes(3).toString('hex')}`
+}
+
+/**
+ * The group registry, the unlock state, and the seal itself.
+ *
+ * One instance per host process. Derived keys live only in this object's memory,
+ * so a restart comes back locked — which is the point: the disk alone never
+ * yields a usable credential.
+ */
+export class SecretVault {
+  private groups: VaultGroup[] | undefined = undefined
+  /** Group id → its derived key, for the groups currently unlocked. */
+  private readonly keys = new Map<string, Buffer>()
+
+  constructor(private readonly root: () => string) {}
+
+  private get documentPath(): string {
+    return join(this.root(), 'vault.json')
+  }
+
+  /** Where a decrypted secret is written so `ssh` can open it. */
+  get runDir(): string {
+    return join(this.root(), 'run')
+  }
+
+  /**
+   * The groups, in creation order.
+   *
+   * A group with no token of its own is created on first read: a vault that has
+   * credentials but nowhere to put them is a broken state, and silently
+   * defaulting them to plain would be the wrong repair. This one is sealed, so
+   * the very first thing a user meets is a prompt for a token.
+   */
+  async list(): Promise<readonly GroupView[]> {
+    return (await this.groupsOf()).map(group => this.view(group))
+  }
+
+  private view(group: VaultGroup): GroupView {
+    return {
+      id: group.id,
+      name: group.name,
+      sealed: group.sealed,
+      locked: group.sealed && !this.keys.has(group.id),
+    }
+  }
+
+  private async groupsOf(): Promise<VaultGroup[]> {
+    if (this.groups !== undefined) return this.groups
+    let groups: VaultGroup[] = []
+    try {
+      const parsed = JSON.parse(await readFile(this.documentPath, 'utf8')) as VaultDocument
+      if (Array.isArray(parsed?.groups)) groups = parsed.groups.filter(isGroup)
+    } catch {
+      // No vault yet, or an unreadable one. An empty list is the right reading of
+      // both: a corrupt document must not strand credentials that are still plain.
+      groups = []
+    }
+    if (groups.length === 0) {
+      groups = [{ id: 'default', name: '默认', sealed: true }]
+      this.groups = groups
+      await this.write()
+      return groups
+    }
+    this.groups = groups
+    return groups
+  }
+
+  private async write(): Promise<void> {
+    const document: VaultDocument = { v: 1, groups: this.groups ?? [] }
+    await mkdir(this.root(), { recursive: true, mode: 0o700 })
+    await writeFile(this.documentPath, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 })
+  }
+
+  private async find(groupId: string): Promise<VaultGroup | undefined> {
+    return (await this.groupsOf()).find(group => group.id === groupId)
+  }
+
+  /**
+   * Create a group.
+   *
+   * @param name - display name.
+   * @param token - the group's token, or null for a plain (UNPROTECTED) group.
+   * @returns the new group.
+   */
+  async createGroup(name: string, token: string | null): Promise<GroupView> {
+    const groups = await this.groupsOf()
+    const group: VaultGroup = { id: newId('g'), name, sealed: token !== null }
+    if (token !== null) {
+      if (token === '') throw new Error('token is empty')
+      group.kdf = { algo: 'scrypt', ...SCRYPT_PARAMS, salt: randomBytes(SALT_BYTES).toString('base64') }
+      const key = await this.derive(token, group.kdf)
+      group.verifier = (await seal(VERIFIER_PLAINTEXT, key)).toString('base64')
+      this.keys.set(group.id, key)
+    }
+    this.groups = [...groups, group]
+    await this.write()
+    return this.view(group)
+  }
+
+  /** Rename a group. Nothing about its secrets changes. */
+  async renameGroup(groupId: string, name: string): Promise<void> {
+    const group = await this.need(groupId)
+    group.name = name
+    await this.write()
+  }
+
+  /** Remove a group and its key. The caller owns the credentials inside it. */
+  async removeGroup(groupId: string): Promise<void> {
+    await this.need(groupId)
+    this.keys.delete(groupId)
+    this.groups = (this.groups ?? []).filter(group => group.id !== groupId)
+    await this.write()
+  }
+
+  /**
+   * Unlock a group with its token.
+   *
+   * @throws VaultLockedError when the token does not open it.
+   */
+  async unlock(groupId: string, token: string): Promise<void> {
+    const group = await this.need(groupId)
+    if (!group.sealed || group.kdf === undefined) return
+    const key = await this.derive(token, group.kdf)
+    try {
+      const opened = await open(Buffer.from(group.verifier ?? '', 'base64'), key)
+      if (opened.toString('utf8') !== VERIFIER_PLAINTEXT) throw new VaultLockedError('verifier mismatched')
+    } catch (error) {
+      // A failed guess must not disturb a group that was already open.
+      if (error instanceof VaultLockedError) throw error
+      throw new VaultLockedError('wrong token')
+    }
+    this.keys.set(groupId, key)
+  }
+
+  /** Drop one group's key and every plaintext handed out from it. */
+  async lock(groupId?: string): Promise<void> {
+    if (groupId === undefined) this.keys.clear()
+    else this.keys.delete(groupId)
+    await this.clearRunDir()
+  }
+
+  /** Whether a group is sealed, without exposing anything else about it. */
+  async isSealed(groupId: string): Promise<boolean> {
+    return (await this.find(groupId))?.sealed === true
+  }
+
+  /**
+   * Set a group's token, sealing it from now on.
+   *
+   * Does NOT re-encrypt what is already stored — the caller does that, because
+   * only the caller knows which credentials are in the group and where they
+   * live. Keeping the rewrap outside means this method cannot half-complete.
+   */
+  async setToken(groupId: string, token: string): Promise<void> {
+    const group = await this.need(groupId)
+    if (token === '') throw new Error('token is empty')
+    group.sealed = true
+    group.kdf = { algo: 'scrypt', ...SCRYPT_PARAMS, salt: randomBytes(SALT_BYTES).toString('base64') }
+    const key = await this.derive(token, group.kdf)
+    group.verifier = (await seal(VERIFIER_PLAINTEXT, key)).toString('base64')
+    this.keys.set(groupId, key)
+    await this.write()
+  }
+
+  /**
+   * Remove a group's token, making it plain from now on.
+   *
+   * Same boundary as {@link setToken}: the caller rewrites the stored secrets.
+   *
+   * The derived key is deliberately KEPT. The only way to unseal what is already
+   * stored is to open it, and dropping the key here would strand those bytes
+   * permanently — the group would say "plain" while its files stayed sealed
+   * under a key nothing holds any more. `lock` is what forgets it, and a policy
+   * change is followed by a rewrap, not by silence.
+   */
+  async clearToken(groupId: string): Promise<void> {
+    const group = await this.need(groupId)
+    group.sealed = false
+    delete group.kdf
+    delete group.verifier
+    await this.write()
+  }
+
+  /**
+   * Whether a stored body is sealed.
+   *
+   * The single question the read path asks, and the reason a group's policy can
+   * change without stranding anything.
+   */
+  static isSealed(body: string): boolean {
+    return body.startsWith(`${SEAL_MARKER}\n`)
+  }
+
+  /**
+   * The file body for a plaintext secret, sealed if its group is.
+   *
+   * @param groupId - the owning group.
+   * @param plaintext - the secret.
+   * @returns what to write.
+   * @throws VaultLockedError when the group is sealed and not unlocked.
+   */
+  async sealFor(groupId: string, plaintext: string): Promise<string> {
+    const body = plaintext.endsWith('\n') ? plaintext : `${plaintext}\n`
+    if (!await this.isSealed(groupId)) return body
+    // The newline is added on BOTH paths on purpose: a sealed secret has to come
+    // back byte-identical, or enabling a token would change what `ssh` receives
+    // — and OpenSSH's key parser requires that trailing newline.
+    return `${SEAL_MARKER}\n${(await seal(body, this.keyOf(groupId))).toString('base64')}\n`
+  }
+
+  /**
+   * Open a stored body back into plaintext.
+   *
+   * @param groupId - the owning group, whose key is needed only if it is sealed.
+   * @param body - the file body.
+   * @throws VaultLockedError when it is sealed and the group is not unlocked.
+   */
+  async openFor(groupId: string, body: string): Promise<string> {
+    if (!SecretVault.isSealed(body)) return body
+    return (await open(Buffer.from(body.slice(SEAL_MARKER.length + 1).trim(), 'base64'), this.keyOf(groupId))).toString('utf8')
+  }
+
+  private keyOf(groupId: string): Buffer {
+    const key = this.keys.get(groupId)
+    if (key === undefined) throw new VaultLockedError('这个分组已锁定，先解锁才能读取或写入它的凭据')
+    return key
+  }
+
+  private async derive(token: string, kdf: GroupKdf): Promise<Buffer> {
+    return await scryptDerive(Buffer.from(token, 'utf8'), Buffer.from(kdf.salt, 'base64'), KEY_BYTES, {
+      N: kdf.N, r: kdf.r, p: kdf.p, maxmem: SCRYPT_MAXMEM,
+    })
+  }
+
+  private async need(groupId: string): Promise<VaultGroup> {
+    const group = await this.find(groupId)
+    if (group === undefined) throw new Error(`unknown vault group ${groupId}`)
+    return group
+  }
+
+  /**
+   * Write a decrypted secret where `ssh` can open it.
+   *
+   * The plaintext lives in its own directory rather than beside the sealed files,
+   * so a reader can see at a glance what is live: an entry under `run/` means a
+   * credential is currently usable, and locking empties it.
+   *
+   * @param name - a path-safe file name, unique per secret.
+   * @param plaintext - the secret.
+   * @returns the absolute path to hand to `ssh`.
+   */
+  async materialize(name: string, plaintext: string): Promise<string> {
+    await mkdir(this.runDir, { recursive: true, mode: 0o700 })
+    const path = join(this.runDir, name)
+    await writeFile(path, plaintext.endsWith('\n') ? plaintext : `${plaintext}\n`, { mode: 0o600 })
+    return path
+  }
+
+  /**
+   * Remove every materialized secret.
+   *
+   * Run at start-up as well as on lock: a host killed rather than stopped left
+   * plaintext behind with nothing holding the key any more, and that file is
+   * pure downside now.
+   */
+  async clearRunDir(): Promise<void> {
+    let names: string[]
+    try {
+      names = await readdir(this.runDir)
+    } catch {
+      return
+    }
+    for (const name of names) await rm(join(this.runDir, name), { force: true }).catch(() => {})
+  }
+}
+
+/** A parsed group, rejecting anything that cannot be used. */
+function isGroup(value: unknown): value is VaultGroup {
+  if (typeof value !== 'object' || value === null) return false
+  const group = value as Record<string, unknown>
+  return typeof group.id === 'string' && group.id.length > 0 && typeof group.name === 'string'
+}
+
+function seal(plaintext: string, key: Buffer): Buffer {
+  const iv = randomBytes(IV_BYTES)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const body = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  return Buffer.concat([iv, cipher.getAuthTag(), body])
+}
+
+function open(sealed: Buffer, key: Buffer): Buffer {
+  const decipher = createDecipheriv('aes-256-gcm', key, sealed.subarray(0, IV_BYTES))
+  decipher.setAuthTag(sealed.subarray(IV_BYTES, IV_BYTES + TAG_BYTES))
+  return Buffer.concat([decipher.update(sealed.subarray(IV_BYTES + TAG_BYTES)), decipher.final()])
+}

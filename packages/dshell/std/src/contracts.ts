@@ -670,6 +670,14 @@ export interface DeviceView {
   readonly remoteRoot: string
   /** Selected login method. */
   readonly auth: DeviceAuth
+  /**
+   * The vault credential this device logs in with.
+   *
+   * Preferred over {@link hasSecret}: a key shared by thirty machines should be
+   * rotated in one place. Absent means the device still carries its own inline
+   * secret, which is what every device did before the vault existed.
+   */
+  readonly credentialId?: string | undefined
   /** Whether the secret for {@link auth} (key or password) is stored. */
   readonly hasSecret: boolean
   /**
@@ -714,6 +722,44 @@ export interface DeviceInput {
    * the exact shape of a credential nobody rotates.
    */
   readonly passphrase?: string | undefined
+  /**
+   * The vault credential to log in with, instead of an inline secret.
+   *
+   * Set alongside {@link auth}; supplying it clears any inline key or password,
+   * because a device holding both would have two answers to the same question
+   * and only one of them gets rotated.
+   */
+  readonly credentialId?: string | undefined
+}
+
+/** What kind of secret a vault credential holds. */
+export type CredentialKind = 'key' | 'password'
+
+/**
+ * One stored credential, as the UI sees it.
+ *
+ * Never carries the secret: the same rule the device view has always followed,
+ * so a settings document that leaks contains no credential.
+ */
+export interface CredentialView {
+  readonly id: string
+  /** The owning group, which decides whether the bytes are sealed. */
+  readonly group: string
+  readonly name: string
+  readonly kind: CredentialKind
+  readonly hasSecret: boolean
+  /** Only meaningful for a `key`: whether a passphrase is stored with it. */
+  readonly hasPassphrase: boolean
+}
+
+/** One vault group, as the UI sees it. */
+export interface VaultGroupView {
+  readonly id: string
+  readonly name: string
+  /** False means the group's credentials are stored UNENCRYPTED. */
+  readonly sealed: boolean
+  /** Sealed and not currently open: its credentials cannot be read right now. */
+  readonly locked: boolean
 }
 
 /**
@@ -830,6 +876,40 @@ export type SshRequest =
    * identity is in question, so a UI may show it but must never trust it.
    */
   | { readonly action: 'probeHostKey'; readonly deviceId: string }
+  /** The vault's groups. */
+  | { readonly action: 'vaultList' }
+  | { readonly action: 'vaultCreateGroup'; readonly name: string; readonly token: string | null }
+  | { readonly action: 'vaultRenameGroup'; readonly groupId: string; readonly name: string }
+  | { readonly action: 'vaultDeleteGroup'; readonly groupId: string }
+  | { readonly action: 'vaultUnlock'; readonly groupId: string; readonly token: string }
+  /** Lock one group, or every group when `groupId` is absent. */
+  | { readonly action: 'vaultLock'; readonly groupId?: string }
+  /**
+   * Move a group to token-protected, or off it.
+   *
+   * Both re-seal the group's stored credentials in the same request, because a
+   * policy that applied only to writes would leave the group half-protected
+   * with no way to see which rows were the old ones.
+   */
+  | { readonly action: 'vaultSetToken'; readonly groupId: string; readonly token: string }
+  | { readonly action: 'vaultClearToken'; readonly groupId: string }
+  /** The credential library. */
+  | { readonly action: 'credentialList' }
+  | { readonly action: 'credentialSave'; readonly credential: CredentialInput }
+  | { readonly action: 'credentialDelete'; readonly credentialId: string }
+
+/** What the UI submits for one credential. Omitted secret keeps the stored one. */
+export interface CredentialInput {
+  readonly id?: string
+  /** The owning group, which decides whether the bytes are sealed. */
+  readonly group: string
+  readonly name: string
+  readonly kind: CredentialKind
+  /** Key contents or password. Empty string removes the secret. */
+  readonly secret?: string
+  /** Passphrase for a key credential. Empty string removes it. */
+  readonly passphrase?: string
+}
 
 /** One response body; `error` is a refusal the UI shows verbatim. */
 export interface SshResponse {
@@ -852,6 +932,10 @@ export interface SshResponse {
   readonly keys?: readonly SshKeyFile[] | undefined
   /** One key's contents, answering `readKey`. */
   readonly keyBody?: string | undefined
+  /** The vault's groups, answering any `vault*` action. */
+  readonly groups?: readonly VaultGroupView[] | undefined
+  /** The stored credentials, answering any `credential*` action. */
+  readonly credentials?: readonly CredentialView[] | undefined
   readonly error?: string | undefined
 }
 

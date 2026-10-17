@@ -58,6 +58,17 @@ async function respawnShell(ctx: Context, sessionId: string): Promise<void> {
   await bridge?.respawnMain?.(sessionId).catch(() => { /* the panel reports the spawn */ })
 }
 
+/**
+ * The vault face of a reply: groups and credentials together.
+ *
+ * Always both, because a group's lock state is only meaningful next to the
+ * credentials it holds, and answering one without the other is how a card ends
+ * up offering a token prompt for a plain group.
+ */
+async function vaultFace(deps: SshRouteDeps): Promise<Pick<SshResponse, 'groups' | 'credentials'>> {
+  return { groups: await deps.router.vault.list(), credentials: await deps.router.credentials.list() }
+}
+
 /** Bind the route to the device registry. */
 export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
   const state = async (): Promise<Omit<SshResponse, 'error' | 'testResult'>> => ({
@@ -153,6 +164,61 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         const at = await deps.router.destinationOf(input.deviceId)
         if (at === undefined) return { ...await state(), error: deps.t('error.unknownDevice', { id: input.deviceId }) }
         return { ...await state(), probe: await probeHostKey(at.host, at.port) }
+      }
+      case 'vaultList':
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'vaultCreateGroup': {
+        await deps.router.vault.createGroup(input.name, input.token)
+        return { ...await state(), ...await vaultFace(deps) }
+      }
+      case 'vaultRenameGroup':
+        await deps.router.vault.renameGroup(input.groupId, input.name)
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'vaultDeleteGroup': {
+        // Refused while anything still points into it. A credential whose group
+        // vanished cannot be opened again, so deleting the group would silently
+        // lock a device out rather than tidy a row away.
+        const inside = (await deps.router.credentials.list()).filter(c => c.group === input.groupId)
+        if (inside.length > 0) return { ...await state(), error: deps.t('error.groupNotEmpty') }
+        await deps.router.vault.removeGroup(input.groupId)
+        return { ...await state(), ...await vaultFace(deps) }
+      }
+      case 'vaultUnlock':
+        await deps.router.vault.unlock(input.groupId, input.token)
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'vaultLock':
+        // Locking also drops the plaintext this process handed out to `ssh`, so
+        // the disk is clean again rather than merely unreadable to us.
+        await deps.router.vault.lock(input.groupId)
+        deps.router.credentials.forgetMaterialized()
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'vaultSetToken':
+        await deps.router.vault.setToken(input.groupId, input.token)
+        await deps.router.credentials.rewrapGroup(input.groupId)
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'vaultClearToken':
+        await deps.router.vault.clearToken(input.groupId)
+        await deps.router.credentials.rewrapGroup(input.groupId)
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'credentialList':
+        return { ...await state(), ...await vaultFace(deps) }
+      case 'credentialSave': {
+        try {
+          await deps.router.credentials.save(input.credential)
+        } catch (error) {
+          return { ...await state(), error: error instanceof Error ? error.message : String(error) }
+        }
+        return { ...await state(), ...await vaultFace(deps) }
+      }
+      case 'credentialDelete': {
+        // Same rule as the group: a device left pointing at a deleted credential
+        // cannot log in, and finding out at connect time is the worst moment.
+        const users = (await deps.router.list()).filter(device => device.credentialId === input.credentialId)
+        if (users.length > 0) {
+          return { ...await state(), error: deps.t('error.credentialInUse', { names: users.map(d => d.name).join('、') }) }
+        }
+        await deps.router.credentials.remove(input.credentialId)
+        return { ...await state(), ...await vaultFace(deps) }
       }
       default:
         return { ...await state(), error: deps.t('error.unknownAction') }
