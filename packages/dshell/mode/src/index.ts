@@ -46,6 +46,7 @@ import { Config } from './settings-schema.js'
 import { applyDataRoot, dataRootReady, harnessHome, hostHome } from './data-root.js'
 import { createTerminalModeRoute, TerminalModeRegistry } from './terminal-mode.js'
 import { DSHELL_TERMINAL_MODE_SERVICE } from './terminal-mode-protocol.js'
+import { createDeviceMetricsRoute, type SshRoutingSeat } from './device-metrics.js'
 
 export const name = '@nexus-aethra/dshell-mode/host'
 
@@ -382,6 +383,16 @@ export function apply(ctx: Context, config: Partial<DshellSettings> = {}): void 
         },
       })),
       'dshell-mode: terminal-mode route',
+    )
+    // The device readout. The router is read structurally through a getter, so
+    // a composition without dshell-ssh has no seat at all and every session
+    // reads as this machine — which is exactly right, and is why the route can
+    // ship without taking a dependency on that bundle.
+    routeCtx.effect(
+      () => routeCtx.connection.fetch.register(createDeviceMetricsRoute(routeCtx, {
+        routing: () => routeCtx.get('dshellSshRouting') as unknown as SshRoutingSeat | undefined,
+      })),
+      'dshell-mode: device-metrics route',
     )
   })
   ctx.inject(['dshellTerminalBridge'], (bridgeCtx) => {

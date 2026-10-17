@@ -36,6 +36,7 @@ import type { DshellModeKey } from './locales.js'
 import { useDshellTheme, type Theme } from './theme.js'
 import type { TerminalModeClient } from './terminal-mode.js'
 import { sessionStatusSeat } from './session-status.js'
+import { cpuPercent, deviceMetricsSeat, memoryAmount } from './device-metrics.js'
 
 /** One item of the session's task list, as the `todo/write` event carries it. */
 export interface TodoItem {
@@ -278,6 +279,95 @@ function line(text: string, theme: Theme, extra: CSSProperties = {}): ReactEleme
 }
 
 /**
+ * The load ramp: cool to hot, in one continuous scale.
+ *
+ * Deliberately NOT in the palette table. Every ink there carries a meaning the
+ * reader must act on (a failure, a warning, an accent) and each one is checked
+ * for text contrast against both surfaces. This is a scale rather than an ink —
+ * it answers "how loaded", not "is this wrong" — and it has to be the SAME four
+ * hues in every palette, because the reader who learned that orange means hot
+ * on one palette must not have to learn it again on the next. The light and
+ * dark halves are the same hues stepped for their own ground, exactly as the
+ * ANSI vocabulary is.
+ */
+const LOAD_RAMP: Record<'light' | 'dark', readonly [string, string, string, string]> = {
+  dark: ['#4ade80', '#facc15', '#fb923c', '#f87171'],
+  light: ['#16a34a', '#ca8a04', '#ea580c', '#dc2626'],
+}
+
+/**
+ * The ramp as one gradient, plus the stops that place each hue.
+ *
+ * The stops are where a load stops being comfortable and starts being worth
+ * watching: under half is room to work, two thirds is where a machine starts
+ * making you wait, and the top eighth is the region where the bar is red from
+ * its edge to its end.
+ */
+function loadGradient(mode: 'light' | 'dark'): string {
+  const [good, caution, hot, danger] = LOAD_RAMP[mode]
+  return `linear-gradient(90deg, ${good} 0%, ${caution} 50%, ${hot} 75%, ${danger} 100%)`
+}
+
+/**
+ * One figure with its bar under it, full width.
+ *
+ * The bar carries the whole ramp and is clipped to the share that is used, so
+ * the colour at the bar's edge IS the colour for that load — a rising meter
+ * walks the reader up the scale instead of jumping between bands. The unused
+ * remainder shows the same gradient at a tenth of its strength, so the track
+ * still reads as "how far could this go" rather than as an empty groove.
+ */
+function Meter(props: {
+  label: string
+  value: string
+  /** The share the bar is filled to; undefined where there is no counter. */
+  fraction: number | undefined
+  theme: Theme
+}): ReactElement {
+  const { label, value, fraction, theme } = props
+  const ramp = loadGradient(theme.mode)
+  return createElement('div', {
+    'data-dshell-meter': label,
+    style: { display: 'grid', gap: 4, minWidth: 0 },
+  },
+    createElement('div', {
+      style: {
+        display: 'flex', gap: 8, alignItems: 'baseline', justifyContent: 'space-between',
+        fontSize: 11.5, lineHeight: '15px', whiteSpace: 'nowrap',
+      },
+    },
+      createElement('span', { style: { color: theme.muted } }, label),
+      createElement('span', {
+        style: {
+          color: fraction === undefined ? theme.muted : theme.text,
+          fontSize: 13, fontVariantNumeric: 'tabular-nums',
+        },
+      }, value),
+    ),
+    createElement('div', {
+      style: {
+        position: 'relative', height: 5, borderRadius: 3, overflow: 'hidden',
+        background: theme.border,
+      },
+    },
+      createElement('div', {
+        style: { position: 'absolute', inset: 0, background: ramp, opacity: 0.16 },
+      }),
+      fraction === undefined ? null : createElement('div', {
+        style: {
+          position: 'absolute', inset: 0, background: ramp,
+          // Clipping rather than sizing: a width would squeeze the gradient
+          // into the filled part and paint every non-zero load with the ramp's
+          // hot end.
+          clipPath: `inset(0 ${String(Math.round((1 - Math.min(1, Math.max(0, fraction))) * 100))}% 0 0)`,
+          transition: 'clip-path .4s ease',
+        },
+      }),
+    ),
+  )
+}
+
+/**
  * Containment for the card.
  *
  * The card projects state owned by four different services, and a fault in any
@@ -331,7 +421,7 @@ export type StatusChipProps = PropsRuntime<'conversation.session.header.actions'
 
 /** The session status chip: one line in the header, integrated status rows behind it. */
 export function StatusChip(props: StatusChipProps): ReactElement | null {
-  const { sessionId, pty, sessions, pipe, openConversation, t } = props
+  const { sessionId, pty, sessions, pipe, openConversation, modes, t } = props
   const theme = useDshellTheme()
   // Subscribed before anything else: hooks cannot be conditional, and the state
   // they carry is what decides what the chip says at all.
@@ -347,6 +437,22 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
   // projection instead of folding the transcript a second time.
   const statusMap = useSyncExternalStore(sessionStatusSeat.subscribe, sessionStatusSeat.getSnapshot)
   const status = sessionId === undefined ? undefined : statusMap.get(String(sessionId))
+  // The machine this session runs on. Watched, not fetched per chip: the seat
+  // is shared across the frame, so a reader with five sessions open pays five
+  // polls rather than five polls per render — and on a device each of those is
+  // an ssh round trip, which is why the seat slows its cadence there.
+  const modeState = useSyncExternalStore(modes.subscribe, modes.getSnapshot)
+  const metricsMap = useSyncExternalStore(deviceMetricsSeat.subscribe, deviceMetricsSeat.getSnapshot)
+  const metrics = sessionId === undefined ? undefined : metricsMap.get(sessionId)
+  // The readout waits for the session's first input. Until then the device is
+  // still the reader's to choose — the creation screen offers 本机 or a device
+  // right here — so any machine named now would be the one they are about to
+  // decline, and polling for it costs a round trip per tick to learn nothing.
+  const started = sessionId !== undefined && modeState.started.includes(sessionId)
+  useEffect(() => {
+    if (sessionId === undefined || !started) return
+    return deviceMetricsSeat.watch(sessionId)
+  }, [sessionId, started])
   const todos = status?.todos ?? EMPTY_TODOS
   const activity = status?.activity
   const [open, setOpen] = useState(false)
@@ -367,7 +473,7 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
     const el = root.current
     if (el === null) return
     const rect = el.getBoundingClientRect()
-    const width = Math.min(420, Math.max(240, innerWidth - 24))
+    const width = Math.min(520, Math.max(280, innerWidth - 24))
     const left = Math.max(12, Math.min(rect.left, innerWidth - 12 - width))
     const below = innerHeight - rect.bottom - 17
     const above = rect.top - 17
@@ -514,6 +620,14 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
                         : linksHere.length > 0
                           ? `${t('status.idle')} · ${t('status.chip.links', { count: linksHere.length })}`
                           : t('status.idle')
+  // The two figures the header carries. CPU is a share of all cores and memory
+  // a share of physical memory — same denominator idea, so the two bars can be
+  // read against each other rather than each against its own unit.
+  const reading = started ? metrics?.metrics : undefined
+  const cpuFraction = reading?.cpu.used
+  const memoryFraction = reading === undefined || reading.memory.total <= 0
+    ? undefined
+    : Math.min(1, reading.memory.used / reading.memory.total)
   const idle = !running && activeTodo === undefined && !live && runningChildren === 0
     && pendingTodo === undefined && !dead && !linkBroken && waiting.length === 0 && owed.length === 0
     && liveJobs.length === 0 && liveTransfers.length === 0
@@ -760,7 +874,7 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
         display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: '3px 6px 3px 2px',
         border: 0, borderRadius: 'var(--dsw-radius-sm)', background: 'transparent',
         color: open ? 'var(--dsw-alias-label-secondary)' : 'var(--dsw-alias-label-tertiary)',
-        fontSize: 12, lineHeight: '18px', cursor: 'pointer', fontFamily: SPAN_FONT, maxWidth: 340,
+        fontSize: 12, lineHeight: '18px', cursor: 'pointer', fontFamily: SPAN_FONT, maxWidth: 380,
       },
     },
       createElement('span', {
@@ -772,7 +886,12 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
         },
       }, '●'),
       createElement('span', {
-        style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+        style: {
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          // dsh's own header buttons are centred, and a centred status line no
+          // longer lines up with the panel it opens.
+          textAlign: 'left', minWidth: 0, flex: '1 1 auto',
+        },
       }, headline),
       createElement('span', {
         style: {
@@ -796,6 +915,51 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
           fontFamily: SPAN_FONT, fontSize: 12.5, color: theme.muted,
         },
       },
+        ...(reading === undefined ? [] : [createElement('div', {
+          'data-dshell-meters': '',
+          style: { display: 'grid', gap: 7, padding: '7px 9px 10px' },
+        },
+          // The machine is named only when it is NOT this one: on the default
+          // path the name is noise between the two figures, and the pair reads
+          // as one scale. On a device it is the fact that changes what the
+          // numbers mean, so it takes the room.
+          reading.device.kind === 'device'
+            ? createElement('div', {
+              style: {
+                fontSize: 11, lineHeight: '15px', color: theme.muted,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              },
+            }, t('status.resources.device', {
+              name: reading.device.name ?? reading.device.endpoint ?? '',
+            }))
+            : null,
+          createElement(Meter, {
+            theme,
+            label: t('status.resources.cpu'),
+            value: cpuPercent(reading.cpu),
+            fraction: cpuFraction,
+          }),
+          createElement(Meter, {
+            theme,
+            label: t('status.resources.memory'),
+            value: cpuPercent({
+              used: memoryFraction, cores: reading.cpu.cores, load1: reading.cpu.load1,
+            }),
+            fraction: memoryFraction,
+          }),
+          line(
+            `${t('status.resources.cores', { cores: String(reading.cpu.cores) })}`
+            + (reading.cpu.load1 === undefined || reading.cpu.load1 === 0
+              ? ''
+              : `  ·  ${t('status.resources.load', { load: reading.cpu.load1.toFixed(2) })}`)
+            + `  ·  ${t('status.resources.used', {
+              used: memoryAmount(reading.memory.used),
+              total: memoryAmount(reading.memory.total),
+            })}`,
+            theme,
+          ),
+          createElement('div', { style: { height: 1, background: theme.border } }),
+        )]),
         ...rows.map(row => createElement(Row, {
           key: row.id,
           row,

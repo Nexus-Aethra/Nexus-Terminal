@@ -425,6 +425,9 @@ importers:
       '@deepseek-ai/dsh-settings':
         specifier: link:../../../dsh/packages/settings/settings
         version: link:../../../dsh/packages/settings/settings
+      '@deepseek-ai/dsh-shell':
+        specifier: link:../../../dsh/packages/shell/shell
+        version: link:../../../dsh/packages/shell/shell
       '@deepseek-ai/dsh-token-meter':
         specifier: link:../../../dsh/packages/llm/token-meter
         version: link:../../../dsh/packages/llm/token-meter
