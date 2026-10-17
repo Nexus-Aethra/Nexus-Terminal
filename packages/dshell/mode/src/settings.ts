@@ -72,6 +72,33 @@ export const SHELL_ORACLE_FIELD = 'completionShellOracle'
  */
 export const DATA_DIR_FIELD = 'dir'
 
+/**
+ * Field carrying how often the session header re-reads its machine's load.
+ *
+ * The one setting here that buys something with a NUMBER rather than a yes: the
+ * readout is a poll, and what it costs depends entirely on where the session
+ * runs. On this machine a tick is a file read; on a device it is an `ssh` round
+ * trip that spawns a shell, so the same interval is free in one world and
+ * expensive in the other. Rather than pick for the reader, the interval is theirs
+ * — and the card says what the number buys on a device.
+ */
+export const DEVICE_POLL_FIELD = 'devicePollMs'
+
+/**
+ * The intervals on offer, in milliseconds, cheapest first.
+ *
+ * A fixed ladder rather than a number box: the useful answers are "about as
+ * often as I can read it" and "often enough that I stop noticing", and a box
+ * invites a value no one means — a millisecond, or an hour.
+ */
+export const DEVICE_POLL_CHOICES = [2000, 5000, 10_000, 30_000, 60_000] as const
+
+/** How often the readout re-reads a session's machine until a document says otherwise. */
+export const DEVICE_POLL_DEFAULT = 5000
+
+/** One offered interval. */
+export type DevicePollMs = typeof DEVICE_POLL_CHOICES[number]
+
 /** Value meaning "no override": resolve under the harness home, as before the field existed. */
 export const DATA_DIR_DEFAULT = ''
 
@@ -120,6 +147,8 @@ export interface DshellSettings {
   completionShellOracle: boolean
   /** Directory dshell's own files live under; empty follows the harness home. */
   dir: string
+  /** How often the session header re-reads its machine's load. */
+  devicePollMs: DevicePollMs
 }
 
 /** The data-root section of the entry config. */

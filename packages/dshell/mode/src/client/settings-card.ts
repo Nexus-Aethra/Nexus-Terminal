@@ -32,10 +32,11 @@
 import { createElement, useState, type CSSProperties, type ReactElement } from 'react'
 import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { DshellShellHelper } from '../settings.js'
+import { DEVICE_POLL_CHOICES, type DevicePollMs, type DshellShellHelper } from '../settings.js'
 import type { DshellModeKey } from './locales.js'
 import { THEMES, getTheme, setTheme, useDshellTheme } from './theme.js'
 import { setShellHelper, useShellHelpers } from './shell-settings.js'
+import { setDevicePollMs, useDevicePollMs } from './device-poll.js'
 
 const cardStyle: CSSProperties = {
   listStyle: 'none',
@@ -138,6 +139,27 @@ const helperDetailStyle: CSSProperties = {
 }
 
 /**
+ * The interval control, in ONE box.
+ *
+ * The copy and the buttons used to be two sibling rows of the same bordered
+ * shape, which drew two stacked lines with the body's gap between them and read
+ * as a separator rather than as one control. Stacking them inside a single
+ * border makes the ladder part of the setting it chooses.
+ */
+const pollRowStyle: CSSProperties = {
+  ...helperRowStyle,
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  gap: 10,
+}
+
+const pollLadderStyle: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+}
+
+/**
  * The switches, in the order the card shows them.
  *
  * The labels are dictionary keys resolved against the bound translator at
@@ -166,6 +188,31 @@ const HELPER_ROWS: readonly { field: DshellShellHelper; labelKey: DshellModeKey;
     detailKey: 'settings.helper.completionShellOracle.detail',
   },
 ]
+
+/** One interval button on the poll ladder. */
+function PollChoice(props: { ms: DevicePollMs; current: DevicePollMs; label: string; onPick: (ms: DevicePollMs) => void }): ReactElement {
+  const { ms, current, label, onPick } = props
+  return createElement('button', {
+    type: 'button',
+    'aria-pressed': current === ms,
+    'data-dshell-poll': String(ms),
+    onClick: () => { onPick(ms) },
+    style: {
+      flex: '1 1 72px',
+      padding: '7px 4px',
+      borderRadius: 10,
+      cursor: 'pointer',
+      font: 'inherit',
+      fontSize: 12,
+      fontVariantNumeric: 'tabular-nums',
+      color: 'var(--dsw-alias-label-secondary)',
+      border: current === ms
+        ? '1px solid var(--dsw-alias-brand-primary)'
+        : '0.5px solid var(--dsw-alias-border-l4)',
+      background: current === ms ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
+    },
+  }, label)
+}
 
 /**
  * Disclosure chevron, drawn rather than imported: it must read as the same
@@ -208,6 +255,7 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
   const theme = useDshellTheme()
   const current = theme.id
   const helpers = useShellHelpers()
+  const pollMs = useDevicePollMs()
   // The header says what the card is set TO, so the two groups are readable
   // without opening it: the palette by name, and the assists by how many are off.
   const off = HELPER_ROWS.filter(row => !helpers[row.field])
@@ -300,6 +348,23 @@ export function DshellSettingsCard({ t }: PropsLocale<'dshellMode'>): ReactEleme
         )),
         createElement('div', { style: noteStyle },
           t('settings.note.helpers')),
+        createElement('div', { style: groupStyle }, t('settings.group.poll')),
+        createElement('div', { style: pollRowStyle, 'data-dshell-setting': 'devicePoll' },
+          createElement('div', { style: helperTextStyle },
+            createElement('div', { style: helperLabelStyle }, t('settings.poll.label')),
+            createElement('div', { style: helperDetailStyle }, t('settings.poll.detail')),
+          ),
+          createElement('div', { style: pollLadderStyle },
+            ...DEVICE_POLL_CHOICES.map(ms => createElement(PollChoice, {
+              key: ms,
+              ms,
+              current: pollMs,
+              label: t(`settings.poll.choice.${String(ms)}` as DshellModeKey),
+              onPick: (next) => { setDevicePollMs(next) },
+            })),
+          ),
+        ),
+        createElement('div', { style: noteStyle }, t('settings.note.poll')),
       )
       : null,
   )

@@ -30,7 +30,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
-  DATA_DIR_FIELD, DSHELL_ENTRY_ID, THEME_FIELD, readDataSettings, type DshellSettings,
+  DATA_DIR_FIELD, DEVICE_POLL_FIELD, DSHELL_ENTRY_ID, THEME_FIELD, readDataSettings, type DshellSettings,
 } from '../settings.js'
 import { type SshSeat } from './block-view.js'
 import { createElement, type ReactElement } from 'react'
@@ -46,6 +46,7 @@ import { DshellModeConfigPage } from './config-page.js'
 import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import { adoptTheme, connectThemeSettings } from './theme.js'
 import { adoptShellHelperSettings, connectShellHelperSettings } from './shell-settings.js'
+import { adoptDevicePollSettings, connectDevicePollSettings } from './device-poll.js'
 import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
 import { TerminalModeClient } from './terminal-mode.js'
 import { useTerminalModeOn, type DeviceChoiceSeat } from './terminal-mode-switch.js'
@@ -537,11 +538,16 @@ export function apply(ctx: Context): void {
     if (!dshellSettings.getSnapshot().writable) return
     void dshellSettings.set(field, next).catch(() => { /* the form republishes on failure */ })
   })
+  connectDevicePollSettings((next) => {
+    if (!dshellSettings.getSnapshot().writable) return
+    void dshellSettings.set(DEVICE_POLL_FIELD, next).catch(() => { /* the form republishes on failure */ })
+  })
   const syncSettings = (): void => {
     const snapshot = dshellSettings.getSnapshot()
     if (snapshot.status !== 'ready') return
     adoptTheme(snapshot.value?.theme)
     adoptShellHelperSettings(snapshot.value)
+    adoptDevicePollSettings(snapshot.value)
     adoptDataDir(readDataSettings(snapshot.value))
   }
   ctx.effect(() => dshellSettings.subscribe(syncSettings), 'dshell-mode: dshell settings mirror')
