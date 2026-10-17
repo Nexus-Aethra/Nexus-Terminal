@@ -15,7 +15,9 @@ import {
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellSshKey } from './locales.js'
 import type { DeviceAuth, DeviceHelperStatus, DeviceView, SshKeyFile, TrustedHostKey } from '../protocol.js'
+import type { SshSnapshot } from './service.js'
 import type { SshClientService } from './service.js'
+import { VaultCard } from './vault-card.js'
 // Type-only: pulls this namespace's key merge (`PropsLocale<'dshellSsh'>`).
 import type {} from './locales.js'
 
@@ -114,6 +116,21 @@ const keyItemStyle: CSSProperties = {
   maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
 }
 
+/**
+ * The group a device's chosen credential lives in, which is what tells the
+ * reader whether that device's secret is encrypted at all.
+ */
+function groupName(
+  snapshot: SshSnapshot,
+  credentialId: string,
+  t: TranslateNS<'dshellSsh'>,
+): string {
+  const credential = snapshot.credentials.find(candidate => candidate.id === credentialId)
+  const group = snapshot.groups.find(candidate => candidate.id === credential?.group)
+  if (group === undefined) return t('vault.plain')
+  return group.sealed ? group.name : `${group.name} · ${t('vault.plain')}`
+}
+
 /** The trust row under a device: label, fingerprint, and the two actions. */
 const trustStyle: CSSProperties = {
   flexBasis: '100%', minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
@@ -161,6 +178,7 @@ const BLANK = {
   auth: 'key' as DeviceAuth,
   secret: '',
   passphrase: '',
+  credentialId: '' as string,
 }
 
 /** Sliding segmented control: two labels, one highlight that follows the pick. */
@@ -235,7 +253,15 @@ export type DshellSshConfigProps = DshellSshCardProps & {
  */
 export function DshellSshConfigPage({ view, ...card }: DshellSshConfigProps): ReactElement {
   if (view === 'summary') return createElement('span', null, card.t('row.summary'))
-  return createElement(DshellSshCard, card)
+  // Two cards, stacked, each with its own chrome: the device registry and the
+  // credential library it draws from. They are one page because a device row
+  // that names a credential is unreadable without knowing what is in it.
+  return createElement('ul', {
+    style: { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 },
+  },
+    createElement(DshellSshCard, card),
+    createElement(VaultCard, card),
+  )
 }
 
 export function DshellSshCard(props: DshellSshCardProps): ReactElement {
@@ -258,6 +284,16 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const pickAuth = (next: DeviceAuth): void => {
     setForm(current => ({ ...current, auth: next, secret: '', passphrase: '' }))
   }
+  // Choosing a vault credential and typing a secret are mutually exclusive on
+  // purpose: a device holding both has two answers to one question, and only the
+  // credential gets rotated.
+  const pickCredential = (id: string): void => {
+    setForm(current => ({
+      ...current,
+      credentialId: id,
+      ...id === '' ? {} : { secret: '', passphrase: '' },
+    }))
+  }
   const submit = (): void => {
     void ssh.save({
       ...form.id === undefined ? {} : { id: form.id },
@@ -275,6 +311,9 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       // Same omitted/empty semantics as the key itself: an untouched box keeps
       // whatever is stored, an emptied one removes it.
       ...form.passphrase === '' ? {} : { passphrase: form.passphrase },
+      // Sent even when empty, because clearing the reference is the one way back
+      // to an inline secret, and omitting it would mean "leave it alone".
+      credentialId: form.credentialId,
     })
     setForm(BLANK)
   }
@@ -289,6 +328,7 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       auth: device.auth,
       secret: '',
       passphrase: '',
+      credentialId: device.credentialId ?? '',
     })
   }
 
@@ -387,7 +427,35 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
           createElement('div', { style: noteStyle }, t('form.remoteRootNote')),
           createElement('div', { style: labelStyle }, t('form.authLabel')),
           createElement(AuthSwitch, { value: form.auth, disabled: false, t, onChange: pickAuth }),
-          form.auth === 'password'
+          // The vault is offered first whenever it has anything in it. A device
+          // pointed at a credential shows which one and how to un-point it,
+          // rather than a paste box that would silently be ignored.
+          form.credentialId !== ''
+            ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' } },
+              createElement('div', { style: { fontSize: 12 } },
+                t('form.usingCredential', {
+                  name: snapshot.credentials.find(c => c.id === form.credentialId)?.name ?? form.credentialId,
+                  group: groupName(snapshot, form.credentialId, t),
+                })),
+              createElement('button', {
+                type: 'button', style: actionStyle, onClick: () => { pickCredential('') },
+              }, t('form.useOwnSecret')),
+            )
+            : snapshot.credentials.length === 0
+              ? null
+              : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, gridColumn: '1 / -1' } },
+                createElement('span', { style: { fontSize: 12, opacity: 0.65, flexBasis: '100%' } },
+                  t('form.pickCredential')),
+                ...snapshot.credentials.map(credential => createElement('button', {
+                  key: credential.id,
+                  type: 'button',
+                  style: keyItemStyle,
+                  onClick: () => { pickCredential(credential.id) },
+                }, credential.name)),
+              ),
+          form.credentialId !== ''
+            ? null
+            : form.auth === 'password'
             ? createElement('input', {
               style: fieldStyle,
               type: 'password',

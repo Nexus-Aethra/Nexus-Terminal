@@ -9,7 +9,7 @@
 
 import { Service, type Context } from '@deepseek-ai/cordis'
 import {
-  DSHELL_SSH_PATH, type DeviceBinding, type DeviceInput, type DeviceHelperStatus, type DeviceView,
+  DSHELL_SSH_PATH, type CredentialInput, type CredentialView, type DeviceBinding, type DeviceHelperStatus, type DeviceInput, type DeviceView, type VaultGroupView,
   type SshKeyFile, type TrustedHostKey, type SshRequest, type SshResponse,
 } from '../protocol.js'
 
@@ -28,6 +28,10 @@ export interface SshSnapshot {
   readonly testResult: string | undefined
   /** Helper deployment status from the last install, when one was requested. */
   readonly helper: DeviceHelperStatus | undefined
+  /** The vault's groups, with their lock state. */
+  readonly groups: readonly VaultGroupView[]
+  /** The stored credentials, in creation order. */
+  readonly credentials: readonly CredentialView[]
   /** The last refusal or transport failure, shown until the next call. */
   readonly error: string | undefined
   /** Whether the host has answered at least once. */
@@ -35,7 +39,8 @@ export interface SshSnapshot {
 }
 
 const EMPTY: SshSnapshot = {
-  devices: [], bindings: [], testResult: undefined, helper: undefined, error: undefined, loaded: false,
+  devices: [], bindings: [], testResult: undefined, helper: undefined,
+  groups: [], credentials: [], error: undefined, loaded: false,
 }
 
 /** Device registry mirror plus its mutations. */
@@ -203,6 +208,69 @@ export class SshClientService extends Service {
   }
 
   /**
+   * Create a group.
+   *
+   * @param name - display name.
+   * @param token - the group's token, or null for a PLAIN, unencrypted group.
+   */
+  async createGroup(name: string, token: string | null): Promise<void> {
+    await this.send({ action: 'vaultCreateGroup', name, token }, { strict: true })
+  }
+
+  /** Rename a group. Its secrets' shape does not change. */
+  async renameGroup(groupId: string, name: string): Promise<void> {
+    await this.send({ action: 'vaultRenameGroup', groupId, name }, { strict: true })
+  }
+
+  /** Remove a group. Refused while it still holds credentials. */
+  async deleteGroup(groupId: string): Promise<void> {
+    await this.send({ action: 'vaultDeleteGroup', groupId }, { strict: true })
+  }
+
+  /**
+   * Unlock a group.
+   *
+   * Throws on a wrong token, which is the whole reason for using an
+   * authenticated cipher: a guess that half-worked would look like a success and
+   * then fail as a refused password on a remote host.
+   */
+  async unlock(groupId: string, token: string): Promise<void> {
+    await this.send({ action: 'vaultUnlock', groupId, token }, { strict: true })
+  }
+
+  /** Lock one group, or every group when `groupId` is absent. */
+  async lock(groupId?: string): Promise<void> {
+    await this.send(groupId === undefined
+      ? { action: 'vaultLock' }
+      : { action: 'vaultLock', groupId })
+  }
+
+  /**
+   * Move a group to token-protected, or off it, re-sealing its credentials.
+   *
+   * Both directions rewrap in the same request. A policy that applied only to
+   * future writes would leave the group half-encrypted with no way to see which
+   * rows were the old ones.
+   */
+  async setToken(groupId: string, token: string): Promise<void> {
+    await this.send({ action: 'vaultSetToken', groupId, token }, { strict: true })
+  }
+
+  async clearToken(groupId: string): Promise<void> {
+    await this.send({ action: 'vaultClearToken', groupId }, { strict: true })
+  }
+
+  /** Create or update one credential. */
+  async saveCredential(credential: CredentialInput): Promise<void> {
+    await this.send({ action: 'credentialSave', credential }, { strict: true })
+  }
+
+  /** Remove one credential. Refused while a device still uses it. */
+  async deleteCredential(credentialId: string): Promise<void> {
+    await this.send({ action: 'credentialDelete', credentialId }, { strict: true })
+  }
+
+  /**
    * What one device's host presents right now.
    *
    * Unauthenticated: this is for showing beside the trusted fingerprint so the
@@ -286,6 +354,11 @@ export class SshClientService extends Service {
       bindings: body.bindings,
       testResult: body.testResult,
       helper: body.helper,
+      // Carried forward when the reply says nothing about the vault, so a device
+      // call that knows nothing about groups never blanks the list out from under
+      // the panel that is showing it.
+      groups: body.groups ?? this.snapshot.groups,
+      credentials: body.credentials ?? this.snapshot.credentials,
       error: body.error,
       loaded: true,
     })
