@@ -82,7 +82,11 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
       : await request.json() as SshRequest
     switch (input.action) {
       case 'list':
-        return await state()
+        // The vault face rides along: the client's snapshot starts empty and a
+        // reply without it would leave the panel — and the device form's
+        // credential picker — reading as an empty vault until some mutation
+        // happened to carry one.
+        return { ...await state(), ...await vaultFace(deps) }
       case 'save':
         await deps.router.saveDevice(input.device)
         return await state()

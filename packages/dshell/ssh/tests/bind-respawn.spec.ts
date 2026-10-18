@@ -89,3 +89,25 @@ describe('the bind route respawns a session shell whose plan changed', () => {
     await expect(bind(deps, { action: 'bind', sessionId: 's-1', deviceId: 'dev-a' })).resolves.toBeUndefined()
   })
 })
+
+describe('the list route answers with the vault face', () => {
+  it('carrying the groups and credentials a fresh page load needs', async () => {
+    // The client's snapshot starts empty and a reply without the face would
+    // leave the panel reading as an empty vault until a mutation carried one.
+    const router = {
+      ...fakeRouter(undefined),
+      vault: { list: async () => [{ id: 'g-1', name: '默认', sealed: true, locked: true }] },
+      credentials: {
+        list: async () => [{ id: 'c-1', group: 'g-1', name: 'deploy', kind: 'key', hasPassphrase: false }],
+      },
+    }
+    const deps = {
+      router, ctx: fakeContext(async () => {}), t: translate,
+    } as unknown as SshRouteDeps
+    const route = createSshRoute(deps)
+    const response = await route.fetch(new Request('http://host/api/dshell/ssh'))
+    const body = await response.json() as { groups?: unknown[]; credentials?: unknown[] }
+    expect(body.groups).toHaveLength(1)
+    expect(body.credentials).toHaveLength(1)
+  })
+})
