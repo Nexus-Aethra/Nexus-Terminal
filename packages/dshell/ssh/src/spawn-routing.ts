@@ -173,7 +173,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     // what the old rg-only special case existed to avoid; generalizing it here
     // keeps the no-helper tier behaving the way it did before this milestone.
     const legacyArgv = program === undefined ? spec.argv : [program, ...spec.argv.slice(1)]
-    const line = `cd ${quote(directory)} && exec ${legacyArgv.map(quote).join(' ')}`
+    const line = `cd ${shellDir(directory)} && exec ${legacyArgv.map(quote).join(' ')}`
     return original.call(this, {
       ...spec,
       argv: sshArgv(assignment.device, line),
@@ -187,6 +187,26 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     router.helperConnection = undefined
     void connections.disposeAll()
   }
+}
+
+/**
+ * Render a device directory as the remote shell should read it.
+ *
+ * A `~`-spelled root is deliberately kept as a spelling (see
+ * `absoluteRemoteRoot`): the far shell expands it, wherever the command runs.
+ * Quoting the whole word defeats exactly that — `cd '~'` asks for a directory
+ * literally named `~`, which no machine has, and every command on a
+ * `~`-rooted device without a helper died on it. So the tilde stays OUTSIDE
+ * the quotes and only the rest is quoted, which the shell still expands:
+ * `cd ~/'my app'` is the home directory's `my app`.
+ *
+ * @param directory - the device directory, as `remoteDirectory` produced it.
+ * @returns the word to put after `cd` in the assembled line.
+ */
+export function shellDir(directory: string): string {
+  if (directory === '~') return '~'
+  if (!directory.startsWith('~/')) return quote(directory)
+  return `~/${quote(directory.slice(2))}`
 }
 
 /**
