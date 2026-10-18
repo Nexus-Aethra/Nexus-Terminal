@@ -192,13 +192,16 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         return { ...await state(), ...await vaultFace(deps) }
       }
       case 'vaultUnlock':
-        await deps.router.vault.unlock(input.groupId, input.token)
+        // The refresh the lock skipped now has a key to build with: rebuild it
+        // here, or a session bound to a device in this group would keep being
+        // refused with the reason recorded while it was locked.
+        await deps.router.unlockGroup(input.groupId, input.token)
         return { ...await state(), ...await vaultFace(deps) }
       case 'vaultLock':
         // Locking also drops the plaintext this process handed out to `ssh`, so
-        // the disk is clean again rather than merely unreadable to us.
-        await deps.router.vault.lock(input.groupId)
-        deps.router.credentials.forgetMaterialized()
+        // the disk is clean again rather than merely unreadable to us — and the
+        // connections lose their secrets with it, which the router rebuilds.
+        await deps.router.lockGroups(input.groupId)
         return { ...await state(), ...await vaultFace(deps) }
       case 'vaultSetToken':
         await deps.router.vault.setToken(input.groupId, input.token)

@@ -162,7 +162,11 @@ export class ReadingCache {
     const cached = this.peek(key)
     if (cached !== undefined && this.fresh(key)) return cached
     if (cached !== undefined) {
-      void this.refresh(key, produce)
+      // Nothing is waiting on this one, so nothing may see it fail — and the host
+      // treats an unhandled rejection as fatal. A world that stopped answering
+      // between two Tabs (a device whose credential group is locked, say) costs
+      // the reader the refresh, never the process.
+      void this.refresh(key, produce).catch(() => undefined)
       return cached
     }
     return await this.refresh(key, produce)

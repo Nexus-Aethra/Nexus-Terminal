@@ -22,7 +22,7 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
 import { CredentialStore } from './credentials.js'
-import { SecretVault } from './vault.js'
+import { SecretVault, VaultLockedError } from './vault.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
 import { localHelperArtifact } from './connection.js'
@@ -224,6 +224,16 @@ export class SshRouter {
   readonly credentials: CredentialStore
   private readonly bindings: BindingStore
   private connections = new Map<string, DeviceConnection>()
+  /**
+   * Why a device has no connection right now, by device id.
+   *
+   * Written by {@link refreshDevices} when it skips one — a credential whose
+   * group is locked, usually — and read by the seams that refuse a session
+   * bound to it. Remembered rather than recomputed because those seams are
+   * synchronous, and a refusal that names the group is the whole difference
+   * between "this machine is unreachable" and "unlock this group".
+   */
+  private unservable = new Map<string, { reason: string; groupId: string | undefined }>()
   private ready: Promise<void>
   /**
    * This package's host copy, bound to the language service once it is
@@ -328,6 +338,27 @@ export class SshRouter {
   }
 
   /**
+   * The connection for one device, refreshing once before refusing.
+   *
+   * Every seam that needs a live connection comes through here so they all
+   * refuse the same way: a device whose credential sits in a locked group is
+   * refused with a {@link VaultLockedError} carrying that group, because it is
+   * the one refusal with a way out — the route turns the group into a pointer at
+   * its unlock box. Anything else is refused with the reason the last refresh
+   * recorded.
+   */
+  private async connectionFor(deviceId: string): Promise<DeviceConnection> {
+    const cached = this.connections.get(deviceId)
+    if (cached !== undefined) return cached
+    await this.refreshDevices()
+    const fresh = this.connections.get(deviceId)
+    if (fresh !== undefined) return fresh
+    const stuck = this.unservable.get(deviceId)
+    if (stuck?.groupId !== undefined) throw new VaultLockedError(stuck.reason, stuck.groupId)
+    throw new Error(stuck?.reason ?? this.t('error.unknownDevice', { id: deviceId }))
+  }
+
+  /**
    * Assign a session to a device, or clear it with `null`.
    * @param sessionId - session to assign.
    * @param deviceId - device, or null to run locally again.
@@ -352,10 +383,7 @@ export class SshRouter {
   ): Promise<void> {
     let assigned = mount
     if (deviceId !== null) {
-      if (this.connections.get(deviceId) === undefined) {
-        await this.refreshDevices()
-        if (this.connections.get(deviceId) === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
-      }
+      await this.connectionFor(deviceId)
       if (ctx !== undefined) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
       const tree = assigned === null || assigned.trim().length === 0
         ? await this.mountPath(deviceId, remoteRoot)
@@ -413,9 +441,7 @@ export class SshRouter {
    * @param ctx - host context with the subprocess seam.
    */
   async installHelper(deviceId: string, ctx: Context): Promise<DeviceHelperStatus> {
-    await this.refreshDevices()
-    const device = this.connections.get(deviceId)
-    if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
+    const device = await this.connectionFor(deviceId)
     const artifact = localHelperArtifact()
     const probe = await this.probeDevice(ctx, device)
     let status: DeviceHelperStatus
@@ -540,7 +566,10 @@ export class SshRouter {
    * @returns the refusal text, in the reader's language.
    */
   unservableMessage(deviceId: string): string {
-    return this.t('route.noDevice', { id: deviceId })
+    // What the last refresh recorded, when it skipped this device: a locked
+    // group names itself, which is the refusal a reader can act on. Anything
+    // else — a device that no longer exists — falls back to the plain answer.
+    return this.unservable.get(deviceId)?.reason ?? this.t('route.noDevice', { id: deviceId })
   }
 
   /**
@@ -597,7 +626,11 @@ export class SshRouter {
     // above exists to prevent.
     await this.ensureReady()
     const device = this.connections.get(assignment.deviceId)
-    if (device === undefined) throw new Error(this.unservableMessage(assignment.deviceId))
+    if (device === undefined) {
+      const stuck = this.unservable.get(assignment.deviceId)
+      if (stuck?.groupId !== undefined) throw new VaultLockedError(stuck.reason, stuck.groupId)
+      throw new Error(this.unservableMessage(assignment.deviceId))
+    }
     const remoteRoot = assignment.remoteRoot ?? device.remoteRoot
     return { argv: interactiveShellArgv(device, remoteRoot, this.t), env: sshEnv(device) }
   }
@@ -610,12 +643,8 @@ export class SshRouter {
    *   creation already creates its working directory).
    */
   async mountPath(deviceId: string, remoteRoot: string | null): Promise<string> {
-    if (this.connections.get(deviceId) === undefined) {
-      await this.refreshDevices()
-      if (this.connections.get(deviceId) === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
-    }
-    const device = this.connections.get(deviceId)
-    const root = remoteRoot === null || remoteRoot.trim() === '' ? device?.remoteRoot ?? '~' : remoteRoot.trim()
+    const device = await this.connectionFor(deviceId)
+    const root = remoteRoot === null || remoteRoot.trim() === '' ? device.remoteRoot : remoteRoot.trim()
     return mountFor(deviceId, root)
   }
 
@@ -784,15 +813,66 @@ export class SshRouter {
     }
   }
 
-  /** Reload the device cache from disk. */
-  private async refreshDevices(): Promise<void> {
+  /**
+   * Lock one group, or every group, and forget what their keys opened.
+   *
+   * Three steps that are one operation: the vault drops the key, the credential
+   * store drops the plaintext it handed out (its files go with the vault's
+   * sweep), and the connection map is rebuilt so nothing points at a file that
+   * no longer exists. A caller that did only the first would leave a session
+   * bound to a device in this group holding an askpass path to a swept file —
+   * which fails as a refused password rather than as a locked group.
+   */
+  async lockGroups(groupId?: string): Promise<void> {
+    await this.vault.lock(groupId)
+    this.credentials.forgetMaterialized()
+    await this.refreshDevices()
+  }
+
+  /**
+   * Unlock one group and rebuild what its key can now open.
+   *
+   * The refresh is the point: a device in this group was skipped while it was
+   * locked, and a session bound to it would keep being refused with the reason
+   * recorded then — a refusal that outlived its own cause.
+   */
+  async unlockGroup(groupId: string, token: string): Promise<void> {
+    await this.vault.unlock(groupId, token)
+    await this.refreshDevices()
+  }
+
+  /**
+   * Rebuild the connection map from what is stored.
+   *
+   * Tolerant by design. A device whose credential sits in a locked group has no
+   * connection to build, and failing the whole refresh for it would let ONE
+   * locked group block every device edit in the panel — the reader who locked a
+   * group would find they can no longer add a machine — and, at start-up, take
+   * the whole router down with it. Such a device is skipped instead, and the
+   * reason is remembered: the seams that refuse a session bound to it are
+   * synchronous, so they cannot ask again.
+   */
+  async refreshDevices(): Promise<void> {
     const views = await this.devices.list()
-    const next = new Map<string, DeviceConnection>()
+    const connections = new Map<string, DeviceConnection>()
+    const unservable = new Map<string, { reason: string; groupId: string | undefined }>()
     for (const view of views) {
-      const connection = await this.devices.connection(view.id)
-      if (connection !== undefined) next.set(view.id, connection)
+      try {
+        const connection = await this.devices.connection(view.id)
+        if (connection === undefined) {
+          unservable.set(view.id, { reason: this.t('route.noDevice', { id: view.id }), groupId: undefined })
+          continue
+        }
+        connections.set(view.id, connection)
+      } catch (error) {
+        unservable.set(view.id, {
+          reason: error instanceof Error ? error.message : String(error),
+          groupId: error instanceof VaultLockedError ? error.groupId : undefined,
+        })
+      }
     }
-    this.connections = next
+    this.connections = connections
+    this.unservable = unservable
   }
 
   private async reload(): Promise<void> {

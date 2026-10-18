@@ -194,6 +194,16 @@ export function CreationPanel({ sessionId, sessions, device, presets, t }: Props
             }).catch(error => {
               setPhase(undefined)
               setFailure(message(error))
+              // A credential sealed behind a locked group is the one refusal
+              // with a way out, and this is one of the three moments a token is
+              // genuinely needed: the session is being created and the secret is
+              // not in memory. Take the reader to the unlock box rather than
+              // leaving them to work out where it lives.
+              const locked = device.snapshot().lockedGroup
+              if (locked === undefined) return
+              setFailure(device.revealUnlock(locked)
+                ? t('creation.lockedHint', { name: locked.name })
+                : t('creation.lockedWhere', { name: locked.name }))
             })
           })),
         ]

@@ -54,8 +54,12 @@ export interface SshSeat {
   bindingOf(sessionId: string): { deviceId: string } | undefined
   /** Registered devices, for naming the one a session runs on. */
   devices(): readonly { id: string; name: string }[]
-  /** Open the SSH settings card; false when the entry could not be found. */
-  revealSettings(): boolean
+  /**
+   * Open the SSH settings card for one session; false when the entry could not
+   * be found. A session whose device's credential sits in a locked group lands
+   * with that group's unlock box already open.
+   */
+  revealSettings(sessionId: string): boolean
   /** What this plugin currently trusts for one device, by fingerprint. */
   hostKeys(deviceId: string): Promise<readonly string[]>
   /**
@@ -505,7 +509,11 @@ export function BlockView(props: {
     failure: current ? pty.failure : undefined,
   })
   const retry = useCallback((): void => { props.pty.reconnect() }, [props.pty])
-  const openSettings = ssh === undefined ? undefined : (): boolean => ssh.revealSettings()
+  // The session goes with the request: a refusal about a locked group should
+  // land the reader in THAT group's unlock box, not merely beside the vault.
+  const openSettings = ssh === undefined || id === undefined
+    ? undefined
+    : (): boolean => ssh.revealSettings(id)
 
   // Both fingerprints for the changed-key screen, fetched only while it is up:
   // the scan opens a connection to the host under suspicion, so it is not worth

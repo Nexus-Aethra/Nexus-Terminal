@@ -75,7 +75,7 @@ const EMPTY_PIPE_STATE = { links: [], tickets: [], open: false } as const
  * every terminal is local. One shared value because a store's `getSnapshot`
  * must return the same object until something actually changed.
  */
-const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
+const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [], lockedGroup: undefined }
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
@@ -315,9 +315,13 @@ export function apply(ctx: Context): void {
         getSnapshot(): {
           devices: readonly { id: string; name: string }[]
           bindings: readonly { sessionId: string; deviceId: string }[]
+          /** The group a locked refusal was about, published for the surfaces. */
+          lockedGroup: { readonly id: string; readonly name: string } | undefined
         }
         bind(sessionId: string, deviceId: string | null): Promise<void>
-        revealSettings(): boolean
+        revealInSettings(): boolean
+        revealUnlockForSession(sessionId: string): boolean
+        requestUnlock(group: { readonly id: string; readonly name: string }): void
         bindingOf(sessionId: string): { deviceId: string } | undefined
         hostKeys(deviceId: string): Promise<readonly { fingerprint: string }[]>
         probeHostKey(deviceId: string): Promise<{ fingerprint: string } | undefined>
@@ -362,6 +366,7 @@ export function apply(ctx: Context): void {
   const deviceForward: DeviceChoiceSeat = {
     snapshot: () => deviceSeat?.snapshot() ?? NO_DEVICES,
     bind: async (sessionId, deviceId) => { await deviceSeat?.bind(sessionId, deviceId) },
+    revealUnlock: group => deviceSeat?.revealUnlock(group) ?? false,
     subscribe: (listener) => {
       deviceListeners.add(listener)
       return () => { deviceListeners.delete(listener) }
@@ -370,7 +375,9 @@ export function apply(ctx: Context): void {
   sshHost.inject(['dshellSsh'], (scope) => {
     const ssh = scope.dshellSsh
     let cachedRaw: unknown
-    let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
+    let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = {
+      devices: [], bindings: [], lockedGroup: undefined,
+    }
     deviceSeat = {
       snapshot: () => {
         const raw = ssh.getSnapshot()
@@ -379,6 +386,7 @@ export function apply(ctx: Context): void {
           cachedProjection = {
             devices: raw.devices.map(row => ({ id: row.id, name: row.name })),
             bindings: raw.bindings.map(row => ({ sessionId: row.sessionId, deviceId: row.deviceId })),
+            lockedGroup: raw.lockedGroup,
           }
         }
         return cachedProjection
@@ -386,6 +394,13 @@ export function apply(ctx: Context): void {
       // The refusal travels to the caller: the creation page reports it, and
       // the session row's own button only needs the republish.
       bind: (sessionId: string, deviceId: string | null) => ssh.bind(sessionId, deviceId),
+      // Same two steps as the session row: name the group, then open the panel
+      // it lives in. The panel is what mounts the unlock box, so it has to be
+      // open before the request means anything.
+      revealUnlock: group => {
+        ssh.requestUnlock(group)
+        return ssh.revealInSettings()
+      },
       subscribe: listener => ssh.subscribe(listener),
     }
     // Relay to whoever subscribed before the seat existed (see `deviceForward`).
@@ -393,7 +408,7 @@ export function apply(ctx: Context): void {
     sshSeat = {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
-      revealSettings: () => ssh.revealSettings(),
+      revealSettings: sessionId => ssh.revealUnlockForSession(sessionId),
       // Fingerprints only: the panel draws two strings, and reducing here means
       // the view never learns a host-key record exists.
       hostKeys: async deviceId => (await ssh.hostKeys(deviceId)).map(key => key.fingerprint),
@@ -870,8 +885,9 @@ export function apply(ctx: Context): void {
               : (attachment) => uiConversation.imageUrl(sessionId, attachment),
             openConversation,
             device: {
-              snapshot: () => deviceSeat?.snapshot() ?? { devices: [], bindings: [] },
+              snapshot: () => deviceSeat?.snapshot() ?? NO_DEVICES,
               bind: (id: string, deviceId: string | null) => deviceSeat?.bind(id, deviceId) ?? Promise.reject(new Error('dshell-ssh is not composed')),
+              revealUnlock: group => deviceSeat?.revealUnlock(group) ?? false,
               subscribe: (listener: () => void) => deviceSeat?.subscribe(listener) ?? (() => {}),
             },
             presets,

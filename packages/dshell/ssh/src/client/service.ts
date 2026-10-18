@@ -8,6 +8,7 @@
  */
 
 import { Service, type Context } from '@deepseek-ai/cordis'
+import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import {
   DSHELL_SSH_PATH, type CredentialInput, type CredentialView, type DeviceBinding, type DeviceHelperStatus, type DeviceInput, type DeviceView, type VaultGroupView,
   type SshKeyFile, type TrustedHostKey, type SshRequest, type SshResponse,
@@ -49,6 +50,41 @@ export interface SshSnapshot {
 const EMPTY: SshSnapshot = {
   devices: [], bindings: [], testResult: undefined, helper: undefined,
   groups: [], credentials: [], error: undefined, lockedGroup: undefined, loaded: false,
+}
+
+/** The stock shell's names for the plugins panel, in both shipped languages. */
+const PANEL_LABELS = ['插件', 'Plugins']
+
+/** This plugin's row inside the bundle's page, by the package name it shows. */
+const SSH_ROW_NAME = '@nexus-aethra/dshell-ssh'
+
+/** How long to keep looking for the plugins panel's next hop, and how often. */
+const REVEAL_ATTEMPTS = 40
+const REVEAL_STEP_MS = 50
+
+/**
+ * Click the innermost element whose text carries `needle`, waiting for it.
+ *
+ * The plugins panel offers no handles of its own — a row is a styled element
+ * whose click handler sits on it — so a row is found by its text and clicked
+ * directly; the click bubbles, which is what reaches the handler. The innermost
+ * match is the row rather than one of the lists that contains it, which would
+ * also contain every other row.
+ *
+ * Waiting matters: each hop of the path mounts on a frame after the click that
+ * asked for it, so looking once would find nothing and give up.
+ */
+function revealRow(needle: string, then: () => void, attempts = REVEAL_ATTEMPTS): void {
+  const candidates = [...document.querySelectorAll<HTMLElement>('button, [role="button"], li, div')]
+    .filter(element => (element.textContent ?? '').includes(needle))
+  if (candidates.length > 0) {
+    candidates.reduce((best, candidate) =>
+      candidate.querySelectorAll('*').length < best.querySelectorAll('*').length ? candidate : best).click()
+    then()
+    return
+  }
+  if (attempts <= 0) return
+  window.setTimeout(() => { revealRow(needle, then, attempts - 1) }, REVEAL_STEP_MS)
 }
 
 /** Device registry mirror plus its mutations. */
@@ -98,29 +134,49 @@ export class SshClientService extends Service {
   }
 
   /**
-   * Take the user to this plugin's card in the settings panel.
+   * Take the user to this plugin's card in the plugins panel.
    *
-   * There is no service for opening settings: the panel's open state and its
-   * selected section are component-local viewing state inside the stock shell
-   * (`ui-settings-general`'s `SettingsRoot`), so the only way in is the shell's
-   * own controls. This clicks them, then scrolls our card into view — the
-   * `data-dshell-card` hook below is what makes the landing point exact rather
-   * than "somewhere in the plugins tab".
+   * There is no service for opening that panel: its open state and its selected
+   * row are component-local viewing state inside the stock shell, so the only
+   * way in is the shell's own controls. Which controls depends on the dsh
+   * version — older builds open the panel as a dialog, and the ones in force
+   * here mount it as a main-area view behind the sidebar's 插件 nav row, with
+   * the config page one level down (bundle row, then this plugin's row). Both
+   * paths end at the same place: this plugin's card, scrolled into view. The
+   * `data-dshell-card` hook is what makes the landing point exact rather than
+   * "somewhere in the plugins tab".
    *
-   * Best-effort by nature: it depends on two stock control labels. A false
-   * return tells the caller to describe the path in words instead.
+   * Best-effort by nature: it depends on stock control labels and on the bundle
+   * row being present. A false return tells the caller to describe the path in
+   * words instead.
    *
-   * @returns whether the settings entry was found and opened.
+   * @returns whether the panel was reached.
    */
   revealInSettings(): boolean {
+    // The page-shaped panel: a sidebar nav row, then the bundle that carries
+    // this plugin, then this plugin's own row. Each hop mounts on a later frame
+    // than the click that asked for it, so each is waited for rather than
+    // assumed.
+    const nav = [...document.querySelectorAll<HTMLElement>('button')]
+      .find(candidate => PANEL_LABELS.includes(candidate.getAttribute('aria-label')?.trim() ?? '')
+        || PANEL_LABELS.includes(candidate.textContent?.trim() ?? ''))
+    if (nav !== undefined) {
+      nav.click()
+      revealRow(DSHELL_BUNDLE_NAME, () => revealRow(SSH_ROW_NAME, () => {
+        window.requestAnimationFrame(() => {
+          document.querySelector('[data-dshell-card="ssh"]')?.scrollIntoView({ block: 'center' })
+        })
+      }))
+      return true
+    }
+    // The dialog-shaped panel of older dsh: one trigger, then the section.
     const trigger = document.querySelector<HTMLButtonElement>('button[aria-haspopup="dialog"][aria-expanded]')
     if (trigger === null) return false
     trigger.click()
-    // The panel and its section body mount on later frames.
     window.requestAnimationFrame(() => {
-      const nav = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
-        .find(candidate => ['插件', 'Plugins'].includes(candidate.textContent?.trim() ?? ''))
-      nav?.click()
+      const section = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+        .find(candidate => PANEL_LABELS.includes(candidate.textContent?.trim() ?? ''))
+      section?.click()
       window.requestAnimationFrame(() => {
         document.querySelector('[data-dshell-card="ssh"]')?.scrollIntoView({ block: 'center' })
       })
@@ -263,6 +319,40 @@ export class SshClientService extends Service {
    */
   requestUnlock(group: { readonly id: string; readonly name: string }): void {
     this.publish({ ...this.snapshot, lockedGroup: group })
+  }
+
+  /**
+   * The group one session's device draws its credential from, when that group is
+   * locked.
+   *
+   * Read straight off the snapshot — the chain is device → credential → group,
+   * and every link of it is already published. A session whose device's
+   * credential cannot be opened has no shell to start, and this is what names
+   * the group to open for it.
+   */
+  lockedGroupForSession(sessionId: string): { readonly id: string; readonly name: string } | undefined {
+    const deviceId = this.snapshot.bindings.find(row => row.sessionId === sessionId)?.deviceId
+    if (deviceId === undefined) return undefined
+    const credentialId = this.snapshot.devices.find(row => row.id === deviceId)?.credentialId
+    if (credentialId === undefined) return undefined
+    const groupId = this.snapshot.credentials.find(row => row.id === credentialId)?.group
+    if (groupId === undefined) return undefined
+    const group = this.snapshot.groups.find(row => row.id === groupId)
+    return group?.sealed === true && group.locked ? { id: group.id, name: group.name } : undefined
+  }
+
+  /**
+   * Take the user to this plugin's card, with one session's locked group's
+   * unlock box already open.
+   *
+   * The plain {@link revealInSettings} lands the reader beside the vault; this
+   * lands them IN it, on the group that is actually stopping their session —
+   * which is the difference between a door and a description of one.
+   */
+  revealUnlockForSession(sessionId: string): boolean {
+    const locked = this.lockedGroupForSession(sessionId)
+    if (locked !== undefined) this.requestUnlock(locked)
+    return this.revealInSettings()
   }
 
   /**
