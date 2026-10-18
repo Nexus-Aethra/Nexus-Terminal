@@ -62,6 +62,17 @@ const SALT_BYTES = 16
 /** The plaintext a group's verifier seals, so a token can be checked cheaply. */
 const VERIFIER_PLAINTEXT = SEAL_MARKER
 
+/**
+ * The reader-facing messages this module raises.
+ *
+ * They reach the browser verbatim — the route answers with `error.message` and
+ * the panel prints it — so they are written for the reader rather than for a
+ * log. `verifier mismatched` used to be one of them.
+ */
+const WRONG_TOKEN = '令牌不正确，解不开这个分组'
+const UNCLAIMED_GROUP = '这个分组还没有令牌，先为它设置一个才能解锁'
+const EMPTY_TOKEN = '令牌不能为空'
+
 /** A group's key derivation, as it lives on disk. */
 export interface GroupKdf {
   algo: 'scrypt'
@@ -96,13 +107,26 @@ export interface GroupView {
   readonly sealed: boolean
   /** Sealed and not currently open: its credentials cannot be read right now. */
   readonly locked: boolean
+  /**
+   * Whether a token exists for this group. A sealed group without one is
+   * unclaimed: it cannot be unlocked, only claimed.
+   */
+  readonly hasToken: boolean
 }
 
 /** A token that does not open a group, as distinct from a store unreadable. */
 export class VaultLockedError extends Error {
-  constructor(message: string) {
+  /**
+   * The group the refusal is about, when it is about one.
+   *
+   * Carried so a surface that has a vault panel can open THAT group's unlock
+   * box instead of leaving the reader to find it.
+   */
+  readonly groupId: string | undefined
+  constructor(message: string, groupId?: string) {
     super(message)
     this.name = 'VaultLockedError'
+    this.groupId = groupId
   }
 }
 
@@ -152,6 +176,7 @@ export class SecretVault {
       name: group.name,
       sealed: group.sealed,
       locked: group.sealed && !this.keys.has(group.id),
+      hasToken: group.kdf !== undefined,
     }
   }
 
@@ -197,7 +222,7 @@ export class SecretVault {
     const groups = await this.groupsOf()
     const group: VaultGroup = { id: newId('g'), name, sealed: token !== null }
     if (token !== null) {
-      if (token === '') throw new Error('token is empty')
+      if (token === '') throw new Error(EMPTY_TOKEN)
       group.kdf = { algo: 'scrypt', ...SCRYPT_PARAMS, salt: randomBytes(SALT_BYTES).toString('base64') }
       const key = await this.derive(token, group.kdf)
       group.verifier = (await seal(VERIFIER_PLAINTEXT, key)).toString('base64')
@@ -226,19 +251,28 @@ export class SecretVault {
   /**
    * Unlock a group with its token.
    *
-   * @throws VaultLockedError when the token does not open it.
+   * A sealed group with no token of its own — the default group a fresh vault
+   * creates — cannot be unlocked: there is no salt to derive against and no
+   * verifier to check a guess with. Returning silently would leave the reader
+   * typing a token into a box that can never open, so this says so instead.
+   *
+   * @throws VaultLockedError when the token does not open it, or when the group
+   *   has no token to open it with.
    */
   async unlock(groupId: string, token: string): Promise<void> {
     const group = await this.need(groupId)
-    if (!group.sealed || group.kdf === undefined) return
+    if (!group.sealed) return
+    if (group.kdf === undefined) {
+      throw new VaultLockedError(UNCLAIMED_GROUP, groupId)
+    }
     const key = await this.derive(token, group.kdf)
     try {
       const opened = await open(Buffer.from(group.verifier ?? '', 'base64'), key)
-      if (opened.toString('utf8') !== VERIFIER_PLAINTEXT) throw new VaultLockedError('verifier mismatched')
+      if (opened.toString('utf8') !== VERIFIER_PLAINTEXT) throw new VaultLockedError(WRONG_TOKEN, groupId)
     } catch (error) {
       // A failed guess must not disturb a group that was already open.
       if (error instanceof VaultLockedError) throw error
-      throw new VaultLockedError('wrong token')
+      throw new VaultLockedError(WRONG_TOKEN, groupId)
     }
     this.keys.set(groupId, key)
   }
@@ -264,7 +298,7 @@ export class SecretVault {
    */
   async setToken(groupId: string, token: string): Promise<void> {
     const group = await this.need(groupId)
-    if (token === '') throw new Error('token is empty')
+    if (token === '') throw new Error(EMPTY_TOKEN)
     group.sealed = true
     group.kdf = { algo: 'scrypt', ...SCRYPT_PARAMS, salt: randomBytes(SALT_BYTES).toString('base64') }
     const key = await this.derive(token, group.kdf)
@@ -316,7 +350,7 @@ export class SecretVault {
     // The newline is added on BOTH paths on purpose: a sealed secret has to come
     // back byte-identical, or enabling a token would change what `ssh` receives
     // — and OpenSSH's key parser requires that trailing newline.
-    return `${SEAL_MARKER}\n${(await seal(body, this.keyOf(groupId))).toString('base64')}\n`
+    return `${SEAL_MARKER}\n${(await seal(body, await this.keyOf(groupId))).toString('base64')}\n`
   }
 
   /**
@@ -328,13 +362,26 @@ export class SecretVault {
    */
   async openFor(groupId: string, body: string): Promise<string> {
     if (!SecretVault.isSealed(body)) return body
-    return (await open(Buffer.from(body.slice(SEAL_MARKER.length + 1).trim(), 'base64'), this.keyOf(groupId))).toString('utf8')
+    return (await open(
+      Buffer.from(body.slice(SEAL_MARKER.length + 1).trim(), 'base64'),
+      await this.keyOf(groupId),
+    )).toString('utf8')
   }
 
-  private keyOf(groupId: string): Buffer {
+  /**
+   * The key for one group, or a refusal naming it.
+   *
+   * The name is in the message because the reader meets this error far from the
+   * vault — a device test, a terminal command, a tool call — and "this group is
+   * locked" names nothing they can act on. The id rides along on the error so a
+   * surface with a vault panel can open the right group's unlock box.
+   */
+  private async keyOf(groupId: string): Promise<Buffer> {
     const key = this.keys.get(groupId)
-    if (key === undefined) throw new VaultLockedError('这个分组已锁定，先解锁才能读取或写入它的凭据')
-    return key
+    if (key !== undefined) return key
+    const group = await this.find(groupId)
+    const name = group?.name ?? groupId
+    throw new VaultLockedError(`分组「${name}」已锁定，先解锁才能读取或写入它的凭据`, groupId)
   }
 
   private async derive(token: string, kdf: GroupKdf): Promise<Buffer> {

@@ -177,6 +177,25 @@ export class CredentialStore {
     await this.removeFiles(record)
     this.records = this.records.filter(candidate => candidate.id !== id)
     await this.persist()
+    // The plaintext a live connection was handed out is named after the DEVICE
+    // that asked for it, so a delete cannot tell which files were this one's.
+    // A secret the reader just removed has no business sitting under `run/`
+    // until the next restart sweeps it, so everything goes and whatever is
+    // still in use materializes again on its next connection.
+    await this.sweepPlaintext()
+  }
+
+  /**
+   * Drop every plaintext this process handed out, the cached paths and the
+   * files under `run/` alike.
+   *
+   * The counterpart of {@link forgetMaterialized} for a caller that cannot say
+   * WHICH materialized secret is now stale — a deletion, where the file's name
+   * says which device asked for it rather than which credential it holds.
+   */
+  async sweepPlaintext(): Promise<void> {
+    this.materialized.clear()
+    await this.vault.clearRunDir()
   }
 
   private async writeBody(id: string, kind: CredentialKind, secret: string, group: string): Promise<string> {

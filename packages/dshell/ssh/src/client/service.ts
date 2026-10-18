@@ -34,13 +34,21 @@ export interface SshSnapshot {
   readonly credentials: readonly CredentialView[]
   /** The last refusal or transport failure, shown until the next call. */
   readonly error: string | undefined
+  /**
+   * The vault group a locked refusal is about, when the last one was.
+   *
+   * Set by the host alongside such an error, and by the reader asking to be
+   * taken to a group. The vault panel consumes it — expanding that group's
+   * unlock box — and clears it, so it is a request rather than a fact.
+   */
+  readonly lockedGroup: { readonly id: string; readonly name: string } | undefined
   /** Whether the host has answered at least once. */
   readonly loaded: boolean
 }
 
 const EMPTY: SshSnapshot = {
   devices: [], bindings: [], testResult: undefined, helper: undefined,
-  groups: [], credentials: [], error: undefined, loaded: false,
+  groups: [], credentials: [], error: undefined, lockedGroup: undefined, loaded: false,
 }
 
 /** Device registry mirror plus its mutations. */
@@ -246,6 +254,18 @@ export class SshClientService extends Service {
   }
 
   /**
+   * Ask the vault panel to open one group's unlock box.
+   *
+   * What a surface that cannot unlock anything itself — a device row whose
+   * credential turned out to be locked — offers instead of a dead-end error.
+   * The request lives as long as the refusal it belongs to, so the reader can
+   * press it again after scrolling away.
+   */
+  requestUnlock(group: { readonly id: string; readonly name: string }): void {
+    this.publish({ ...this.snapshot, lockedGroup: group })
+  }
+
+  /**
    * Move a group to token-protected, or off it, re-sealing its credentials.
    *
    * Both directions rewrap in the same request. A policy that applied only to
@@ -360,6 +380,11 @@ export class SshClientService extends Service {
       groups: body.groups ?? this.snapshot.groups,
       credentials: body.credentials ?? this.snapshot.credentials,
       error: body.error,
+      // Same rule, with one difference: a locked group is answered by EVERY
+      // reply that carries the vault face, and the panel consumes it, so it is
+      // never carried forward. A refusal that outlived its own reply would
+      // re-open an unlock box the reader has already used.
+      lockedGroup: body.lockedGroup,
       loaded: true,
     })
     if (strict && body.error !== undefined) throw new Error(body.error)

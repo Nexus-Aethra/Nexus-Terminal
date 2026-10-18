@@ -760,6 +760,15 @@ export interface VaultGroupView {
   readonly sealed: boolean
   /** Sealed and not currently open: its credentials cannot be read right now. */
   readonly locked: boolean
+  /**
+   * Whether the group carries a token at all.
+   *
+   * A sealed group without one — the default group a fresh vault creates — can
+   * never be unlocked: there is no key to derive and nothing to check a guess
+   * against. It is waiting to be CLAIMED, and offering it an unlock box would
+   * be offering a door with no lock.
+   */
+  readonly hasToken: boolean
 }
 
 /**
@@ -936,6 +945,14 @@ export interface SshResponse {
   readonly groups?: readonly VaultGroupView[] | undefined
   /** The stored credentials, answering any `credential*` action. */
   readonly credentials?: readonly CredentialView[] | undefined
+  /**
+   * The vault group a refusal is about, when the refusal IS a locked group.
+   *
+   * The error string names it too, but a surface that has the vault panel can
+   * do better than print a name: this is what lets it open that group's unlock
+   * box, so the reader is taken to the door rather than told about it.
+   */
+  readonly lockedGroup?: { readonly id: string; readonly name: string } | undefined
   readonly error?: string | undefined
 }
 

@@ -14,7 +14,7 @@
  */
 
 import {
-  createElement, useState, useSyncExternalStore,
+  createElement, useEffect, useState, useSyncExternalStore,
   type ChangeEvent, type CSSProperties, type ReactElement,
 } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -97,6 +97,22 @@ export function VaultCard(props: VaultCardProps): ReactElement {
   const [open, setOpen] = useState(false)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
   const sealed = snapshot.groups.filter(group => group.sealed).length
+  // Somewhere else just found out the hard way that a group is locked — a
+  // device test, most likely. Open the panel, open THAT group's unlock box and
+  // put it on screen: the reader is taken to the door rather than told about
+  // it. The request lives as long as the refusal, so pressing it again after
+  // scrolling away works.
+  const wanted = snapshot.lockedGroup
+  useEffect(() => {
+    if (wanted === undefined) return
+    setOpen(true)
+    // The body mounts on this render; give it a frame before measuring.
+    const frame = requestAnimationFrame(() => {
+      document.querySelector(`[data-dshell-vault-group="${wanted.id}"]`)
+        ?.scrollIntoView({ block: 'center' })
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [wanted])
   return createElement('li', {
     style: open ? { ...cardStyle, ...openCardStyle } : cardStyle,
     'data-dshell-card': 'vault',
@@ -124,7 +140,10 @@ export function VaultCard(props: VaultCardProps): ReactElement {
     ),
     open
       ? createElement('div', { style: bodyStyle },
-        ...snapshot.groups.map(group => createElement(GroupBlock, { key: group.id, group, ssh, t })),
+        ...snapshot.groups.map(group => createElement(GroupBlock, {
+          key: group.id, group, ssh, t,
+          unlockRequest: snapshot.lockedGroup?.id === group.id,
+        })),
         createElement(NewGroupForm, { ssh, t }),
         snapshot.error !== undefined ? createElement('div', { style: errorStyle }, snapshot.error) : null,
         createElement('div', { style: noteStyle }, t('vault.note')),
@@ -138,42 +157,58 @@ function GroupBlock(props: {
   group: VaultGroupView
   ssh: SshClientService
   t: SshTranslate
+  /** True while something outside this block has asked for its unlock box. */
+  unlockRequest?: boolean
 }): ReactElement {
   const { group, ssh, t } = props
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
   const [token, setToken] = useState('')
   const [unlocking, setUnlocking] = useState(false)
+  const [tokenError, setTokenError] = useState<string | undefined>(undefined)
+  // Opened from outside — the device card's 去解锁, or a test that landed on a
+  // locked credential. A local toggle still wins: this only ever opens.
+  useEffect(() => {
+    if (props.unlockRequest === true) setUnlocking(true)
+  }, [props.unlockRequest])
   const inside = snapshot.credentials.filter(credential => credential.group === group.id)
   const usedBy = (credential: CredentialView): string => snapshot.devices
     .filter(device => device.credentialId === credential.id)
     .map(device => device.name)
     .join(t('card.nameSeparator'))
+  // A sealed group with a token but no key in memory asks for that token. A
+  // sealed group with NO token — the default group of a fresh vault — asks to
+  // be claimed instead: an unlock box there could never open, because there is
+  // nothing for a guess to be checked against. A plain group is offered a
+  // token to seal it, which is the same claim.
+  const claimable = !group.sealed || !group.hasToken
 
   return createElement('div', { style: groupStyle, 'data-dshell-vault-group': group.id },
     createElement('div', { style: rowStyle },
       createElement('span', { style: { fontWeight: 600, fontSize: 13 } }, group.name),
       // The plain state is a badge, not an absence of one.
       group.sealed
-        ? createElement('span', { style: badgeStyle(group.locked ? 'muted' : 'ok') },
-          group.locked ? t('vault.locked') : t('vault.unlocked'))
+        ? createElement('span', {
+          style: badgeStyle(!group.hasToken ? 'warn' : group.locked ? 'muted' : 'ok'),
+        },
+          !group.hasToken ? t('vault.unclaimed') : group.locked ? t('vault.locked') : t('vault.unlocked'))
         : createElement('span', { style: badgeStyle('warn') }, t('vault.plain')),
       createElement('span', { style: { ...noteStyle, flex: '1 1 auto' } },
         t('vault.credentialCount', { count: inside.length })),
       group.sealed && group.locked
         ? createElement('button', {
           type: 'button', style: actionStyle, onClick: () => { setUnlocking(value => !value) },
-        }, t('vault.unlock'))
+        }, claimable ? t('vault.setToken') : t('vault.unlock'))
         : null,
       group.sealed && !group.locked
         ? createElement('button', {
           type: 'button', style: actionStyle, onClick: () => { void ssh.lock(group.id) },
         }, t('vault.lock'))
         : null,
-      group.sealed
-        ? null
-        : createElement('button', {
+      claimable && !(group.sealed && group.locked)
+        ? createElement('button', {
           type: 'button', style: actionStyle, onClick: () => { setUnlocking(value => !value) },
-        }, t('vault.setToken')),
+        }, t('vault.setToken'))
+        : null,
       createElement('button', {
         type: 'button', style: actionStyle, onClick: () => { void ssh.deleteGroup(group.id).catch(() => {}) },
       }, t('vault.deleteGroup')),
@@ -183,7 +218,7 @@ function GroupBlock(props: {
         createElement('input', {
           style: { ...fieldStyle, flex: '1 1 180px', minWidth: 0 },
           type: 'password',
-          placeholder: group.sealed ? t('vault.tokenPlaceholder') : t('vault.newTokenPlaceholder'),
+          placeholder: claimable ? t('vault.newTokenPlaceholder') : t('vault.tokenPlaceholder'),
           value: token,
           autoComplete: 'new-password',
           onChange: (event) => { setToken(event.target.value) },
@@ -193,14 +228,25 @@ function GroupBlock(props: {
           style: primaryStyle,
           disabled: token === '',
           onClick: () => {
-            const submit = group.sealed ? ssh.unlock(group.id, token) : ssh.setToken(group.id, token)
-            void submit.then(() => { setToken(''); setUnlocking(false) }).catch(() => {})
+            const submit = claimable ? ssh.setToken(group.id, token) : ssh.unlock(group.id, token)
+            void submit
+              .then(() => { setToken(''); setTokenError(undefined); setUnlocking(false) })
+              // Shown beside the box that was filled in, not at the foot of the
+              // panel: a refusal is about THIS token, and the reader is looking
+              // right here.
+              .catch((error: unknown) => {
+                setTokenError(error instanceof Error ? error.message : String(error))
+              })
           },
-        }, group.sealed ? t('vault.unlock') : t('vault.setToken')),
+        }, claimable ? t('vault.setToken') : t('vault.unlock')),
         createElement('button', {
-          type: 'button', style: actionStyle, onClick: () => { setToken(''); setUnlocking(false) },
+          type: 'button', style: actionStyle,
+          onClick: () => { setToken(''); setTokenError(undefined); setUnlocking(false) },
         }, t('vault.cancel')),
       )
+      : null,
+    tokenError !== undefined
+      ? createElement('div', { style: { ...errorStyle, paddingInlineStart: 10 } }, tokenError)
       : null,
     ...inside.map(credential => createElement('div', {
       key: credential.id,
@@ -249,11 +295,17 @@ function NewCredentialForm(props: {
   const [open, setOpen] = useState(false)
   const [disk, setDisk] = useState<readonly SshKeyFile[] | undefined>(undefined)
   const [diskOpen, setDiskOpen] = useState(false)
+  const [error, setError] = useState<string | undefined>(undefined)
   // A sealed, locked group cannot be written to: the host would have to open the
   // existing rows to be sure of the shape, and it has no key to do it with. The
   // form is therefore closed rather than shown-and-failing.
   if (group.sealed && group.locked) {
-    return createElement('div', { style: { ...noteStyle, paddingInlineStart: 10 } }, t('vault.needUnlock'))
+    // Two different doors, and the difference is whether a key exists to be
+    // typed into one. An unclaimed group needs a token SET before anything can
+    // be stored; sending the reader to an unlock box there would send them to a
+    // door with no lock.
+    return createElement('div', { style: { ...noteStyle, paddingInlineStart: 10 } },
+      group.hasToken ? t('vault.needUnlock') : t('vault.needToken'))
   }
   return createElement('div', { style: { ...rowStyle, paddingInlineStart: 10 } },
     open
@@ -339,15 +391,23 @@ function NewCredentialForm(props: {
                 secret,
                 ...kind === 'key' && passphrase !== '' ? { passphrase } : {},
               }).then(() => {
-                setName(''); setSecret(''); setPassphrase(''); setOpen(false)
-              }).catch(() => {})
+                setName(''); setSecret(''); setPassphrase(''); setError(undefined); setOpen(false)
+              }).catch((reason: unknown) => {
+                // A refusal here is usually the group's: it was locked between
+                // the form opening and the save landing. Saying so beats a
+                // button that does nothing.
+                setError(reason instanceof Error ? reason.message : String(reason))
+              })
             },
           }, t('vault.addCredential')),
           createElement('button', {
             type: 'button', style: actionStyle,
-            onClick: () => { setOpen(false); setName(''); setSecret(''); setPassphrase('') },
+            onClick: () => { setOpen(false); setName(''); setSecret(''); setPassphrase(''); setError(undefined) },
           }, t('vault.cancel')),
         ),
+        error !== undefined
+          ? createElement('div', { style: errorStyle }, error)
+          : null,
       )
       : createElement('button', {
         type: 'button', style: actionStyle, onClick: () => { setOpen(true) },

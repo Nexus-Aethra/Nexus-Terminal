@@ -352,6 +352,19 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
                 ),
           ),
           snapshot.error !== undefined ? createElement('div', { style: errorStyle }, snapshot.error) : null,
+          // A locked group is the one refusal this page can act on: the vault
+          // below holds the key. The button re-opens that group's unlock box,
+          // because the reader may have scrolled past it — or dismissed the
+          // panel — since the refusal arrived.
+          snapshot.lockedGroup !== undefined
+            ? createElement('button', {
+              type: 'button', style: actionStyle,
+              onClick: () => {
+                const group = snapshot.lockedGroup
+                if (group !== undefined) ssh.requestUnlock(group)
+              },
+            }, t('card.goUnlock', { name: snapshot.lockedGroup.name }))
+            : null,
           snapshot.testResult !== undefined ? createElement('div', { style: resultStyle }, snapshot.testResult) : null,
           createElement('button', {
             type: 'button',

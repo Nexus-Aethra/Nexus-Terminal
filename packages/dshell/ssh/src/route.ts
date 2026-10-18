@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { DshellSshTranslate } from './host-locales.js'
 import { listLocalKeys, readLocalKey } from './local-keys.js'
 import { listTrustedHostKeys, probeHostKey, revokeTrustedHostKeys } from './host-key.js'
+import { VaultLockedError } from './vault.js'
 import { DSHELL_SSH_PATH, type SshRequest, type SshResponse } from './protocol.js'
 import type { SshRouter } from './router.js'
 
@@ -92,6 +93,9 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         return await state()
       case 'delete':
         await deps.router.removeDevice(input.deviceId)
+        // The device's materialized secrets go with it: they are named after
+        // the device, so nothing else will ever ask for them again.
+        await deps.router.credentials.sweepPlaintext()
         return await state()
       case 'test': {
         // Run the test BEFORE reading state, for the same reason the install
@@ -238,8 +242,23 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         return respond(await handle(request))
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
-        return respond({ ...await state(), error: reason }, 400)
+        // A locked group is not a failure to report so much as a door to open.
+        // The error names it; this carries the same name in a shape the panel
+        // can act on, so a device test that lands on a locked credential opens
+        // THAT group's unlock box rather than leaving the reader to hunt for it.
+        const groupId = error instanceof VaultLockedError ? error.groupId : undefined
+        const named = groupId === undefined ? undefined : await nameOf(deps, groupId)
+        return respond({ ...await state(), error: reason, ...named === undefined ? {} : { lockedGroup: named } }, 400)
       }
     },
   }
+}
+
+/** The group a locked refusal names, as the panel needs to see it. */
+async function nameOf(
+  deps: SshRouteDeps,
+  groupId: string,
+): Promise<{ id: string; name: string } | undefined> {
+  const group = (await deps.router.vault.list()).find(candidate => candidate.id === groupId)
+  return group === undefined ? undefined : { id: group.id, name: group.name }
 }

@@ -75,6 +75,63 @@ describe('a sealed group', () => {
     await vault.lock(id)
     await expect(vault.openFor(id, sealed)).rejects.toBeInstanceOf(VaultLockedError)
   })
+
+  // The message reaches the browser verbatim, so it is part of the contract.
+  it('names the refusal in words the reader can act on', async () => {
+    const id = await openGroup()
+    await vault.lock(id)
+    await expect(vault.unlock(id, 'wrong horse')).rejects.toThrow('令牌不正确')
+  })
+
+  it('reports whether a group carries a token at all', async () => {
+    // What tells an unlock box from a claim: the default group and a plain
+    // group have no token to check a guess against, so offering them one would
+    // be offering a door with no lock.
+    const sealed = await openGroup()
+    const plain = await vault.createGroup('明文', null)
+    const groups = await vault.list()
+    expect(groups.find(g => g.id === sealed)).toMatchObject({ hasToken: true })
+    expect(groups.find(g => g.id === plain.id)).toMatchObject({ hasToken: false })
+  })
+})
+
+describe('the default group a fresh vault creates', () => {
+  it('is sealed, so a credential with nowhere to go is never stored plainly', async () => {
+    // Covered above in the store document; the state that matters here is the
+    // one that follows from it.
+    const groups = await vault.list()
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ id: 'default', sealed: true, locked: true, hasToken: false })
+  })
+
+  it('cannot be unlocked, because there is no token to check a guess against', async () => {
+    // The dead end this replaces: `unlock` used to return silently for a group
+    // with no kdf, so the reader typed a token into a box that could never open
+    // and nothing at all happened.
+    await vault.list()
+    await expect(vault.unlock('default', 'anything at all')).rejects.toThrow('还没有令牌')
+    await expect(vault.unlock('default', 'anything at all')).rejects.toBeInstanceOf(VaultLockedError)
+  })
+
+  it('refuses to write a credential while it cannot be opened', async () => {
+    await vault.list()
+    await expect(credentials.save({ group: 'default', name: '部署', kind: 'password', secret: 'pw' }))
+      .rejects.toBeInstanceOf(VaultLockedError)
+  })
+
+  it('is claimed by setting a token, after which it behaves like any other group', async () => {
+    await vault.list()
+    await vault.setToken('default', 'claim me')
+    expect((await vault.list()).find(g => g.id === 'default'))
+      .toMatchObject({ sealed: true, locked: false, hasToken: true })
+    const credential = await credentials.save({ group: 'default', name: '部署', kind: 'key', secret: KEY_BODY })
+    expect(await credentials.open(credential.id, 'secret')).toBe(KEY_BODY)
+    // A restart forgets the key, and the token that claimed the group reopens it.
+    const reopened = new SecretVault(() => dir)
+    expect((await reopened.list()).find(g => g.id === 'default')?.locked).toBe(true)
+    await reopened.unlock('default', 'claim me')
+    expect((await reopened.list()).find(g => g.id === 'default')?.locked).toBe(false)
+  })
 })
 
 describe('a plain group', () => {
@@ -180,6 +237,19 @@ describe('materializing plaintext for ssh', () => {
     // Handing back its own stored file is the whole point: no second copy.
     expect(path).toBe(join(dir, 'credentials', `${credential?.id}.password`))
     await expect(readdir(join(dir, 'run'))).rejects.toThrow()
+  })
+
+  it('is swept when the credential it came from is removed', async () => {
+    // The file is named after the device that asked for it, so a delete cannot
+    // tell which copies were this credential's. A secret the reader just
+    // removed has no business sitting under run/ until the next restart.
+    const id = await openGroup()
+    await credentials.save({ group: id, name: '部署密钥', kind: 'key', secret: KEY_BODY })
+    const [credential] = await credentials.list()
+    const path = await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
+    await credentials.remove(credential?.id ?? '')
+    expect(await readdir(join(dir, 'run'))).toEqual([])
+    expect(path?.startsWith(join(dir, 'run'))).toBe(true)
   })
 })
 
