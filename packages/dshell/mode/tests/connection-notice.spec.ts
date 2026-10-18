@@ -9,7 +9,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { connectionView, type ConnectionFacts } from '../src/client/connection-notice.js'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { LockedDoor, connectionView, type ConnectionFacts } from '../src/client/connection-notice.js'
+import { getTheme } from '../src/client/palettes.js'
 
 /** The facts a session is in by default: an idle local session, nothing wrong. */
 function facts(over: Partial<ConnectionFacts> = {}): ConnectionFacts {
@@ -119,5 +123,32 @@ describe('a passphrase that was refused', () => {
   it('keeps the ordinary failure presentation', () => {
     expect(connectionView(facts({ status: 'error', bound: true, failure: 'passphrase' })))
       .toEqual({ kind: 'panel', phase: 'failed' })
+  })
+})
+
+describe('a spawn a locked vault group refused', () => {
+  const t = ((key: string) => key) as TranslateNS<'dshellMode'>
+  const locked = { id: 'g-1', name: '远程验收' }
+
+  /** The door, rendered the way the failure screen mounts it. */
+  function door(): string {
+    return renderToStaticMarkup(createElement(LockedDoor, {
+      group: locked,
+      theme: getTheme('midnight'),
+      onUnlock: () => Promise.resolve(),
+      t,
+    }))
+  }
+
+  // The whole point of the door: the session cannot start, the group is named,
+  // and the token that opens it is taken here instead of sending the reader to
+  // the settings panel to find it.
+  it('offers the group token on the failure screen itself', () => {
+    const markup = door()
+    expect(markup).toContain('connection.locked.detail')
+    expect(markup).toContain('connection.locked.unlock')
+    // A password box, never a text one: the token is a secret, and a shoulder
+    // behind the reader is the whole threat model the vault exists for.
+    expect(markup).toContain('type="password"')
   })
 })

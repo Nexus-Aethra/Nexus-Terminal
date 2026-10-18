@@ -14,7 +14,7 @@
  * actions, so the rules stay in one readable function.
  */
 
-import { createElement, useEffect, useState, type CSSProperties, type ReactElement } from 'react'
+import { createElement, useEffect, useState, type ChangeEvent, type CSSProperties, type KeyboardEvent, type ReactElement } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PtyStreamState } from '@nexus-aethra/dshell-terminal-bridge/client'
 import { useDshellTheme, type Theme } from './theme.js'
@@ -241,6 +241,18 @@ export interface ConnectionPanelProps extends ConnectionActions {
    * worth paying for once the reader is already looking at the answer.
    */
   hostKeys?: HostKeyFacts | undefined
+  /**
+   * The vault group whose lock refused this spawn, when that is the cause.
+   *
+   * The one failure whose remedy is on this screen: the session's credential is
+   * sealed in that group, the group is locked, and its token is the only thing
+   * that opens it. Offered here rather than only in the settings panel because
+   * the reader is already here, and a session that cannot start is not the
+   * moment to send them hunting for a panel.
+   */
+  lockedGroup?: { readonly id: string; readonly name: string } | undefined
+  /** Unlock {@link lockedGroup} with the token typed on this screen. */
+  onUnlock?: ((token: string) => Promise<void>) | undefined
 }
 
 /** The two fingerprints a changed host key has to be judged against. */
@@ -285,6 +297,78 @@ function fingerprintPair(t: ModeTranslate, theme: Theme, facts: HostKeyFacts | u
 }
 
 /**
+ * The token box for a spawn a locked vault group refused.
+ *
+ * The refusal names the group and nothing else can change the answer, so the
+ * box that takes its token belongs on the failure screen rather than in the
+ * settings panel the reader would otherwise have to find. A wrong token is
+ * answered by the host and shown beside the box — a guess that half-worked
+ * would look like a success and then fail as a refused password on the device
+ * — and a successful unlock reconnects through the caller's retry, so the
+ * terminal comes up on its own once the door opens.
+ *
+ * Exported for the failure screen's tests: it takes the theme as a prop, so it
+ * renders without the store hook the panel around it reads.
+ */
+export function LockedDoor(props: {
+  group: { readonly id: string; readonly name: string }
+  theme: Theme
+  onUnlock: (token: string) => Promise<void>
+  t: ModeTranslate
+}): ReactElement {
+  const { group, theme, onUnlock, t } = props
+  const [token, setToken] = useState('')
+  const [error, setError] = useState<string | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const submit = (): void => {
+    if (token === '' || busy) return
+    setBusy(true)
+    void onUnlock(token).then(() => {
+      // The panel goes away with the shell coming up behind it, so the box is
+      // only reset on the way out here.
+      setBusy(false)
+    }, (reason: unknown) => {
+      setBusy(false)
+      setError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+  return createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+    createElement('div', { style: { color: theme.muted, lineHeight: 1.5 } },
+      t('connection.locked.detail', { name: group.name })),
+    createElement('div', { style: { display: 'flex', gap: 8 } },
+      createElement('input', {
+        type: 'password',
+        value: token,
+        placeholder: t('connection.locked.placeholder'),
+        autoComplete: 'new-password',
+        disabled: busy,
+        onChange: (event: ChangeEvent<HTMLInputElement>) => { setToken(event.target.value) },
+        onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          submit()
+        },
+        style: {
+          flex: '1 1 auto', minWidth: 0, fontFamily: 'inherit', fontSize: 13,
+          padding: '4px 10px', borderRadius: 6,
+          border: `1px solid ${theme.borderStrong}`,
+          background: 'transparent', color: theme.text,
+        },
+      }),
+      createElement('button', {
+        type: 'button',
+        disabled: token === '' || busy,
+        style: { ...actionStyle(theme, true), opacity: token === '' || busy ? 0.5 : 1 },
+        onClick: submit,
+      }, t('connection.locked.unlock')),
+    ),
+    error === undefined
+      ? null
+      : createElement('div', { style: { fontSize: 11, color: theme.danger } }, error),
+  )
+}
+
+/**
  * The intermediate screen for a device session that is not up.
  *
  * Deliberately centred and opaque: what it covers is either nothing or a
@@ -304,6 +388,11 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
   const address = props.device === undefined ? t('connection.device') : props.device
   // A host-key screen shows the fingerprints instead: the diagnostic line is
   // ssh's own banner, which states the problem and nothing the reader can use.
+  // The locked door is the same idea one step further: it says the same thing
+  // in a form the reader can act on, so the refusal text stands down.
+  const locked = props.lockedGroup !== undefined && props.onUnlock !== undefined
+    ? { group: props.lockedGroup, onUnlock: props.onUnlock }
+    : undefined
   const detail = failed || hostKey ? props.detail ?? props.reason : undefined
   const progress = props.attempt > 0
     ? t('connection.reconnecting', { attempt: props.attempt, max: props.maxAttempts })
@@ -356,7 +445,12 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
                 : t('connection.notEstablished')
               : progress),
       fingerprintPair(t, theme, props.hostKeys),
-      detail === undefined || detail === ''
+      locked === undefined
+        ? null
+        : createElement(LockedDoor, {
+          group: locked.group, theme, onUnlock: locked.onUnlock, t,
+        }),
+      detail === undefined || detail === '' || locked !== undefined
         ? null
         : createElement('div', { style: detailStyle(theme) }, detail),
       settings.hint === undefined

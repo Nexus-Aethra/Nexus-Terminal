@@ -17,6 +17,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { Context } from '@deepseek-ai/cordis'
 import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
 import { SshRouter } from '../src/router.js'
 import { VaultLockedError } from '../src/vault.js'
@@ -96,6 +97,23 @@ describe('a device whose credential sits in a locked group', () => {
       expect((error as VaultLockedError).groupId).toBe(groupId)
     })
     expect(router.targetForSession('session-1')).toBeUndefined()
+  })
+
+  it('names its group when the connection test is refused', async () => {
+    const router = await settled()
+    const { deviceId, groupId } = await sealedDevice(router, '锁定设备')
+    await router.lockGroups(groupId)
+
+    // The test is the reader's first question about a device that will not
+    // answer, and it used to read the connection map directly: a device they
+    // could see in the panel came back "unknown device", a refusal with no
+    // group to open and no way out. It goes through the same seam as every
+    // other connection now, so the answer is the group to unlock.
+    await expect(router.test(deviceId, {} as Context)).rejects.toThrow('锁定设备')
+    await router.test(deviceId, {} as Context).catch((error: unknown) => {
+      expect(error).toBeInstanceOf(VaultLockedError)
+      expect((error as VaultLockedError).groupId).toBe(groupId)
+    })
   })
 
   it('comes back when the group is unlocked', async () => {

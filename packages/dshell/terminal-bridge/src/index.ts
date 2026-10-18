@@ -42,7 +42,7 @@ import { hostCopy, type DshellTerminalBridgeHostTranslator } from './host-locale
 import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
-import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifySshFailure, diagnosticTail, exitLabel, type DshellPtySession, type SshFailure } from './pty.js'
+import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifySshFailure, diagnosticTail, exitLabel, lockedVaultRefusal, type DshellPtySession, type SshFailure } from './pty.js'
 import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
@@ -1601,7 +1601,13 @@ export class DshellTerminalBridge extends Service {
         kind: 'error',
         message: this.describeSpawnError(error),
         sessionId: dshSessionId,
+        // Structured, because the client has to CHOOSE a presentation from it: a
+        // machine that cannot host a local shell needs a screen of its own, and
+        // reading that out of the message text would be a guess.
         ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
+        // A locked vault group is the other one: the shell was never attempted,
+        // the token is the way out, and a retry would only repeat the refusal.
+        ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
       })
     })
   }
@@ -1624,6 +1630,7 @@ export class DshellTerminalBridge extends Service {
         message: this.describeSpawnError(error),
         sessionId: dshSessionId,
         ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
+        ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
       })
     })
   }

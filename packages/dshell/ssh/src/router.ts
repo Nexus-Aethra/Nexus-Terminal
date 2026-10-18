@@ -670,9 +670,13 @@ export class SshRouter {
    * @returns the ready-to-show result line.
    */
   async test(deviceId: string, ctx: Context, remoteRoot: string | null = null): Promise<string> {
+    // Refreshed first so the answer reflects what is stored NOW, then resolved
+    // through the seam every other connection goes through: a device whose
+    // credential sits in a locked group is refused with that group's name —
+    // the one refusal with a way out. Reading the map directly would answer
+    // "unknown device" for a machine the reader can see in the panel.
     await this.refreshDevices()
-    const device = this.connections.get(deviceId)
-    if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
+    const device = await this.connectionFor(deviceId)
     const trustedBefore = await trustedHostKey(device.host, device.port)
     const started = Date.now()
     const argv = sshArgv(device, 'printf "%s|%s|%s" "$(hostname)" "$(id -un)" "$(uname -sr)"')

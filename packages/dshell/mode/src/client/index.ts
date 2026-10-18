@@ -322,6 +322,8 @@ export function apply(ctx: Context): void {
         revealInSettings(): boolean
         revealUnlockForSession(sessionId: string): boolean
         requestUnlock(group: { readonly id: string; readonly name: string }): void
+        lockedGroupForSession(sessionId: string): { readonly id: string; readonly name: string } | undefined
+        unlock(groupId: string, token: string): Promise<void>
         bindingOf(sessionId: string): { deviceId: string } | undefined
         hostKeys(deviceId: string): Promise<readonly { fingerprint: string }[]>
         probeHostKey(deviceId: string): Promise<{ fingerprint: string } | undefined>
@@ -409,6 +411,11 @@ export function apply(ctx: Context): void {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
       revealSettings: sessionId => ssh.revealUnlockForSession(sessionId),
+      // The locked group and its token box: the failure screen reads the first
+      // and takes the second, so a session whose group is locked can be opened
+      // from where the reader is already looking.
+      lockedGroupForSession: sessionId => ssh.lockedGroupForSession(sessionId),
+      unlock: async (groupId, token) => { await ssh.unlock(groupId, token) },
       // Fingerprints only: the panel draws two strings, and reducing here means
       // the view never learns a host-key record exists.
       hostKeys: async deviceId => (await ssh.hostKeys(deviceId)).map(key => key.fingerprint),

@@ -332,6 +332,9 @@ export const zh = {
   'connection.notice.connecting': '◌ 正在连接{device}… {seconds} 秒',
   'connection.reconnectStopped': '✗ 自动重连已停止（{max} 次均失败）',
   'connection.reopenTerminal': '重新打开终端',
+  'connection.locked.detail': '这个会话的凭据放在加密分组「{name}」里，分组现在锁着，密钥读不出来。输入分组令牌解锁，连接会自己重试。',
+  'connection.locked.placeholder': '分组令牌',
+  'connection.locked.unlock': '解锁并重连',
 
   // The full-screen surface: the way in from the composer, the way out from the
   // surface itself, and the name of the program holding the terminal.
@@ -639,6 +642,9 @@ export const en = {
   'connection.notice.connecting': '◌ Connecting{device}… {seconds}s',
   'connection.reconnectStopped': '✗ Auto-reconnect stopped ({max} failed)',
   'connection.reopenTerminal': 'Reopen terminal',
+  'connection.locked.detail': 'This session\'s credential lives in the encrypted group "{name}", which is locked, so its secret cannot be read. Enter the group\'s token to unlock it and the connection retries itself.',
+  'connection.locked.placeholder': 'Group token',
+  'connection.locked.unlock': 'Unlock and reconnect',
 
   'tui.enterTitle': 'Hand the whole surface to this program and let it take the keys',
   'tui.leave': 'Leave full screen',

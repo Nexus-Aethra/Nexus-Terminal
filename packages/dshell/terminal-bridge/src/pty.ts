@@ -119,6 +119,27 @@ export function classifySshFailure(text: string): SshFailure | undefined {
 }
 
 /**
+ * Whether a failed spawn is a vault group's lock rather than a connection.
+ *
+ * A session bound to a device whose credential is sealed in a locked group has
+ * no shell to start, and the router refuses the spawn plan with a
+ * `VaultLockedError` naming that group. Unlike every other spawn failure this
+ * one has a way out the reader can take without leaving the terminal — the
+ * group's token — and it is the one failure a retry cannot fix, so the client
+ * has to be told which kind it got.
+ *
+ * Recognised by the error's name rather than by importing the SSH package: the
+ * bridge must compose without it, and the name is the one stable thing the
+ * refusal carries across that boundary.
+ *
+ * @param error - whatever the spawn plan rejected with.
+ * @returns whether the refusal is a locked vault group.
+ */
+export function lockedVaultRefusal(error: unknown): boolean {
+  return error instanceof Error && error.name === 'VaultLockedError'
+}
+
+/**
  * The last connection diagnostic in a stretch of terminal output.
  *
  * A device session's terminal is a local `ssh` process, so "cannot connect"

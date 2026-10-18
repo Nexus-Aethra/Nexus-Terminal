@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifySshFailure } from '../src/pty.js'
+import { classifySshFailure, lockedVaultRefusal } from '../src/pty.js'
 
 const CHANGE_BANNER = [
   '@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@',
@@ -47,5 +47,31 @@ describe('classifySshFailure', () => {
   it('has no opinion about output that says nothing', () => {
     expect(classifySshFailure('$ ')).toBeUndefined()
     expect(classifySshFailure('')).toBeUndefined()
+  })
+})
+
+describe('lockedVaultRefusal', () => {
+  /** The refusal the SSH router raises, spelled the way it arrives here. */
+  function vaultRefusal(): Error {
+    const error = new Error('分组「远程验收」已锁定，先解锁才能读取或写入它的凭据')
+    error.name = 'VaultLockedError'
+    return error
+  }
+
+  // Recognised so the client can keep its retry budget for the attempt that
+  // follows the unlock, and offer the token on the failure screen. Matching the
+  // message text instead would make every future rewording a behaviour change.
+  it('names the vault refusal by its error name', () => {
+    expect(lockedVaultRefusal(vaultRefusal())).toBe(true)
+  })
+
+  it('leaves an ordinary spawn failure alone', () => {
+    expect(lockedVaultRefusal(new Error('ssh: connect to host web port 22: Connection refused'))).toBe(false)
+    expect(lockedVaultRefusal(new Error('分组已锁定'))).toBe(false)
+  })
+
+  it('is not fooled by something that is not an error at all', () => {
+    expect(lockedVaultRefusal('VaultLockedError')).toBe(false)
+    expect(lockedVaultRefusal(undefined)).toBe(false)
   })
 })

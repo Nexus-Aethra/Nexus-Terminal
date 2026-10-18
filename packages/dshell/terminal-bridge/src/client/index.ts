@@ -131,6 +131,17 @@ export interface PtyStreamState {
    */
   localUnsupported: boolean
   /**
+   * Host-reported: the spawn was refused because the session's device draws its
+   * credential from a locked vault group.
+   *
+   * Separate from `reason` for the same reason `localUnsupported` is: the view
+   * has to CHOOSE a presentation. This is the one failure whose remedy is a
+   * token the reader can type on the failure screen itself, and the one an
+   * automatic retry cannot fix — the same refusal comes back until the group is
+   * unlocked — so the retry budget is kept for the attempt after that.
+   */
+  lockedGroup: boolean
+  /**
    * Host-reported: this failure is one the user can act on.
    *
    * Separate from `reason` for the same reason `localUnsupported` is: the view
@@ -231,6 +242,7 @@ export class PtyStreamService extends Service {
     exhausted: false,
     since: Date.now(),
     localUnsupported: false,
+    lockedGroup: false,
     failure: undefined,
   })
 
@@ -511,7 +523,7 @@ export class PtyStreamService extends Service {
     if (this.attempt === 0 && !this.state.getSnapshot().exhausted
       && this.state.getSnapshot().reason === undefined) return
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined })
+    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined, lockedGroup: false })
   }
 
   private clearRetryTimer(): void {
@@ -737,6 +749,7 @@ export class PtyStreamService extends Service {
         since: Date.now(),
         // A new session has not failed yet, whatever the last one did.
         localUnsupported: false,
+        lockedGroup: false,
         failure: undefined,
       })
     } else {
@@ -867,8 +880,12 @@ export class PtyStreamService extends Service {
         status: 'error',
         reason: typeof frame.message === 'string' ? frame.message : undefined,
         detail: undefined,
+        lockedGroup: frame.lockedGroup === true,
       })
-      this.scheduleRetry()
+      // A locked group is not a transport failure: the identical refusal comes
+      // back until the reader unlocks it, so the budget is kept for the retry
+      // that follows the unlock rather than spent on repetitions of it.
+      if (frame.lockedGroup !== true) this.scheduleRetry()
     }
   }
 

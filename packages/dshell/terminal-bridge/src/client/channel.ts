@@ -42,6 +42,14 @@ export interface WireFrame {
    */
   localUnsupported?: boolean
   /**
+   * `error` frames: the spawn was refused because the session's device draws
+   * its credential from a locked vault group. The one failure with a way out
+   * the reader can take without leaving the terminal, and the one an automatic
+   * retry cannot fix — so the client keeps its retry budget for the attempt
+   * that follows the unlock.
+   */
+  lockedGroup?: boolean
+  /**
    * `closed` frames: a failure the reader can act on, when the message alone
    * does not say which action. A refused password and a wrong passphrase both
    * arrive as one line of ssh prose, and only one of them is fixable by

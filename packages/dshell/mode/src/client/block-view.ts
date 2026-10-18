@@ -60,6 +60,24 @@ export interface SshSeat {
    * with that group's unlock box already open.
    */
   revealSettings(sessionId: string): boolean
+  /**
+   * The vault group one session's device draws its credential from, when that
+   * group is locked.
+   *
+   * What turns a spawn the host refused into a door the reader can open without
+   * leaving the terminal: the group is named from the session's own binding, so
+   * the token box on the failure screen is about the group that is actually
+   * stopping this session.
+   */
+  lockedGroupForSession(sessionId: string): { readonly id: string; readonly name: string } | undefined
+  /**
+   * Unlock one vault group with its token.
+   *
+   * Throws when the token does not open it — the caller shows that beside the
+   * box it was typed into, because a guess that half-worked would look like a
+   * success and then fail as a refused password on the device.
+   */
+  unlock(groupId: string, token: string): Promise<void>
   /** What this plugin currently trusts for one device, by fingerprint. */
   hostKeys(deviceId: string): Promise<readonly string[]>
   /**
@@ -514,6 +532,22 @@ export function BlockView(props: {
   const openSettings = ssh === undefined || id === undefined
     ? undefined
     : (): boolean => ssh.revealSettings(id)
+  // A spawn the host refused for a locked group is the one failure with a door
+  // on the failure screen itself: the group is named from this session's own
+  // binding, and its token is taken here. The host's marker says the refusal
+  // WAS the lock — without it an unrelated failure on a session whose group
+  // happens to be locked would offer a token that cannot help.
+  const lockedGroup = connection.kind === 'panel' && connection.phase === 'failed'
+    && current && pty.lockedGroup && id !== undefined
+    ? ssh?.lockedGroupForSession(id)
+    : undefined
+  const unlock = useCallback(async (token: string): Promise<void> => {
+    if (lockedGroup === undefined || ssh === undefined) return
+    await ssh.unlock(lockedGroup.id, token)
+    // The host rebuilt this device's connection with the new key, so the retry
+    // that could not have worked a moment ago is now the connection coming up.
+    props.pty.reconnect()
+  }, [lockedGroup, props.pty, ssh])
 
   // Both fingerprints for the changed-key screen, fetched only while it is up:
   // the scan opens a connection to the host under suspicion, so it is not worth
@@ -665,6 +699,7 @@ export function BlockView(props: {
         // caller's composed action rather than the plain reconnect.
         onRetry: connection.phase === 'hostKey' ? trustAnyway : retry,
         ...connection.phase === 'hostKey' ? { hostKeys } : {},
+        ...lockedGroup === undefined ? {} : { lockedGroup, onUnlock: unlock },
         ...openSettings === undefined ? {} : { onSettings: openSettings },
         t,
       })
