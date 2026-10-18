@@ -100,7 +100,12 @@ interface SessionSample {
  */
 export interface SshRoutingSeat {
   targetForSession(sessionId: string):
-  | { device: { name: string; host: string; port: number; user: string }; remoteRoot: string }
+  | {
+      device: { name: string; host: string; port: number; user: string }
+      remoteRoot: string
+      /** The local stand-in for the device tree, when the binding has one. */
+      mount?: string | undefined
+    }
   | undefined
   /** The stored binding, whether or not the device can be served. */
   assignmentForSession(sessionId: string): unknown | undefined
@@ -252,11 +257,20 @@ function localCounters(): MachineCounters {
  * the device table or builds a command line. Read-only, because a header
  * reading has no business writing anything on a machine the reader may not
  * even be logged into.
+ *
+ * `workdir` is a directory on THIS machine, never the device's own root: the
+ * shell seam speaks the local path space and translates what it is given
+ * through the session's mount mapping, so the device's root handed to it is
+ * read as a local path — `~` against this process's cwd, then re-based through
+ * the session's directory — and lands on a directory that exists on neither
+ * machine. The mount is the local stand-in the mapping translates straight
+ * back to the device's root; a binding without one has nothing to translate
+ * and the seam answers with the root whatever is asked.
  */
 async function deviceCounters(
   ctx: Context,
   agent: Agent,
-  workdir: string,
+  workdir: string | undefined,
 ): Promise<MachineCounters | string> {
   // `ctx.get('shell')` and NOT `ctx.shell`: the property accessor is gated by
   // an `inject` declaration this package does not make, and the failure would
@@ -265,15 +279,22 @@ async function deviceCounters(
   const shell = ctx.get('shell')
   if (shell === undefined) return '这台组合没有 shell 服务，问不到设备'
   try {
-    const spec = await ctx.agents.withInitiator(agent, () => shell.resolve({
-      command: `bash -c ${shq(DEVICE_PROBE)} dshell-metrics`,
-      workdir,
-      timeoutMs: PROBE_TIMEOUT_MS,
-      stdoutMaxBytes: PROBE_STDOUT_BYTES,
-      sandboxPolicy: { mode: 'read-only', workspaceRoot: workdir },
-    }))
-    const result = await (await shell.execute(spec)).result()
-    return parseCounters(result.stdout.text) ?? '设备没有返回可解析的读数'
+    // The WHOLE run lives inside the initiator boundary, `execute` included.
+    // The boundary is an AsyncLocalStorage scope, and the spawn happens in
+    // `execute` — one call later and outside the scope the router sees no
+    // session at all, answers with a local `bash` whose workdir is the device's
+    // root, and the probe dies on a directory that exists only there.
+    return await ctx.agents.withInitiator(agent, async () => {
+      const spec = await shell.resolve({
+        command: `bash -c ${shq(DEVICE_PROBE)} dshell-metrics`,
+        workdir,
+        timeoutMs: PROBE_TIMEOUT_MS,
+        stdoutMaxBytes: PROBE_STDOUT_BYTES,
+        sandboxPolicy: { mode: 'read-only', workspaceRoot: workdir ?? process.cwd() },
+      })
+      const result = await (await shell.execute(spec)).result()
+      return parseCounters(result.stdout.text) ?? '设备没有返回可解析的读数'
+    })
   } catch (reason) {
     return reason instanceof Error ? reason.message : String(reason)
   }
@@ -382,7 +403,7 @@ export function createDeviceMetricsRoute(ctx: Context, deps: DeviceMetricsRouteD
     }
     const resolved = await ctx.sessionController.resolveAgent(SessionId(sessionId))
     if ('error' in resolved) return { error: `会话不可用：${resolved.error.code}` }
-    const probed = await deviceCounters(ctx, resolved.agent, target.remoteRoot)
+    const probed = await deviceCounters(ctx, resolved.agent, target.mount)
     if (typeof probed === 'string') {
       samples.set(sessionId, { ...sample, failure: probed, failedAt: now })
       return { error: probed }

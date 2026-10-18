@@ -11,6 +11,7 @@
  * it was asked to run.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { createDeviceMetricsRoute, type SshRoutingSeat } from '../src/device-metrics.js'
@@ -23,11 +24,27 @@ import {
 import { setDevicePollMs } from '../src/client/device-poll.js'
 import { DEVICE_POLL_CHOICES, DEVICE_POLL_DEFAULT } from '../src/settings.js'
 
+/**
+ * The initiator boundary, modelled the way the host models it.
+ *
+ * `withInitiator` is an AsyncLocalStorage scope, and a spawn inside it is what
+ * tells the ssh router which session asked. A fake that merely calls the
+ * operation cannot see the difference between "the whole run ran inside the
+ * boundary" and "only `resolve` did" — and that difference is the whole bug
+ * this suite exists to keep out.
+ */
+const initiators = new AsyncLocalStorage<unknown>()
+
 /** What a fake shell seam recorded, so a spec can assert on the probe itself. */
 interface Probe {
   readonly command: string
   readonly workdir: string
   readonly sandboxMode: unknown
+}
+
+/** Whether one `execute` ran inside the initiator boundary the route opened. */
+interface Run {
+  readonly insideBoundary: boolean
 }
 
 /**
@@ -36,7 +53,13 @@ interface Probe {
  * `get('shell')` is the structural read the route uses rather than a declared
  * `ctx.shell`, so a fake only has to answer `get`.
  */
-function host(services: Record<string, unknown>, probes: Probe[] = []): Context {
+function host(services: Record<string, unknown>, probes: Probe[] = [], runs: Run[] = []): Context {
+  const agents = {
+    withInitiator: <T,>(agent: unknown, run: () => T): T => initiators.run(agent, run),
+  }
+  const sessionController = {
+    resolveAgent: async (id: string) => ({ agent: { id, session: { header: { cwd: '/home/u' } } } }),
+  }
   const all: Record<string, unknown> = {
     ...services,
     shell: {
@@ -48,15 +71,20 @@ function host(services: Record<string, unknown>, probes: Probe[] = []): Context 
         })
         return { spec: true }
       },
-      execute: async () => ({ result: async () => ({ stdout: { text: nextStdout } }) }),
+      execute: async () => {
+        // Recorded at execute, not at resolve: the spawn the router sees happens
+        // here, one call after the boundary would have closed.
+        runs.push({ insideBoundary: initiators.getStore() !== undefined })
+        return { result: async () => ({ stdout: { text: nextStdout } }) }
+      },
     },
+    agents,
+    sessionController,
   }
   return {
     get: (name: string) => all[name],
-    agents: { withInitiator: async (_agent: unknown, run: () => unknown) => run() },
-    sessionController: {
-      resolveAgent: async (id: string) => ({ agent: { id, session: { header: { cwd: '/home/u' } } } }),
-    },
+    agents,
+    sessionController,
   } as unknown as Context
 }
 
@@ -77,7 +105,11 @@ function routing(over: {
   const reachable = over.reachable ?? true
   return {
     targetForSession: () => bound && reachable
-      ? { device: { name: 'build-box', host: '10.0.0.9', port: 22, user: 'dev' }, remoteRoot: '/srv/work' }
+      ? {
+        device: { name: 'build-box', host: '10.0.0.9', port: 22, user: 'dev' },
+        remoteRoot: '/srv/work',
+        mount: '/mnt/build-box',
+      }
       : undefined,
     assignmentForSession: () => (bound ? { sessionId: 's1', deviceId: 'd1' } : undefined),
   }
@@ -154,7 +186,26 @@ describe('a session bound to a device', () => {
     // Read-only: a header reading has no business writing on a machine the
     // reader may not even be logged into.
     expect(probes[0]?.sandboxMode).toBe('read-only')
-    expect(probes[0]?.workdir).toBe('/srv/work')
+    // The LOCAL stand-in, not the device's root: the seam translates this
+    // through the session's mapping, and a device path handed to it is read as
+    // a local one — `~` against this process's cwd, re-based through the
+    // session's directory — landing on a directory that exists nowhere.
+    expect(probes[0]?.workdir).toBe('/mnt/build-box')
+  })
+
+  it('runs the probe as the session, with the boundary still open at the spawn', async () => {
+    // The boundary is an AsyncLocalStorage scope and the spawn happens in
+    // `execute`, one call after `resolve`. Closing it around `resolve` alone
+    // leaves the router blind at the spawn: it answers with a local `bash`
+    // whose workdir is the device's root, and the probe dies on a directory
+    // that exists only there. The reading that comes back looks like a device
+    // that said nothing, which is how this stayed invisible for so long.
+    const runs: Run[] = []
+    nextStdout = 'cpu 900 300\ncores 8\nmem 16316360 8000000\nload 1.75\n'
+    const { status } = await call(host({}, [], runs), routing())
+
+    expect(status).toBe(200)
+    expect(runs).toEqual([{ insideBoundary: true }])
   })
 
   it('refuses to answer with this machine when the device cannot be reached', async () => {
