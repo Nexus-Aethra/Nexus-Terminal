@@ -87,7 +87,8 @@ const resultStyle: CSSProperties = {
 }
 const errorStyle: CSSProperties = { fontSize: 12, color: '#f87171', gridColumn: '1 / -1' }
 const primaryStyle: CSSProperties = {
-  border: 'none', background: 'var(--dsw-alias-brand-primary, #4f6bed)', color: '#fff',
+  border: 'none', background: 'var(--dsw-alias-button-primary-fill, #4f6bed)',
+  color: 'var(--dsw-alias-label-primary-foreground, #fff)',
   cursor: 'pointer', borderRadius: 8, padding: '7px 14px', fontSize: 13, gridColumn: '2 / -1', justifySelf: 'end',
 }
 

@@ -52,8 +52,12 @@ const actionStyle: CSSProperties = {
   fontSize: 12, opacity: 0.75, padding: '2px 6px', borderRadius: 6, whiteSpace: 'nowrap', flexShrink: 0,
 }
 const primaryStyle: CSSProperties = {
-  border: 'none', background: 'var(--dsw-alias-brand-primary, #4f6bed)', color: '#fff',
-  cursor: 'pointer', borderRadius: 8, padding: '5px 12px', fontSize: 12,
+  // The fill and its foreground are a pair from the design system: on the dark
+  // theme the fill is near-white, so a literal `#fff` label would vanish on it.
+  border: 'none', background: 'var(--dsw-alias-button-primary-fill, #4f6bed)',
+  color: 'var(--dsw-alias-label-primary-foreground, #fff)',
+  cursor: 'pointer', borderRadius: 8, padding: '6px 14px', fontSize: 13,
+  whiteSpace: 'nowrap', flexShrink: 0,
 }
 const noteStyle: CSSProperties = { fontSize: 12, opacity: 0.65 }
 const warnStyle: CSSProperties = { fontSize: 12, color: '#d97706' }
