@@ -278,7 +278,7 @@ function NewCredentialForm(props: {
         ),
         createElement('textarea', {
           style: { ...fieldStyle, minHeight: 60, fontFamily: 'monospace', fontSize: 12 },
-          placeholder: kind === 'key' ? t('form.keyPlaceholder') : t('form.passwordPlaceholder'),
+          placeholder: kind === 'key' ? t('vault.keyPlaceholder') : t('vault.passwordPlaceholder'),
           value: secret,
           onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { setSecret(event.target.value) },
         }),
@@ -286,7 +286,7 @@ function NewCredentialForm(props: {
           ? createElement('input', {
             style: fieldStyle,
             type: 'password',
-            placeholder: t('form.passphrasePlaceholder'),
+            placeholder: t('vault.passphrasePlaceholder'),
             value: passphrase,
             autoComplete: 'new-password',
             onChange: (event) => { setPassphrase(event.target.value) },
@@ -307,7 +307,7 @@ function NewCredentialForm(props: {
               ? createElement('span', { style: noteStyle }, t('vault.picking'))
               : null,
             diskOpen && disk !== undefined && disk.length === 0
-              ? createElement('span', { style: noteStyle }, t('form.keyPickEmpty'))
+              ? createElement('span', { style: noteStyle }, t('vault.keyPickEmpty'))
               : null,
             ...(diskOpen && disk !== undefined ? disk : []).map(candidate => createElement('button', {
               key: candidate.path,

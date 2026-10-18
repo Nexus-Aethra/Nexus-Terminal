@@ -14,8 +14,7 @@ import {
 } from 'react'
 import type { PropsLocale, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellSshKey } from './locales.js'
-import type { DeviceAuth, DeviceHelperStatus, DeviceView, SshKeyFile, TrustedHostKey } from '../protocol.js'
-import type { SshSnapshot } from './service.js'
+import type { DeviceAuth, DeviceHelperStatus, DeviceView, TrustedHostKey } from '../protocol.js'
 import type { SshClientService } from './service.js'
 import { VaultCard } from './vault-card.js'
 // Type-only: pulls this namespace's key merge (`PropsLocale<'dshellSsh'>`).
@@ -79,7 +78,6 @@ const fieldStyle: CSSProperties = {
   border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: 8, color: 'inherit',
   padding: '7px 9px', fontSize: 13, outline: 'none',
 }
-const keyStyle: CSSProperties = { ...fieldStyle, gridColumn: '1 / -1', minHeight: 72, fontFamily: 'monospace', fontSize: 12 }
 const noteStyle: CSSProperties = { fontSize: 12, opacity: 0.65, gridColumn: '1 / -1' }
 /** The test result: two lines (what answered, then the host key) worth keeping apart. */
 const resultStyle: CSSProperties = {
@@ -92,45 +90,17 @@ const primaryStyle: CSSProperties = {
   cursor: 'pointer', borderRadius: 8, padding: '7px 14px', fontSize: 13, gridColumn: '2 / -1', justifySelf: 'end',
 }
 
-/**
- * The key picker: one quiet trigger, and the list only while it is open.
- *
- * A disclosure rather than a `<select>` because the entries are file names, not
- * short labels, and a native select truncates them into indistinguishable
- * `id_…` rows.
- */
-const keyPickerStyle: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8, gridColumn: '1 / -1',
-}
-const smallActionStyle: CSSProperties = {
-  border: '0.5px solid var(--dsw-alias-border-l4)', background: 'transparent',
-  color: 'inherit', cursor: 'pointer', borderRadius: 8, padding: '4px 10px', fontSize: 12,
-}
-const keyListStyle: CSSProperties = {
+/** The credential chips, wrapping: the vault is a library, not a short list. */
+const chipRowStyle: CSSProperties = {
   display: 'flex', flexWrap: 'wrap', gap: 6, gridColumn: '1 / -1',
 }
-const keyItemStyle: CSSProperties = {
-  border: '0.5px solid var(--dsw-alias-border-l4)', background: 'transparent',
+/** One credential in the picker: the name, its kind, and the pick made visible. */
+const credentialChipStyle = (selected: boolean): CSSProperties => ({
+  border: `0.5px solid ${selected ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l4)'}`,
+  background: selected ? 'var(--dsw-alias-bg-layer-2)' : 'transparent',
   color: 'inherit', cursor: 'pointer', borderRadius: 8, padding: '4px 10px',
-  fontSize: 12, fontFamily: 'monospace',
-  // A file name is one unbreakable token, and these sit in a wrapped row.
-  maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-}
-
-/**
- * The group a device's chosen credential lives in, which is what tells the
- * reader whether that device's secret is encrypted at all.
- */
-function groupName(
-  snapshot: SshSnapshot,
-  credentialId: string,
-  t: TranslateNS<'dshellSsh'>,
-): string {
-  const credential = snapshot.credentials.find(candidate => candidate.id === credentialId)
-  const group = snapshot.groups.find(candidate => candidate.id === credential?.group)
-  if (group === undefined) return t('vault.plain')
-  return group.sealed ? group.name : `${group.name} · ${t('vault.plain')}`
-}
+  fontSize: 12, whiteSpace: 'nowrap',
+})
 
 /** The trust row under a device: label, fingerprint, and the two actions. */
 const trustStyle: CSSProperties = {
@@ -169,64 +139,21 @@ function Chevron({ open }: { open: boolean }): ReactElement {
 }
 
 /**
- * The blank form's state. `secret` holds whichever credential the selected
- * login method uses; switching methods clears it, so a key pasted for one
- * method is never submitted as a password (or the reverse).
+ * The blank form's state.
+ *
+ * The device itself holds no secret: `credentialId` points into the vault, and
+ * the login method follows whichever credential is picked. A device with no
+ * credential at all authenticates the way the machine's own ssh does.
  */
 const BLANK = {
   id: undefined as string | undefined,
   name: '', host: '', port: '22', user: '', remoteRoot: '',
   auth: 'key' as DeviceAuth,
-  secret: '',
-  passphrase: '',
   credentialId: '' as string,
 }
 
-/** Sliding segmented control: two labels, one highlight that follows the pick. */
-function AuthSwitch(props: {
-  value: DeviceAuth
-  disabled: boolean
-  t: TranslateNS<'dshellSsh'>
-  onChange: (next: DeviceAuth) => void
-}): ReactElement {
-  const options: readonly { id: DeviceAuth; label: string }[] = [
-    { id: 'key', label: props.t('auth.key') },
-    { id: 'password', label: props.t('auth.password') },
-  ]
-  return createElement('div', {
-    style: {
-      position: 'relative', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0,
-      border: '0.5px solid var(--dsw-alias-border-l4)', borderRadius: 999, padding: 2,
-      background: 'var(--dsw-alias-bg-module-platform)', gridColumn: '1 / -1',
-    },
-  },
-    createElement('div', {
-      'aria-hidden': true,
-      style: {
-        position: 'absolute', top: 2, bottom: 2, left: 2, width: 'calc(50% - 2px)',
-        borderRadius: 999, background: 'var(--dsw-alias-bg-layer-3)',
-        border: '0.5px solid var(--dsw-alias-border-l4)',
-        transition: 'transform .16s ease',
-        transform: props.value === 'password' ? 'translateX(100%)' : 'none',
-      },
-    }),
-    ...options.map(option => createElement('button', {
-      key: option.id,
-      type: 'button',
-      'aria-pressed': props.value === option.id,
-      disabled: props.disabled,
-      onClick: () => { props.onChange(option.id) },
-      style: {
-        position: 'relative', zIndex: 1, border: 'none', background: 'transparent',
-        color: 'inherit', cursor: 'pointer', font: 'inherit', fontSize: 13, padding: '6px 0',
-        opacity: props.value === option.id ? 1 : 0.7,
-      },
-    }, option.label)),
-  )
-}
-
-/** Login-method field label. */
-const labelStyle: CSSProperties = { fontSize: 12, opacity: 0.7, gridColumn: '1 / -1', marginBottom: -4 }
+/** Field label above the credential picker. */
+const labelStyle: CSSProperties = { fontSize: 12, opacity: 0.7, gridColumn: '1 / -1' }
 
 /**
  * The card's composed props: the device service this package injects into the
@@ -269,33 +196,18 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const { ssh, t } = props
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
-  const [keys, setKeys] = useState<readonly SshKeyFile[] | undefined>(undefined)
-  const [keysOpen, setKeysOpen] = useState(false)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
-  // Fetched once, the first time the picker is opened: the list is the harness
-  // user's own `~/.ssh`, it cannot change under the form, and asking for it on
-  // every render would make opening the card read the filesystem.
-  const loadKeys = (): void => {
-    if (keys !== undefined) return
-    void ssh.listKeys().then(setKeys)
-  }
   const edit = (field: keyof typeof BLANK, value: string): void => {
     setForm(current => ({ ...current, [field]: value }))
   }
-  const pickAuth = (next: DeviceAuth): void => {
-    setForm(current => ({ ...current, auth: next, secret: '', passphrase: '' }))
-  }
-  // Choosing a vault credential and typing a secret are mutually exclusive on
-  // purpose: a device holding both has two answers to one question, and only the
-  // credential gets rotated.
   const pickCredential = (id: string): void => {
-    setForm(current => ({
-      ...current,
-      credentialId: id,
-      ...id === '' ? {} : { secret: '', passphrase: '' },
-    }))
+    setForm(current => ({ ...current, credentialId: id }))
   }
   const submit = (): void => {
+    // The login method is the credential's, not the form's: a key credential
+    // authenticates by key, a password credential by password. With nothing
+    // picked the device keeps its own method and its own secret, if any.
+    const picked = snapshot.credentials.find(c => c.id === form.credentialId)
     void ssh.save({
       ...form.id === undefined ? {} : { id: form.id },
       name: form.name,
@@ -303,17 +215,9 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       port: Number(form.port) > 0 ? Number(form.port) : 22,
       user: form.user,
       remoteRoot: form.remoteRoot,
-      auth: form.auth,
-      // Omitted keeps the stored secret; an empty box on a NEW device also
-      // means "none" (key auth then uses the harness user's own ssh agent).
-      ...form.secret.trim() === '' ? {} : form.auth === 'password'
-        ? { password: form.secret }
-        : { key: form.secret },
-      // Same omitted/empty semantics as the key itself: an untouched box keeps
-      // whatever is stored, an emptied one removes it.
-      ...form.passphrase === '' ? {} : { passphrase: form.passphrase },
-      // Sent even when empty, because clearing the reference is the one way back
-      // to an inline secret, and omitting it would mean "leave it alone".
+      auth: picked?.kind ?? form.auth,
+      // Sent even when empty: clearing the reference is the one way back to a
+      // device that authenticates without a stored credential.
       credentialId: form.credentialId,
     })
     setForm(BLANK)
@@ -327,8 +231,6 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
       user: device.user,
       remoteRoot: device.remoteRoot,
       auth: device.auth,
-      secret: '',
-      passphrase: '',
       credentialId: device.credentialId ?? '',
     })
   }
@@ -425,106 +327,30 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
             value: form.remoteRoot,
             onChange: (event: ChangeEvent<HTMLInputElement>) => { edit('remoteRoot', event.target.value) },
           }),
-          createElement('div', { style: noteStyle }, t('form.remoteRootNote')),
-          createElement('div', { style: labelStyle }, t('form.authLabel')),
-          createElement(AuthSwitch, { value: form.auth, disabled: false, t, onChange: pickAuth }),
-          // The vault is offered first whenever it has anything in it. A device
-          // pointed at a credential shows which one and how to un-point it,
-          // rather than a paste box that would silently be ignored.
-          form.credentialId !== ''
-            ? createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' } },
-              createElement('div', { style: { fontSize: 12 } },
-                t('form.usingCredential', {
-                  name: snapshot.credentials.find(c => c.id === form.credentialId)?.name ?? form.credentialId,
-                  group: groupName(snapshot, form.credentialId, t),
-                })),
-              createElement('button', {
-                type: 'button', style: actionStyle, onClick: () => { pickCredential('') },
-              }, t('form.useOwnSecret')),
-            )
-            : snapshot.credentials.length === 0
-              ? null
-              : createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, gridColumn: '1 / -1' } },
-                createElement('span', { style: { fontSize: 12, opacity: 0.65, flexBasis: '100%' } },
-                  t('form.pickCredential')),
-                ...snapshot.credentials.map(credential => createElement('button', {
-                  key: credential.id,
-                  type: 'button',
-                  style: keyItemStyle,
-                  onClick: () => { pickCredential(credential.id) },
-                }, credential.name)),
-              ),
-          form.credentialId !== ''
-            ? null
-            : form.auth === 'password'
-            ? createElement('input', {
-              style: fieldStyle,
-              type: 'password',
-              placeholder: t('form.passwordPlaceholder'),
-              value: form.secret,
-              autoComplete: 'new-password',
-              onChange: (event: ChangeEvent<HTMLInputElement>) => { edit('secret', event.target.value) },
-            })
-            : createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-              createElement('textarea', {
-                style: keyStyle,
-                placeholder: t('form.keyPlaceholder'),
-                value: form.secret,
-                onChange: (event: ChangeEvent<HTMLTextAreaElement>) => { edit('secret', event.target.value) },
-              }),
-              // Offered here rather than above the box because the box is the
-              // fallback: most people keeping a key on disk would rather point at
-              // it than paste a blob they then have to keep out of the clipboard.
-              createElement('div', { style: keyPickerStyle },
-                createElement('button', {
-                  type: 'button',
-                  style: smallActionStyle,
-                  onClick: () => {
-                    loadKeys()
-                    setKeysOpen(value => !value)
-                  },
-                }, t('form.keyPick')),
-                // Says which of "not asked yet", "asking" and "nothing there"
-                // applies, because a trigger that silently does nothing reads as
-                // a broken form.
-                keys !== undefined && keys.length === 0 && keysOpen
-                  ? createElement('span', { style: noteStyle }, t('form.keyPickEmpty'))
-                  : null,
-              ),
-              keysOpen && keys !== undefined && keys.length > 0
-                ? createElement('div', { style: keyListStyle },
-                  ...keys.map(key => createElement('button', {
-                    key: key.path,
+          // The credential is the whole login story: the device stores a
+          // reference, never a copy, and the method follows the credential's
+          // kind. Credentials are made in the vault below — this form only
+          // points at one.
+          createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, gridColumn: '1 / -1' } },
+            createElement('span', { style: labelStyle }, t('form.credentialLabel')),
+            snapshot.credentials.length === 0
+              ? createElement('span', { style: { fontSize: 12, opacity: 0.65 } }, t('form.vaultEmpty'))
+              : createElement('div', { style: chipRowStyle },
+                  ...snapshot.credentials.map(credential => createElement('button', {
+                    key: credential.id,
                     type: 'button',
-                    style: keyItemStyle,
-                    title: key.path,
-                    onClick: () => {
-                      void ssh.readKey(key.path).then((body) => {
-                        // A refused read leaves the box exactly as it was: an
-                        // emptied secret would be saved as "remove this key".
-                        if (body === undefined) return
-                        setForm(current => ({ ...current, secret: body }))
-                        setKeysOpen(false)
-                      })
-                    },
-                  }, key.name)),
-                )
-                : null,
-              // Only a key can be unlocked, so the box exists only in key mode —
-              // a passphrase beside a password is a secret nothing would read.
-              form.auth === 'key'
-                ? createElement('input', {
-                  style: fieldStyle,
-                  type: 'password',
-                  placeholder: t('form.passphrasePlaceholder'),
-                  value: form.passphrase,
-                  autoComplete: 'new-password',
-                  onChange: (event: ChangeEvent<HTMLInputElement>) => { edit('passphrase', event.target.value) },
-                })
-                : null,
-            ),
-          createElement('div', { style: noteStyle },
-            form.auth === 'password' ? t('form.passwordNote') : t('form.keyNote')),
+                    style: credentialChipStyle(credential.id === form.credentialId),
+                    onClick: () => { pickCredential(credential.id) },
+                  }, `${credential.name} · ${credential.kind === 'key' ? t('auth.key') : t('auth.password')}`)),
+                  // The way back to a device that authenticates without a stored
+                  // credential: the machine's own ssh agent, exactly as before.
+                  form.credentialId !== ''
+                    ? createElement('button', {
+                        type: 'button', style: actionStyle, onClick: () => { pickCredential('') },
+                      }, t('form.clearCredential'))
+                    : null,
+                ),
+          ),
           snapshot.error !== undefined ? createElement('div', { style: errorStyle }, snapshot.error) : null,
           snapshot.testResult !== undefined ? createElement('div', { style: resultStyle }, snapshot.testResult) : null,
           createElement('button', {

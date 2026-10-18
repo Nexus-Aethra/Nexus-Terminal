@@ -214,7 +214,12 @@ export class DeviceStore {
     const id = input.id ?? this.uniqueId(idFor(input.name))
     const existing = this.records.find(record => record.id === id)
     if (input.id !== undefined && existing === undefined) throw new Error(t('error.unknownDevice', { id: input.id }))
-    const auth: DeviceAuth = input.auth ?? existing?.auth ?? 'key'
+    // A device pointed at a credential logs in the way that credential says: a
+    // key credential means key auth, a password credential means password auth.
+    // Deriving it here rather than trusting the caller keeps a mismatched pair
+    // — which would connect with the wrong method — from ever being stored.
+    const credential = input.credentialId === undefined ? undefined : await this.credentials.get(input.credentialId)
+    const auth: DeviceAuth = credential?.kind ?? input.auth ?? existing?.auth ?? 'key'
     const baseRecord: DeviceRecord = {
       id,
       name: input.name.trim() !== '' ? input.name.trim() : (existing?.name ?? input.host),
