@@ -52,6 +52,18 @@ interface DeviceRecord {
 /** A device id safe to interpolate into a path. */
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/
 
+/**
+ * The credential a record points at, with a cleared reference read as none.
+ *
+ * The form has always sent the field even when empty — that is how a pick is
+ * cleared — so documents written before {@link DeviceStore.save} normalized it
+ * can hold an empty string. Reading it as a reference would make such a device
+ * look like it holds a credential nothing can resolve.
+ */
+function referenceOf(record: DeviceRecord): string | undefined {
+  return record.credentialId === undefined || record.credentialId === '' ? undefined : record.credentialId
+}
+
 /** Connection parameters resolved for one `ssh` invocation. */
 export interface DeviceConnection {
   readonly id: string
@@ -184,6 +196,7 @@ export class DeviceStore {
     await this.ensure()
     const record = this.records.find(candidate => candidate.id === deviceId)
     if (record === undefined) return undefined
+    const credentialId = referenceOf(record)
     return {
       id: record.id,
       name: record.name,
@@ -192,11 +205,11 @@ export class DeviceStore {
       user: record.user,
       remoteRoot: record.remoteRoot,
       auth: record.auth,
-      ...(record.credentialId === undefined
+      ...(credentialId === undefined
         ? { secretFile: record.secretFile, passphraseFile: record.passphraseFile }
         : {
-          secretFile: await this.credentials.usablePath(record.credentialId, 'secret', record.id),
-          passphraseFile: await this.credentials.usablePath(record.credentialId, 'passphrase', record.id),
+          secretFile: await this.credentials.usablePath(credentialId, 'secret', record.id),
+          passphraseFile: await this.credentials.usablePath(credentialId, 'passphrase', record.id),
         }),
       askpassFile: this.askpassPath,
     }
@@ -214,11 +227,17 @@ export class DeviceStore {
     const id = input.id ?? this.uniqueId(idFor(input.name))
     const existing = this.records.find(record => record.id === id)
     if (input.id !== undefined && existing === undefined) throw new Error(t('error.unknownDevice', { id: input.id }))
+    // An empty reference means "no credential": the form sends it to clear one,
+    // and storing the empty string would leave a device that reads as holding a
+    // credential it cannot resolve (`hasSecret` true, `usablePath` finding
+    // nothing). Normalizing here keeps the document free of them; records
+    // written before this still read correctly through {@link referenceOf}.
+    const credentialId = input.credentialId === '' ? undefined : input.credentialId
     // A device pointed at a credential logs in the way that credential says: a
     // key credential means key auth, a password credential means password auth.
     // Deriving it here rather than trusting the caller keeps a mismatched pair
     // — which would connect with the wrong method — from ever being stored.
-    const credential = input.credentialId === undefined ? undefined : await this.credentials.get(input.credentialId)
+    const credential = credentialId === undefined ? undefined : await this.credentials.get(credentialId)
     const auth: DeviceAuth = credential?.kind ?? input.auth ?? existing?.auth ?? 'key'
     const baseRecord: DeviceRecord = {
       id,
@@ -246,9 +265,9 @@ export class DeviceStore {
     // Pointing a device at a credential retires its inline secret: leaving the
     // files in place would keep a copy of the key alive that nothing rotates and
     // that the device no longer reads.
-    if (input.credentialId !== undefined && input.credentialId !== record.credentialId) {
+    if (credentialId !== undefined && credentialId !== record.credentialId) {
       await this.removeSecret(record)
-      record.credentialId = input.credentialId
+      record.credentialId = credentialId
     }
     const submitted = record.credentialId !== undefined ? undefined
       : auth === 'password' ? input.password : input.key
@@ -312,6 +331,7 @@ export class DeviceStore {
   }
 
   private view(record: DeviceRecord): DeviceView {
+    const credentialId = referenceOf(record)
     return {
       id: record.id,
       name: record.name,
@@ -320,8 +340,8 @@ export class DeviceStore {
       user: record.user,
       remoteRoot: record.remoteRoot,
       auth: record.auth,
-      ...(record.credentialId === undefined ? {} : { credentialId: record.credentialId }),
-      hasSecret: record.secretFile !== undefined || record.credentialId !== undefined,
+      ...(credentialId === undefined ? {} : { credentialId }),
+      hasSecret: record.secretFile !== undefined || credentialId !== undefined,
       // Reported only when it means something: a password-auth device has no
       // key to unlock, so a passphrase there would be a secret nothing reads.
       hasPassphrase: record.auth === 'key' && record.passphraseFile !== undefined,
