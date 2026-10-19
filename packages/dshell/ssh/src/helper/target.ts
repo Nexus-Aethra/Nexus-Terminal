@@ -16,10 +16,8 @@
  * to the assembled-command path, which is why that path is a compatibility tier
  * rather than a rollback waiting to be deleted.
  */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DeviceConnection } from '../devices.js'
-import { localCwd, sshArgv, sshEnv } from '../runner.js'
+import { deviceTransport } from '../transport/transport.js'
 
 /**
  * The probe: the device's home directory, then a Node executable if it has one.
@@ -88,11 +86,9 @@ export class HelperTargets {
   private readonly cache = new Map<string, Promise<ResolvedTarget | undefined>>()
 
   /**
-   * @param ctx - host context holding the subprocess seam for the probe.
    * @param artifact - the helper this build ships, read at call time.
    */
   constructor(
-    private readonly ctx: Context,
     private readonly artifact: () => { hash: string },
   ) {}
 
@@ -131,23 +127,13 @@ export class HelperTargets {
 
   /** Ask the device where its home is and whether it has Node. */
   private async probe(device: DeviceConnection): Promise<ResolvedTarget | undefined> {
-    const handle = this.ctx.subprocess.spawn({
-      argv: sshArgv(device, PROBE),
-      cwd: localCwd(),
-      ...Object.keys(sshEnv(device)).length === 0 ? {} : { env: sshEnv(device) },
-      stdio: {
-        stdin: 'ignore',
-        stdout: { maxBytes: 8 * 1024 },
-        stderr: { maxBytes: 8 * 1024 },
-      },
-      graceMs: 10_000,
-    })
-    const outcome = await handle.done
-    if (outcome.exitCode !== 0) {
-      const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
-      throw new Error(stderr === '' ? `the device probe exited ${String(outcome.exitCode ?? 'on a signal')}` : stderr)
+    const result = await deviceTransport().exec(device, PROBE, { graceMs: 10_000 })
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() === ''
+        ? `the device probe exited ${String(result.exitCode ?? 'on a signal')}`
+        : result.stderr.trim())
     }
-    const [home = '', node = ''] = (handle.collected.stdout?.readFrom(0).text ?? '').trimEnd().split('\n')
+    const [home = '', node = ''] = result.stdout.trimEnd().split('\n')
     if (home.trim() === '' || !home.startsWith('/')) {
       throw new Error('the device did not report a usable home directory')
     }

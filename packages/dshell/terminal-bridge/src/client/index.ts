@@ -881,6 +881,7 @@ export class PtyStreamService extends Service {
         reason: typeof frame.message === 'string' ? frame.message : undefined,
         detail: undefined,
         lockedGroup: frame.lockedGroup === true,
+        failure: frame.failure,
       })
       // A locked group is not a transport failure: the identical refusal comes
       // back until the reader unlocks it, so the budget is kept for the retry

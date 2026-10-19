@@ -48,6 +48,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-ssh": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || 0.2.1-rc.2",
     "@nexus-aethra/dshell-std": "workspace:^",
+    "ssh2": "1.17.0",
     "zod": "4.4.3"
   },
   "peerDependencies": {
@@ -99,6 +100,7 @@
     "@deepseek-ai/schemastery": "^3.18.2",
     "@types/node": "^24",
     "@types/react": "~18.3.1",
+    "@types/ssh2": "1.15.6",
     "react": "^18.2.0",
     "tsdown": "^0.22.14",
     "typescript": "^6.0.3"

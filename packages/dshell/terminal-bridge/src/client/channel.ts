@@ -50,10 +50,10 @@ export interface WireFrame {
    */
   lockedGroup?: boolean
   /**
-   * `closed` frames: a failure the reader can act on, when the message alone
-   * does not say which action. A refused password and a wrong passphrase both
-   * arrive as one line of ssh prose, and only one of them is fixable by
-   * re-entering a secret.
+   * `closed`/`error` frames: a failure the reader can act on, when the message
+   * alone does not say which action. A refused secret and a changed host key
+   * both arrive as one sentence, and only one of them is fixable by re-entering
+   * a secret.
    */
   failure?: 'passphrase' | 'hostKey'
   /** `info` frames: OS identity the dock uses to build bash prompts. */

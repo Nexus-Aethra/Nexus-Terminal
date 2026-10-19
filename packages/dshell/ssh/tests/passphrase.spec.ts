@@ -1,15 +1,36 @@
 /**
- * Whether `ssh` is allowed to ask, and what it is offered when it does.
+ * What a stored secret becomes on the wire, and what it never becomes.
  *
- * `BatchMode` is the single option that decides this, and the mistake it guards
- * against is quiet in both directions: leaving it on makes an encrypted key fail
- * with no explanation, and taking it off makes every ordinary key failure wait on
- * a hook that has nothing to say. These pin which of the two each shape gets.
+ * The old `ssh` path answered these questions with argv options — `BatchMode`,
+ * `IdentitiesOnly`, an askpass hook pointed at one file — and the mistake each
+ * guarded against was quiet in both directions: an encrypted key that could not
+ * be asked for failed with no explanation, and a device that reached for an
+ * ambient identity connected as someone else. The transport answers the same
+ * questions structurally, so these pin the same decisions one layer down.
  */
 
-import { describe, expect, it } from 'vitest'
-import { sshArgv, sshEnv } from '../src/runner.js'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
+import { connectConfig } from '../src/transport/auth.js'
 import type { DeviceConnection } from '../src/devices.js'
+
+/** A directory holding the secrets these cases read, removed with the process. */
+const secrets = mkdtempSync(join(tmpdir(), 'dshell-auth-'))
+afterAll(() => { rmSync(secrets, { recursive: true, force: true }) })
+
+/** Write one secret exactly the way the device store writes it. */
+function secret(name: string, body: string): string {
+  const path = join(secrets, name)
+  writeFileSync(path, body.endsWith('\n') ? body : `${body}\n`, { mode: 0o600 })
+  return path
+}
+
+const KEY_BODY = '-----BEGIN OPENSSH PRIVATE KEY-----\nbody\n-----END OPENSSH PRIVATE KEY-----\n'
+const keyFile = secret('id_ed25519', KEY_BODY)
+const passphraseFile = secret('id_ed25519.passphrase', 'correct horse battery staple')
+const passwordFile = secret('web.password', 'not a real password')
 
 function device(over: Partial<DeviceConnection> = {}): DeviceConnection {
   return {
@@ -22,73 +43,75 @@ function device(over: Partial<DeviceConnection> = {}): DeviceConnection {
     auth: 'key',
     secretFile: undefined,
     passphraseFile: undefined,
-    askpassFile: '/d/askpass.sh',
     ...over,
   }
 }
 
-const key = device({ secretFile: '/k/id_ed25519' })
-const encryptedKey = device({ secretFile: '/k/id_ed25519', passphraseFile: '/k/id_ed25519.passphrase' })
-
 describe('a key device', () => {
-  it('refuses to be asked anything when no passphrase is stored', () => {
-    expect(sshArgv(key, 'true')).toContain('BatchMode=yes')
+  it('offers exactly its own key, and nothing else', async () => {
+    const config = await connectConfig(device({ secretFile: keyFile }))
+    expect(config.privateKey).toBe(KEY_BODY)
+    // No agent is ever configured, so an ambient identity cannot be reached by
+    // accident — the same guarantee `IdentitiesOnly=yes` used to give.
+    expect(config.agent).toBeUndefined()
+    expect(config.password).toBeUndefined()
+    expect(config.passphrase).toBeUndefined()
   })
 
-  it('is allowed to ask when a passphrase is stored', () => {
-    const argv = sshArgv(encryptedKey, 'true')
-    expect(argv).not.toContain('BatchMode=yes')
-    // Still bounded: a wrong passphrase must be a refusal, not a wait.
-    expect(argv).toContain('NumberOfPasswordPrompts=1')
+  it('carries the passphrase with the key it unlocks', async () => {
+    const config = await connectConfig(device({ secretFile: keyFile, passphraseFile }))
+    expect(config.privateKey).toBe(KEY_BODY)
+    // The stored file ends with the newline its writer appended, and a
+    // passphrase that carries it is a key that will not decrypt.
+    expect(config.passphrase).toBe('correct horse battery staple')
   })
 
-  it('still offers only its own key when a passphrase is stored', () => {
-    const argv = sshArgv(encryptedKey, 'true')
-    expect(argv).toContain('IdentitiesOnly=yes')
-    expect(argv).toContain('/k/id_ed25519')
-  })
-
-  it('allows asking with an ambient agent and no stored key at all', () => {
-    // A passphrase can also sit behind the harness user's own agent, and
-    // BatchMode would suppress that ask exactly as it suppresses ours.
-    const argv = sshArgv(device({ passphraseFile: '/k/id_ed25519.passphrase' }), 'true')
-    expect(argv).not.toContain('BatchMode=yes')
+  it('never sends a passphrase where there is no key to unlock', async () => {
+    const config = await connectConfig(device({ passphraseFile }))
+    expect(config.privateKey).toBeUndefined()
+    expect(config.passphrase).toBeUndefined()
   })
 })
 
 describe('a password device', () => {
-  it('is bounded and never batched', () => {
-    const argv = sshArgv(device({ auth: 'password', secretFile: '/k/web.password' }), 'true')
-    expect(argv).toContain('NumberOfPasswordPrompts=1')
-    expect(argv).toContain('PreferredAuthentications=password')
+  it('sends the password and never a key', async () => {
+    const config = await connectConfig(device({ auth: 'password', secretFile: passwordFile }))
+    expect(config.password).toBe('not a real password')
+    expect(config.privateKey).toBeUndefined()
+  })
+
+  it('ignores a passphrase recorded beside the password', async () => {
+    // A stray passphrase must not become the password: the two answer different
+    // prompts, and only one of them is asked for here.
+    const config = await connectConfig(device({
+      auth: 'password', secretFile: passwordFile, passphraseFile,
+    }))
+    expect(config.password).toBe('not a real password')
+    expect(config.passphrase).toBeUndefined()
   })
 })
 
-describe('the askpass environment', () => {
-  it('is empty when nothing may be asked', () => {
-    expect(sshEnv(key)).toEqual({})
+describe('a device with no stored secret', () => {
+  it('offers nothing at all', async () => {
+    // Refusing loudly is the honest outcome: the alternative — reaching for an
+    // ambient identity — would connect as whoever the host happens to be.
+    const config = await connectConfig(device())
+    expect(config.password).toBeUndefined()
+    expect(config.privateKey).toBeUndefined()
+    expect(config.passphrase).toBeUndefined()
   })
+})
 
-  // The load-bearing assertion of the whole change: pointing ssh's askpass hook
-  // at the PRIVATE KEY would hand it the key itself as the answer.
-  it('points at the passphrase, never at the key', () => {
-    const env = sshEnv(encryptedKey)
-    expect(env.DSHELL_SSH_ASKPASS_FILE).toBe('/k/id_ed25519.passphrase')
-    expect(env.SSH_ASKPASS).toBe('/d/askpass.sh')
-    expect(env.SSH_ASKPASS_REQUIRE).toBe('force')
-  })
-
-  it('points at the password for a password device', () => {
-    const env = sshEnv(device({ auth: 'password', secretFile: '/k/web.password' }))
-    expect(env.DSHELL_SSH_ASKPASS_FILE).toBe('/k/web.password')
-  })
-
-  // A password device with a stray passphrase recorded would otherwise send the
-  // passphrase to the password prompt.
-  it('ignores a passphrase on a password device', () => {
-    const env = sshEnv(device({
-      auth: 'password', secretFile: '/k/web.password', passphraseFile: '/k/web.passphrase',
-    }))
-    expect(env.DSHELL_SSH_ASKPASS_FILE).toBe('/k/web.password')
+describe('every device', () => {
+  it('keeps a dead link observable', async () => {
+    // The old `ServerAliveInterval=15, CountMax=3` and `ConnectTimeout=10`, so a
+    // half-open connection is noticed rather than waited on forever.
+    const config = await connectConfig(device())
+    expect(config.keepaliveInterval).toBe(15_000)
+    expect(config.keepaliveCountMax).toBe(3)
+    expect(config.readyTimeout).toBe(10_000)
+    expect(config.host).toBe('example.test')
+    expect(config.port).toBe(22)
+    expect(config.username).toBe('ops')
   })
 })

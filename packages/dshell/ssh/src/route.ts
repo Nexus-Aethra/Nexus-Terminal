@@ -108,7 +108,7 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         // With a remote directory the test also creates it: the dialog runs
         // this before creating the session, so a device that answers but
         // cannot host the directory is reported here, not after.
-        const testResult = await deps.router.test(input.deviceId, deps.ctx, input.remoteRoot ?? null)
+        const testResult = await deps.router.test(input.deviceId, input.remoteRoot ?? null)
         return { ...await state(), testResult }
       }
       case 'mount':
@@ -123,7 +123,7 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
           input.deviceId,
           input.remoteRoot ?? null,
           input.mount ?? null,
-          deps.ctx,
+          true,
         )
         const after = deps.router.assignmentForSession(input.sessionId)
         if (before?.deviceId !== after?.deviceId || before?.mount !== after?.mount) {
@@ -137,7 +137,7 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         // records, so evaluating it first would answer with the pre-install
         // list: the card would show nothing until some later call refreshed
         // it, which only happens on a reload.
-        const helper = await deps.router.installHelper(input.deviceId, deps.ctx)
+        const helper = await deps.router.installHelper(input.deviceId)
         return { ...await state(), helper }
       }
       case 'listKeys': {

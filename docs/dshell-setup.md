@@ -291,11 +291,10 @@ Three properties worth knowing before using it:
 
 - **It takes effect at the next start**, because a running harness cannot move
   files it is writing, and the next start MOVES the trees above rather than
-  copying them. Two things deliberately stay behind: `dshell/mnt/**` (each
+  copying them. One thing deliberately stays behind: `dshell/mnt/**` (each
   directory is a session's working directory, which dsh recorded as an absolute
-  path) and `dshell/ssh/ctl/**` (Unix sockets belonging to the running process).
-  Nothing at the destination is overwritten; a collision is reported on stderr
-  and left alone on both sides.
+  path). Nothing at the destination is overwritten; a collision is reported on
+  stderr and left alone on both sides.
 - **Clearing the field brings the files back.** The default root keeps a record
   of where its data went (`dshell/.dshell-data-root`), so 恢复默认 relocates them
   home at the next start instead of leaving the reader with an empty registry.

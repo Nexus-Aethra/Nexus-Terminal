@@ -27,23 +27,25 @@
  *
  * The migration is a MOVE, and it is selective on purpose:
  *
- *   - `dshell/ssh` (minus its control sockets), `dshell/buffer`,
+ *   - `dshell/ssh`, `dshell/buffer`,
  *     `dshell/tags.json` and `dshell-pty` travel, because they are dshell's own
- *     records and mean the same thing in either root.
+ *     records and mean the same thing in either root. The ssh tree travels
+ *     whole — registry, credentials, bindings and this plugin's own
+ *     `known_hosts` — and nothing in it is left behind: there is no per-process
+ *     scratch under it any more, because the transport that talks to a device
+ *     is a library call rather than a child process with a socket of its own.
  *   - `dshell/mnt/**` does NOT travel. Those are the local directories that
  *     stand in for device trees, and each one is the working directory of a
  *     session dsh recorded as an ABSOLUTE path. Moving them would leave every
  *     existing device session pointing at a directory that no longer exists, so
  *     they stay where they are; new sessions mount under the new root.
- *   - `dshell/ssh/ctl/**` does NOT travel: those are Unix sockets belonging to
- *     the process that is running right now, and they are recreated on demand.
  *
  * Nothing is ever deleted from the destination: an entry that is already there
  * is left alone and reported, so a root that already holds dshell data is never
  * merged or clobbered by accident.
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
@@ -80,15 +82,10 @@ export const DATA_ROOT_POINTER = '.dshell-data-root'
 
 /**
  * One entry of the move plan, as a path relative to a root.
- *
- * `skip` names children that stay behind — only the ssh tree needs it, and only
- * for `ctl` (see the module header).
  */
 interface RootMove {
   /** Path under both roots, which may be a directory or a file. */
   readonly path: string
-  /** Children of it that must not move. */
-  readonly skip?: readonly string[]
 }
 
 /**
@@ -99,13 +96,14 @@ interface RootMove {
  * a tree dshell adds later has to be considered here on purpose, not swept
  * along by a wildcard.
  *
- * Two children of the ssh tree are excluded, and both because they are not
- * records at all: `ctl/` holds control sockets belonging to a running process,
- * and `askpass.sh` is a helper script dshell regenerates on every start (its
- * bytes are fixed, so carrying it across would only ever look like a conflict).
+ * The ssh tree travels whole. It once had a `ctl/` child of live control sockets
+ * and an `askpass.sh` that was regenerated on every start; both are gone now
+ * that a device connection is an `ssh2` client inside this process, so the
+ * directory holds records only — and a record means the same thing under either
+ * root, which is the whole test for belonging on this list.
  */
 const ROOT_MOVES: readonly RootMove[] = [
-  { path: join('dshell', 'ssh'), skip: ['ctl', 'askpass.sh'] },
+  { path: join('dshell', 'ssh') },
   { path: join('dshell', 'buffer') },
   { path: join('dshell', 'tags.json') },
   { path: 'terminal-mode.json' },
@@ -236,12 +234,7 @@ interface MovedEntry {
 }
 
 /**
- * Move one planned entry, honouring its `skip` list.
- *
- * The ssh tree is the only entry with children that are not all alike, which is
- * why the report is per child: a directory whose keys moved but whose registry
- * was already at the destination is described as exactly that, rather than as
- * one lump that either did or did not move.
+ * Move one planned entry, then report what happened.
  *
  * @param from - the old root.
  * @param to - the new root.
@@ -251,25 +244,10 @@ interface MovedEntry {
 function movePlanned(from: string, to: string, move: RootMove): MovedEntry {
   const source = join(from, move.path)
   if (!existsSync(source)) return { moved: false, kept: [], failed: false }
-  if (move.skip === undefined) {
-    if (existsSync(join(to, move.path))) return { moved: false, kept: [move.path], failed: false }
-    return moveEntry(source, join(to, move.path))
-      ? { moved: true, kept: [], failed: false }
-      : { moved: false, kept: [], failed: true }
-  }
-  const destination = join(to, move.path)
-  mkdirSync(destination, { recursive: true })
-  const kept: string[] = []
-  let moved = false
-  let failed = false
-  for (const child of readdirSync(source)) {
-    if (move.skip.includes(child)) continue
-    const relative = join(move.path, child)
-    if (existsSync(join(destination, child))) { kept.push(relative); continue }
-    if (moveEntry(join(source, child), join(destination, child))) moved = true
-    else failed = true
-  }
-  return { moved, kept, failed }
+  if (existsSync(join(to, move.path))) return { moved: false, kept: [move.path], failed: false }
+  return moveEntry(source, join(to, move.path))
+    ? { moved: true, kept: [], failed: false }
+    : { moved: false, kept: [], failed: true }
 }
 
 /**

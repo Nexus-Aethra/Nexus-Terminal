@@ -41,8 +41,8 @@ interface DeviceRecord {
    * Absolute path of the stored passphrase for {@link secretFile}.
    *
    * A separate file rather than an option beside it, because the two answer to
-   * different prompts: `ssh` reads the key and its passphrase through one
-   * askpass hook, and the hook can only be pointed at one file.
+   * different prompts: the transport reads the key and its passphrase as two
+   * separate facts, and one file can only be one of them.
    */
   passphraseFile?: string
   /** Last observed helper deployment on this device, when checks have run. */
@@ -64,7 +64,7 @@ function referenceOf(record: DeviceRecord): string | undefined {
   return record.credentialId === undefined || record.credentialId === '' ? undefined : record.credentialId
 }
 
-/** Connection parameters resolved for one `ssh` invocation. */
+/** Connection parameters resolved for one connection attempt. */
 export interface DeviceConnection {
   readonly id: string
   readonly name: string
@@ -78,12 +78,11 @@ export interface DeviceConnection {
   /**
    * Stored passphrase file, when the key needs one.
    *
-   * The connection carries both because `ssh` will only be allowed to ASK when
-   * this is present: see {@link sshEnv} and `authArgs` in `runner.ts`.
+   * The connection carries both because the transport may only be handed a
+   * passphrase where a key is actually stored: see `connectConfig` in
+   * `transport/auth.ts`.
    */
   readonly passphraseFile: string | undefined
-  /** The askpass helper every password-auth connection points ssh at. */
-  readonly askpassFile: string
 }
 
 /** Stored secret path of a parsed record, accepting the legacy field name. */
@@ -180,11 +179,6 @@ export class DeviceStore {
     return join(this.root(), 'keys')
   }
 
-  /** The askpass helper ssh runs to obtain a stored password. */
-  get askpassPath(): string {
-    return join(this.root(), 'askpass.sh')
-  }
-
   /** Every device, in registration order. */
   async list(): Promise<readonly DeviceView[]> {
     await this.ensure()
@@ -211,7 +205,6 @@ export class DeviceStore {
           secretFile: await this.credentials.usablePath(credentialId, 'secret', record.id),
           passphraseFile: await this.credentials.usablePath(credentialId, 'passphrase', record.id),
         }),
-      askpassFile: this.askpassPath,
     }
   }
 
@@ -362,8 +355,8 @@ export class DeviceStore {
   private async writeSecret(deviceId: string, auth: DeviceAuth, secret: string): Promise<string> {
     await mkdir(this.secretDir, { recursive: true, mode: 0o700 })
     const path = join(this.secretDir, auth === 'password' ? `${deviceId}.password` : deviceId)
-    // A trailing newline is required by OpenSSH's key parser; a password file
-    // is read verbatim by the askpass helper, which strips it.
+    // A trailing newline is required by OpenSSH's key parser; the transport
+    // strips it back off a password before sending it (see `transport/auth.ts`).
     const body = secret.endsWith('\n') ? secret : `${secret}\n`
     await writeFile(path, body, { mode: 0o600 })
     await chmod(path, 0o600)
@@ -381,8 +374,8 @@ export class DeviceStore {
   private async writePassphrase(deviceId: string, passphrase: string): Promise<string> {
     await mkdir(this.secretDir, { recursive: true, mode: 0o700 })
     const path = join(this.secretDir, `${deviceId}.passphrase`)
-    // The askpass helper strips the trailing newline, the same way it strips
-    // one from a password.
+    // The transport strips the trailing newline before handing the passphrase to
+    // the key parser, the same way it strips one from a password.
     await writeFile(path, `${passphrase}\n`, { mode: 0o600 })
     await chmod(path, 0o600)
     return path
@@ -392,29 +385,6 @@ export class DeviceStore {
     if (record.passphraseFile === undefined) return
     await rm(record.passphraseFile, { force: true })
     delete record.passphraseFile
-  }
-
-  /**
-   * Write the askpass helper. ssh has no flag for any of its secrets, so all of
-   * them go through OpenSSH's own hook: ssh executes this script and reads the
-   * answer from its stdout, and the script reads whichever file the connection
-   * names in `DSHELL_SSH_ASKPASS_FILE`.
-   *
-   * One file rather than a branch on the prompt is deliberate. A key device
-   * authenticates by public key and can therefore never be asked for a password,
-   * and a password device is never asked for a passphrase, so the prompt text
-   * would only ever be re-deriving what the connection already knows.
-   */
-  private async writeAskpass(): Promise<void> {
-    await mkdir(this.root(), { recursive: true, mode: 0o700 })
-    const body = [
-      '#!/bin/sh',
-      '# dshell-ssh: hands ssh the secret stored for one device (see askpassPath).',
-      'cat "$DSHELL_SSH_ASKPASS_FILE"',
-      '',
-    ].join('\n')
-    await writeFile(this.askpassPath, body, { mode: 0o700 })
-    await chmod(this.askpassPath, 0o700)
   }
 
   /** Load once; a missing or unreadable document is an empty registry. */
@@ -431,7 +401,6 @@ export class DeviceStore {
     } catch {
       this.records = []
     }
-    await this.writeAskpass()
   }
 
   /** Rewrite the document atomically. */

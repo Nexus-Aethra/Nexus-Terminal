@@ -14,12 +14,10 @@
  *
  * 1. **RPC**, when a verified helper connection exists and the caller asked for
  *    a shape it can serve. The command travels as argv; nothing is assembled.
- * 2. **The assembled-command path**, otherwise — one `ssh` invocation whose
- *    remote line is `cd … && exec …`. This is what the whole package did before
- *    this milestone. It still earns its place for two reasons: it serves output
- *    modes RPC cannot (`'pipe'`, `'inherit'`, a control channel — the local ssh
- *    client has real pipes), and it is the tier a device without Node falls back
- *    to.
+ * 2. **A channel on the device's pooled connection**, otherwise — one channel
+ *    per process, running the same `cd … && exec …` line the assembled path
+ *    always used. This is what the whole package did before this milestone, and
+ *    it is also the tier a device without Node falls back to.
  * 3. **The caller's own spawn**, for a session with no assignment at all.
  *
  * The choice is made per call, so a device whose helper is not up yet — or was
@@ -35,11 +33,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { SubprocessHandle, SubprocessRuntime, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SshRouter } from './router.js'
-import { localCwd, quote, sshArgv, sshEnv } from './runner.js'
+import { quote } from './shell-quote.js'
 import { mappingFor, remoteDirFor } from './mount.js'
-import { DshellSshConnection, DshellSshConnections, localHelperArtifact } from './connection.js'
+import { DshellSshConnections, localHelperArtifact } from './connection.js'
+import type { DshellSshConnection } from './connection.js'
 import { HelperTargets } from './helper/target.js'
 import { RemoteProcess, supportsStdio } from './remote-process.js'
+import { DeviceSubprocessHandle } from './channel-process.js'
+import { deviceTransport } from './transport/transport.js'
 
 /**
  * The device's own ripgrep.
@@ -65,9 +66,9 @@ interface SubprocessShape {
  * How the DEVICE should name a program the caller resolved for the host.
  *
  * `undefined` means "not translatable" — an absolute host path whose device
- * equivalent we do not know. Those take the assembled-command path, where the
- * device reports its own error. Renaming on a guess would silently run a
- * *different* program than the caller named, which is worse than failing.
+ * equivalent we do not know. Those take the channel lane, where the device
+ * reports its own error. Renaming on a guess would silently run a *different*
+ * program than the caller named, which is worse than failing.
  *
  * @param program - the caller's `argv[0]`.
  * @returns the device-side program name, or undefined when unknown.
@@ -97,7 +98,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
   if (subprocess === undefined) return () => {}
   const connections = new DshellSshConnections()
-  const targets = new HelperTargets(ctx, localHelperArtifact)
+  const targets = new HelperTargets(localHelperArtifact)
   // The filesystem provider reaches the helper through the router, because the
   // pool's lifetime belongs to this seam: a second pool would mean a second
   // helper process on the device.
@@ -141,51 +142,44 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
       if (bound !== undefined) throw new Error(router.unservableMessage(bound.deviceId))
       return original.call(this, spec)
     }
-    // Checked BEFORE the RPC branch, and for two reasons at once. The legacy hop
-    // builds its own ssh argv, so routing it would recurse into this same seam —
-    // and `ssh` is a bare name, so it would otherwise look perfectly routable
-    // and end up running an ssh client *on the device*, with the host's argv,
-    // credentials and known_hosts paths.
-    //
-    // That hop is not migration debt. It is the lane this seam takes whenever
-    // the RPC branch below does not apply — no verified connection, an
-    // unresolvable program, or a stdio shape the connection does not carry —
-    // and it is the only lane a device without Node has. The file layer keeps
-    // its own copy of the same two-lane choice (`remote-fs-shell.ts` beside
-    // `remote-fs-helper.ts`), so its commands arrive here as `ssh` and take
-    // this branch rather than being routed a second time.
-    if (basename(spec.argv[0] ?? '') === 'ssh') return original.call(this, spec)
+    // The channel lane: the same remote line the assembled path used, over a
+    // channel on the device's pooled connection instead of over a local `ssh`
+    // process. There is no recursion guard to write here any more — nothing in
+    // this package spawns a local ssh client, so no argv can name one.
     const directory = remoteDirectory(assignment, spec.cwd, agent?.session.header.cwd)
     const program = deviceProgram(spec.argv[0] ?? '')
     const connection: DshellSshConnection | undefined = connections.peek(assignment.device.id)
     if (connection !== undefined && program !== undefined && supportsStdio(spec)) {
       return new RemoteProcess(connection, { ...spec, cwd: directory }, {
         program,
-        // Preserve the diagnostic the assembled path used to produce: the same
-        // cause arrives here as a platform error object instead of a message.
+        // Preserve the diagnostic the channel lane produces: the same cause
+        // arrives here as a platform error object instead of a message.
         describeStartFailure: (name, error) => name === 'rg' && /ENOENT/u.test(error.message)
           ? new Error(MISSING_RG, { cause: error })
           : error,
       })
     }
-    // The legacy line uses the DEVICE's name for the program where we know it.
-    // Running the caller's absolute host path would fail on the device, which is
-    // what the old rg-only special case existed to avoid; generalizing it here
-    // keeps the no-helper tier behaving the way it did before this milestone.
+    // The line uses the DEVICE's name for the program where we know it. Running
+    // the caller's absolute host path would fail on the device, which is what
+    // the rg-only special case existed to avoid; generalizing it here keeps the
+    // no-helper tier behaving the way it did before this milestone.
     const legacyArgv = program === undefined ? spec.argv : [program, ...spec.argv.slice(1)]
     const line = `cd ${shellDir(directory)} && exec ${legacyArgv.map(quote).join(' ')}`
-    return original.call(this, {
-      ...spec,
-      argv: sshArgv(assignment.device, line),
-      cwd: localCwd(),
-      env: { ...spec.env, ...sshEnv(assignment.device) },
-    })
+    return new DeviceSubprocessHandle(deviceTransport().open(assignment.device, line, {
+      graceMs: spec.graceMs,
+      ...spec.signal === undefined ? {} : { signal: spec.signal },
+      // The transport closes stdin for a command that asked for no input, writes
+      // and closes it for a batch payload, and leaves it open for a pipe.
+      ...typeof spec.stdio.stdin === 'object' ? { stdin: spec.stdio.stdin.data } : {},
+      ...spec.stdio.stdin === 'pipe' ? { openStdin: true } : {},
+    }), spec)
   }
   return () => {
     target.spawn = original
     router.onDeviceChanged = undefined
     router.helperConnection = undefined
     void connections.disposeAll()
+    deviceTransport().releaseAll()
   }
 }
 

@@ -1,9 +1,9 @@
 /**
  * What a broken terminal connection looks like.
  *
- * A device session's terminal is an `ssh` process, so "cannot connect" is not
- * an exception anywhere in this program — it is a process that exits after
- * printing a line. Which of two very different situations that is, only the
+ * A device session's terminal runs on the device, so "cannot connect" is not
+ * an exception anywhere in this program — it is a channel that closes after
+ * saying why. Which of two very different situations that is, only the
  * host can tell: a shell that HAD reached a prompt and then lost its link
  * deserves a marker appended to the output the user was reading, while a shell
  * that never came up has nothing to append to and deserves a screen of its
@@ -68,7 +68,7 @@ export interface ConnectionFacts {
    *
    * `hostKey` is checked before every other rule and only for a bound session,
    * because it is the one failure where the retry button is not just useless but
-   * misleading: `ssh` will refuse again, identically, until the record is dropped
+   * misleading: the device will refuse again, identically, until the record is dropped
    * deliberately. `passphrase` does NOT get a screen of its own — the remedy is
    * re-entering a secret in the device form, and this panel has no business
    * being where that form lives.
@@ -80,9 +80,9 @@ export interface ConnectionFacts {
  * Turn the wire state into the one thing to draw.
  *
  * Everything here turns on one fact: whether the session is BOUND to a device.
- * A bound session's terminal is an `ssh` process — a handshake over a network
- * that takes seconds, that can stall, and that has a host on the far end worth
- * naming — so its startup is an event the user needs a screen for. A local
+ * A bound session's terminal is a channel to a device — a handshake over a
+ * network that takes seconds, that can stall, and that has a host on the far end
+ * worth naming — so its startup is an event the user needs a screen for. A local
  * session's terminal is a fork of this very process, up in milliseconds, with
  * nothing to narrate and nobody to blame.
  *
@@ -125,7 +125,7 @@ export function connectionView(facts: ConnectionFacts): ConnectionView {
   if (status === 'open') {
     // The wire is up but the shell has not answered: a device that accepts the
     // connection and then stalls — the usual shape of a half-dead host, or of
-    // a ControlMaster sitting in front of a dead sshd. A local shell that has
+    // a dead device link. A local shell that has
     // not answered yet is simply still starting.
     return bound && !ready ? { kind: 'notice', tone: 'connecting' } : { kind: 'none' }
   }
@@ -257,7 +257,7 @@ export interface ConnectionPanelProps extends ConnectionActions {
 
 /** The two fingerprints a changed host key has to be judged against. */
 export interface HostKeyFacts {
-  /** What this plugin recorded, which `ssh` refused. */
+  /** What this plugin recorded, which the device refused. */
   trusted: readonly string[]
   /**
    * What the device presents now.
@@ -372,7 +372,7 @@ export function LockedDoor(props: {
  * The intermediate screen for a device session that is not up.
  *
  * Deliberately centred and opaque: what it covers is either nothing or a
- * single ssh error line, and the user needs to know this is not a terminal yet
+ * single diagnostic line, and the user needs to know this is not a terminal yet
  * rather than read a prompt-less black area. A retry is always offered, since
  * the two ways out are "the network came back" and "the device needs fixing".
  */
@@ -387,7 +387,8 @@ export function ConnectionPanel(props: ConnectionPanelProps): ReactElement {
   const failed = props.phase === 'failed'
   const address = props.device === undefined ? t('connection.device') : props.device
   // A host-key screen shows the fingerprints instead: the diagnostic line is
-  // ssh's own banner, which states the problem and nothing the reader can use.
+  // the transport's own refusal, which states the problem and nothing the
+  // reader can use.
   // The locked door is the same idea one step further: it says the same thing
   // in a form the reader can act on, so the refusal text stands down.
   const locked = props.lockedGroup !== undefined && props.onUnlock !== undefined

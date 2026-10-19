@@ -42,7 +42,7 @@ import { hostCopy, type DshellTerminalBridgeHostTranslator } from './host-locale
 import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
-import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifySshFailure, diagnosticTail, exitLabel, lockedVaultRefusal, type DshellPtySession, type SshFailure } from './pty.js'
+import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifyDeviceFailure, diagnosticTail, exitLabel, lockedVaultRefusal, type DshellPtySession, type DeviceShellPlan, type SshFailure } from './pty.js'
 import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
@@ -358,7 +358,7 @@ export class DshellTerminalBridge extends Service {
         interactiveShellPlan(
           sessionId: string,
           sessionCwd: string | undefined,
-        ): Promise<{ argv: readonly string[]; env: Record<string, string> } | undefined>
+        ): Promise<DeviceShellPlan | undefined>
       }
       | undefined
     return routing?.interactiveShellPlan(sessionId, cwd)
@@ -618,12 +618,11 @@ export class DshellTerminalBridge extends Service {
     const requested = this.pendingSizes.get(dshSessionId)
     if (requested !== undefined) session.resize(requested.cols, requested.rows)
     this.mains.set(agent, record)
-    // A device session's local child is `ssh`, which holds the local
-    // terminal's foreground for the session's whole life — reading it would
-    // call every device session a full-screen program. The bytes still carry
-    // the alternate screen, so that signal keeps working there, and the manual
-    // toggle covers the rest.
-    if (!session.redirected) {
+    // A device session's shell runs on the device, so it has no local process
+    // to watch — reading one would call every device session a full-screen
+    // program. The bytes still carry the alternate screen, so that signal keeps
+    // working there, and the manual toggle covers the rest.
+    if (!session.redirected && session.pid !== undefined) {
       record.stopForeground = watchForeground(session.pid, (program) => {
         if (record.dead !== undefined) return
         if (!record.foreground.setProgram(program)) return
@@ -984,7 +983,7 @@ export class DshellTerminalBridge extends Service {
   shellCwd(dshSessionId: string): string | undefined {
     const record = this.recordFor(dshSessionId)
     const session = record?.session
-    if (session === undefined || session.redirected) return undefined
+    if (session === undefined || session.redirected || session.pid === undefined) return undefined
     try {
       return readlinkSync(`/proc/${String(session.pid)}/cwd`)
     } catch {
@@ -1235,8 +1234,7 @@ export class DshellTerminalBridge extends Service {
     if (record.dead !== undefined) return
     const text = record.buffer.text()
     const detail = diagnosticTail(text)
-    const failure = classifySshFailure(text)
-    record.dead = { reason, detail, ready: record.ready, time: Date.now(), failure }
+    record.dead = { reason, detail, ready: record.ready, time: Date.now(), failure: record.session.failure }
     record.stopOutput()
     record.stopExit()
     record.stopForeground()
@@ -1247,7 +1245,13 @@ export class DshellTerminalBridge extends Service {
     // dead PTY is an endless 100ms loop. Dropping them is what the shell's
     // death means anyway.
     record.inputQueue.length = 0
-    this.broadcast(record.dshSessionId, { kind: 'closed', reason, detail, ready: record.ready, failure })
+    this.broadcast(record.dshSessionId, {
+      kind: 'closed',
+      reason,
+      detail,
+      ready: record.ready,
+      failure: record.session.failure,
+    })
     // Release the dsh-side name reservation NOW so a same-tick respawn
     // (via ensureLiveMain) doesn't collide with the still-resident owner.
     // A PTY can outlive its context — teardown kills the child, and this exit
@@ -1288,7 +1292,7 @@ export class DshellTerminalBridge extends Service {
       detail: diagnosticTail(text),
       ready: record.ready,
       time: Date.now(),
-      failure: classifySshFailure(text),
+      failure: record.session.failure,
     }
     record.stopOutput()
     record.stopExit()
@@ -1608,6 +1612,9 @@ export class DshellTerminalBridge extends Service {
         // A locked vault group is the other one: the shell was never attempted,
         // the token is the way out, and a retry would only repeat the refusal.
         ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
+        // A device whose credential or host key was refused: the message alone
+        // does not say which of the two the reader can act on.
+        ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
       })
     })
   }
@@ -1631,6 +1638,7 @@ export class DshellTerminalBridge extends Service {
         sessionId: dshSessionId,
         ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
         ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
+        ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
       })
     })
   }

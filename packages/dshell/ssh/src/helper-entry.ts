@@ -6,7 +6,7 @@
  * and the rule that it takes no arguments. The behaviour lives in
  * `helper/run.ts` so it can be tested over explicit streams.
  *
- * Launched as `node --disable-sigusr1 <this file>`; see `helperArgv` for why
+ * Launched as `node --disable-sigusr1 <this file>`; see `helperLine` for why
  * that flag is not optional.
  */
 import { fileURLToPath } from 'node:url'

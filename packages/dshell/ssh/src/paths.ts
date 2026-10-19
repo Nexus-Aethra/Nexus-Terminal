@@ -50,7 +50,7 @@ export function dshellDataRoot(): string | undefined {
   return configured !== undefined && configured.trim().length > 0 ? configured : undefined
 }
 
-/** Device directory: registry, secrets, askpass helper, bindings, control sockets. */
+/** Device directory: registry, secrets, bindings and this plugin's known_hosts. */
 export function sshDeviceRoot(): string {
   return join(harnessHome(), 'dshell', 'ssh')
 }

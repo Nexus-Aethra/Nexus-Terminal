@@ -13,6 +13,13 @@
  * (`terminal_read`, send viewports, motd) is ANSI-stripped so tool
  * results stay clean text.
  *
+ * A session bound to a device gets the same canvas over a DIFFERENT shell:
+ * a pty channel on the device's own connection, opened by the SSH plugin
+ * and consumed here structurally. The two shapes share every behaviour a
+ * reader can see — settle, scrollback, resize, signals, exit reporting —
+ * because that behaviour lives in one base class and only the four I/O
+ * primitives (write, kill, resize, exit) differ between them.
+ *
  * Send settle is ours: PROMPT_COMMAND prints the OSC 133;D marker before
  * every prompt, so a settled prompt is "marker seen and the stream is
  * quiet" — the ~60ms fast path — with a 350ms silence fallback and an
@@ -20,6 +27,7 @@
  */
 
 import { StringDecoder } from 'node:string_decoder'
+import type { Duplex } from 'node:stream'
 import * as nodePty from 'node-pty'
 import { TerminalError } from '@deepseek-ai/dsh-terminal'
 import type {
@@ -65,9 +73,9 @@ function stripAnsi(text: string): string {
 }
 
 /**
- * What ssh says when it cannot connect, matched loosely on purpose: these
- * strings are printed by the `ssh` client in every locale-relevant failure we
- * care about (refused, timed out, key rejected, name not resolved).
+ * What a transport says when it cannot connect, matched loosely on purpose: a
+ * refused connection, a stalled handshake, a name that does not resolve and a
+ * key that was rejected all arrive as one of these lines.
  */
 const SSH_DIAGNOSTIC =
   /(ssh:|kex_exchange_identification|Connection (?:refused|timed out|closed|reset)|Permission denied|Host key verification failed|Could not resolve hostname|No route to host|Network is unreachable|Operation timed out)/i
@@ -76,12 +84,14 @@ const SSH_DIAGNOSTIC =
  * A failure the reader has a way to DO something about, as opposed to one they
  * can only wait out.
  *
- * Every ssh failure arrives as text on a stream that is torn down with the
- * session, so the whole diagnostic has to be recovered from it. Most failures
- * need nothing but a line to read: a refused connection is retried, a stalled
- * handshake is waited on. These two are different — both are a decision the
- * user has to make, and both are recoverable, which is exactly why they are
- * named here instead of being left for the reader to recognise in prose:
+ * A device session's failures arrive as structured errors from the transport,
+ * which is the difference between naming one and guessing at it: the old path
+ * had to match English prose out of the ssh client's stderr, which reported a
+ * non-English device's refused password as an unknown fault. Most failures need
+ * nothing but a line to read — a refused connection is retried, a stalled
+ * handshake is waited on. These two are different: both are a decision the user
+ * has to make, and both are recoverable, which is exactly why they are named
+ * here instead of being left for the reader to recognise in prose:
  *
  *  - `passphrase`: the stored secret for this device was refused. Nothing about
  *    the network is wrong, so retrying cannot help, and the user has to re-enter
@@ -95,26 +105,27 @@ const SSH_DIAGNOSTIC =
 export type SshFailure = 'passphrase' | 'hostKey'
 
 /**
- * The actionable failure in a stretch of terminal output, if there is one.
+ * The actionable failure one spawn rejection carries, if any.
  *
- * Matched over the whole text rather than over the diagnostic line alone: ssh
- * prints the passphrase complaint on one line and the host-key banner across
- * several, so which of the two happened is only readable once both are in view.
- * Unchanged keys never reach here — a refused password is `Permission denied`,
- * which is deliberately NOT matched, because the user is not being asked to
- * supply anything.
+ * Read structurally off the error's `kind`, which the device transport sets
+ * where the cause is known. Read structurally rather than imported because this
+ * package composes without the SSH plugin: the field name is the one stable
+ * thing a refusal carries across that boundary, the same way
+ * {@link lockedVaultRefusal} reads a name.
  *
- * @param text - raw terminal output, ANSI included.
- * @returns the failure kind, or undefined when the output describes none.
+ * The order matters. A device whose host key changed makes the transport refuse
+ * the connection outright, but a refused key can ALSO surface as an
+ * authentication failure on a host that will not say which of the two it is —
+ * and reading that as a bad passphrase would send the user to fix a secret that
+ * is perfectly correct. Host key therefore wins.
+ *
+ * @param error - whatever the spawn plan or the transport rejected with.
+ * @returns the failure kind, or undefined when it describes none.
  */
-export function classifySshFailure(text: string): SshFailure | undefined {
-  const plain = stripAnsi(text)
-  // Checked before the passphrase complaint: a changed host key makes ssh offer
-  // to retry with a different key, and that retry is what draws the
-  // "Load key ... incorrect passphrase" line. Reading it as a bad passphrase
-  // would send the user to fix a secret that is perfectly correct.
-  if (/REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed/i.test(plain)) return 'hostKey'
-  if (/incorrect passphrase|Enter passphrase for key/i.test(plain)) return 'passphrase'
+export function classifyDeviceFailure(error: unknown): SshFailure | undefined {
+  const kind = (error as { kind?: unknown } | undefined)?.kind
+  if (kind === 'hostKey') return 'hostKey'
+  if (kind === 'auth') return 'passphrase'
   return undefined
 }
 
@@ -220,13 +231,28 @@ export interface DshellPtySession extends TerminalBackendSession {
   onExit(listener: (status: TerminalSessionStatus) => void): () => void
   /** Resize the pty (the browser canvas drives this). */
   resize(cols: number, rows: number): void
-  /** Top-level process id; present for every PTY this backend spawns. */
+  /**
+   * Top-level process id, or 0 when this session has no local process.
+   *
+   * A local shell has one; a device session does not — its process runs on the
+   * device, so there is no local pid to watch a foreground program through or to
+   * read a working directory from. Every reader that wants a real one is behind
+   * a `redirected` check for exactly that reason, and 0 is a pid no process on
+   * this machine can have.
+   */
   readonly pid: number
+  /**
+   * The actionable failure this session ended with, when it ended with one.
+   *
+   * Read structurally off the transport's error by the session that can see it;
+   * a local shell never sets it.
+   */
+  readonly failure: SshFailure | undefined
   /**
    * Whether the spawn plan sent this shell somewhere else.
    *
-   * A device session's terminal is a local `ssh` process, so that process's own
-   * working directory says nothing about the directory the user's shell is in.
+   * A device session's shell runs on the device, so nothing local — no working
+   * directory, no foreground process — describes where the user actually is.
    */
   readonly redirected: boolean
 }
@@ -288,17 +314,42 @@ class RawSendOperation implements TerminalSendOperation {
 }
 
 /**
- * What one PTY should run.
+ * A shell running on a device, as this package consumes it.
  *
- * The default is the local interactive bash. A device-bound session replaces it
- * with `ssh … -t 'cd <dir> && exec bash -l'`, so the user's own terminal is the
- * device's shell instead of a local one sitting in an empty mount directory.
- * `env` is merged over the process environment — that is how the password-auth
- * askpass hook reaches ssh.
+ * Declared here rather than imported from the SSH plugin, because this package
+ * composes without it: the plugin publishes a plan and this interface is the
+ * structural half of that contract, the same way the router is reached by
+ * service name.
  */
-export interface PtySpawnPlan {
-  readonly argv: readonly string[]
-  readonly env?: Record<string, string> | undefined
+export interface DeviceShellHandle {
+  /** The shell's stdin and stdout, as one duplex channel of raw bytes. */
+  readonly stream: Duplex
+  /** Settles with the shell's exit status; never rejects. */
+  readonly done: Promise<{ exitCode: number | null; signal: string | null }>
+  /** Resize the remote terminal. */
+  setWindow(rows: number, cols: number): void
+  /** End the shell. */
+  close(): void
+}
+
+/** What the backend needs before it can open one device shell. */
+export interface DeviceShellWindow {
+  readonly rows: number
+  readonly cols: number
+  /** `$TERM` on the device; this package names the terminal it renders. */
+  readonly terminalType: string
+}
+
+/**
+ * How the backend opens one session's VISIBLE terminal on its device.
+ *
+ * An opener rather than a command line: the device's address, its credentials
+ * and its trust decision belong to the SSH plugin, and copying any of them here
+ * would be a second place that has to agree about them.
+ */
+export interface DeviceShellPlan {
+  readonly kind: 'device'
+  readonly open: (window: DeviceShellWindow) => Promise<DeviceShellHandle>
 }
 
 /** What the backend knows about the session whose terminal it is about to spawn. */
@@ -322,10 +373,10 @@ export interface PtySpawnQuery {
  */
 export type PtySpawnPlanResolver = (
   query: PtySpawnQuery,
-) => PtySpawnPlan | undefined | Promise<PtySpawnPlan | undefined>
+) => DeviceShellPlan | undefined | Promise<DeviceShellPlan | undefined>
 
 /** The default local interactive shell, unchanged from before this seam existed. */
-const LOCAL_SHELL: PtySpawnPlan = { argv: ['/bin/bash', '--noprofile', '--norc', '-i'] }
+const LOCAL_SHELL = { argv: ['/bin/bash', '--noprofile', '--norc', '-i'] } as const
 
 /**
  * Whether THIS machine can host the local shell at all.
@@ -334,8 +385,8 @@ const LOCAL_SHELL: PtySpawnPlan = { argv: ['/bin/bash', '--noprofile', '--norc',
  * spelling, and dshell's terminal is that program's output — so on Windows a
  * local session has nothing to show and the honest move is to say so rather than
  * let a spawn fail with ENOENT. A session BOUND to a device is unaffected: its
- * plan is the ssh line, which runs on the far machine, and Windows is a perfectly
- * good place to run an `ssh` client from.
+ * shell runs on the far machine, and Windows is a perfectly good place to reach
+ * a device from.
  *
  * Not probed for a Windows POSIX shell (Git Bash, WSL): that would be a
  * different product decision — the completion oracle, the POSIX quoting and the
@@ -349,15 +400,21 @@ export const LOCAL_SHELL_SUPPORTED = process.platform !== 'win32'
 export const LOCAL_SHELL_UNSUPPORTED_REASON =
   'dshell 的集成终端需要一个 POSIX shell；这台机器是 Windows，本地起不了。绑一台设备就能用。'
 
-/** One raw PTY session owned by the dshell backend. */
-class LocalRawSession implements DshellPtySession {
+/**
+ * Everything a raw shell session is, apart from how its bytes travel.
+ *
+ * The local shell and the device shell differ in exactly four operations —
+ * writing input, signalling the process, resizing the window, and the hard kill
+ * that ends a close — and in nothing a reader can observe. Settle, scrollback
+ * trimming, the prompt marker, the exit status and the ANSI-stripped reads are
+ * therefore written once, here, and both subclasses only answer the four.
+ */
+abstract class RawSessionBase implements DshellPtySession {
   motd = ''
   readonly pid: number
-  /** A plan that is not the local default means the shell runs elsewhere. */
   readonly redirected: boolean
 
-  private readonly pty: nodePty.IPty
-  private readonly decoder = new StringDecoder('utf8')
+  protected readonly decoder = new StringDecoder('utf8')
   private retained = ''
   private retainedTruncated = false
   private readonly outputListeners = new Set<(chunk: string) => void>()
@@ -368,44 +425,45 @@ class LocalRawSession implements DshellPtySession {
   private lastOutputAt = Date.now()
   private markerAt = 0
   private settleTimer: NodeJS.Timeout | undefined
-  private closed = false
+  protected closed = false
+  /**
+   * Why a shell that never started did not start.
+   *
+   * Set by a subclass whose transport refused before the shell existed; it is
+   * the last moment that reason is knowable, so it is kept for the failure
+   * `initialize` raises.
+   */
+  protected startupDetail: string | undefined
+
+  /**
+   * @param id - session id inside `ctx.terminals`.
+   * @param pid - the local process id, when this session has one.
+   * @param redirected - whether the shell runs somewhere other than here.
+   * @param t - bound host translator for the spawn-failure copy a reader sees.
+   */
+  readonly failure: SshFailure | undefined = undefined
 
   constructor(
     readonly id: TerminalSessionId,
-    cwd: string | undefined,
-    cols: number,
-    rows: number,
+    pid: number,
+    redirected: boolean,
     private readonly t: DshellTerminalBridgeHostTranslator,
-    plan: PtySpawnPlan = LOCAL_SHELL,
-    /**
-     * A real UTF-8 locale to run under, resolved from the ambient one when
-     * that is a C-family name (`shellLocale`); undefined leaves it alone.
-     */
-    locale: string | undefined = undefined,
   ) {
-    const [file, ...args] = plan.argv
-    if (file === undefined) throw new Error('dshell PTY: spawn plan has no program')
-    this.pty = nodePty.spawn(file, args, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      ...(cwd === undefined || cwd === '' ? {} : { cwd }),
-      env: {
-        ...process.env,
-        ...(locale === undefined ? {} : { LC_ALL: locale }),
-        TERM: 'xterm-256color',
-        ...plan.env,
-      } as Record<string, string>,
-    })
-    this.pid = this.pty.pid
-    this.redirected = plan !== LOCAL_SHELL
-    this.pty.onData((data: string) => { this.onData(data) })
-    this.pty.onExit(({ exitCode, signal }) => {
-      this.statusValue = { kind: 'exited', exitCode, signal: exitSignalName(signal) }
-      this.settleActive('session_exit')
-      for (const listener of [...this.exitListeners]) listener(this.statusValue)
-    })
+    this.pid = pid
+    this.redirected = redirected
   }
+
+  /** Write bytes to the shell's stdin. */
+  protected abstract write(text: string): void
+
+  /** Signal the shell's process tree. */
+  protected abstract killTree(signal: NodeJS.Signals | TerminalSignal): void
+
+  /** Resize the shell's window. */
+  abstract resize(cols: number, rows: number): void
+
+  /** End the shell without asking, for the close() fallback. */
+  protected abstract hardKill(): void
 
   /** Capture the first prompt as the motd (dsh's startup contract). */
   async initialize(signal?: AbortSignal): Promise<void> {
@@ -414,22 +472,22 @@ class LocalRawSession implements DshellPtySession {
     signal?.throwIfAborted()
     if (result.waitReason === 'session_exit' || result.waitReason === 'timeout') {
       // Carry the diagnostic out with the failure: this is the last moment the
-      // session exists, and the output that says WHY (ssh's own stderr) is
-      // about to be discarded with it. Without this a failed device session
-      // reports only "the shell exited", which names neither the host nor the
-      // cause.
+      // session exists, and the output that says WHY (the transport's own
+      // refusal, or the shell's stderr) is about to be discarded with it.
+      // Without this a failed device session reports only "the shell exited",
+      // which names neither the host nor the cause.
       const status = result.sessionStatus
       // "before its first prompt", not "during startup": this same failure is
       // what a respawn after a dropped connection produces, where nothing is
       // starting up — it is the NEW shell that never got to a prompt. The head
       // is host copy the connection panel renders, so it comes from the bound
-      // translator; the exit label and ssh diagnostic inside it are data.
+      // translator; the exit label and the diagnostic inside it are data.
       const head = result.waitReason === 'session_exit'
         ? this.t('spawn.exitBeforePrompt', {
             exit: status.kind === 'exited' ? ` (${exitLabel(status)})` : '',
           })
         : this.t('spawn.startupTimeout')
-      const detail = diagnosticTail(this.retained)
+      const detail = this.startupDetail ?? diagnosticTail(this.retained)
       throw new Error(detail === undefined ? head : this.t('spawn.withDetail', { head, detail }))
     }
     this.motd = result.viewport
@@ -443,12 +501,12 @@ class LocalRawSession implements DshellPtySession {
     }
     const operation = new RawSendOperation(() => {
       // Cancel = SIGINT to the foreground group, via the line discipline.
-      if (this.statusValue.kind === 'running') this.pty.write('\u0003')
+      if (this.statusValue.kind === 'running') this.write('\u0003')
     })
     this.active = operation
     const input = `${request.text}${request.submit ? '\r' : ''}`
     if (input.length > 0 && !operation.cancelRequested) {
-      this.pty.write(input)
+      this.write(input)
     }
     this.scheduleSettle(operation, input.length > 0)
     return operation
@@ -476,9 +534,10 @@ class LocalRawSession implements DshellPtySession {
 
   async signal(signal: TerminalSignal): Promise<TerminalSignalResult> {
     // The pty line discipline delivers SIGINT/SIGTSTP from control chars to
-    // the true foreground group; other signals target the shell's group.
-    if (signal === 'SIGINT') this.pty.write('\u0003')
-    else if (signal === 'SIGTSTP') this.pty.write('\u001a')
+    // the true foreground group; other signals target the shell's group. A
+    // device session has no local group, so those go to the channel instead.
+    if (signal === 'SIGINT') this.write('\u0003')
+    else if (signal === 'SIGTSTP') this.write('\u001a')
     else this.killTree(signal)
     return { delivered: true, targetPgid: this.pid }
   }
@@ -499,9 +558,9 @@ class LocalRawSession implements DshellPtySession {
         const onExit = (): void => { clearTimeout(deadline); this.exitListeners.delete(onExit); resolve() }
         this.exitListeners.add(onExit)
       })
-      if (this.statusValue.kind === 'running') this.pty.kill()
+      if (this.statusValue.kind === 'running') this.hardKill()
     } else {
-      this.pty.kill()
+      this.hardKill()
     }
   }
 
@@ -516,17 +575,12 @@ class LocalRawSession implements DshellPtySession {
     return () => { this.exitListeners.delete(listener) }
   }
 
-  resize(cols: number, rows: number): void {
-    if (cols > 0 && rows > 0) this.pty.resize(cols, rows)
-  }
-
   /** Latest raw output snapshot (the bridge seeds nothing from this; its buffer owns history). */
   snapshot(): string {
     return this.retained
   }
 
-  private onData(data: string): void {
-    const text = this.decoder.write(data)
+  protected onData(text: string): void {
     if (text.length === 0) return
     this.lastOutputAt = Date.now()
     this.retained += text
@@ -534,6 +588,13 @@ class LocalRawSession implements DshellPtySession {
     this.trackMarker(text)
     for (const listener of [...this.outputListeners]) listener(text)
     this.active?.append(text)
+  }
+
+  /** Record the exit the transport reported, and settle anything waiting on it. */
+  protected exited(status: TerminalSessionStatus): void {
+    this.statusValue = status
+    this.settleActive('session_exit')
+    for (const listener of [...this.exitListeners]) listener(status)
   }
 
   private trimRetained(): void {
@@ -597,10 +658,141 @@ class LocalRawSession implements DshellPtySession {
     this.active = undefined
     operation.settle(waitReason, this.statusValue)
   }
+}
 
-  private killTree(signal: NodeJS.Signals | TerminalSignal): void {
-    try { process.kill(-this.pid, signal as NodeJS.Signals) } catch { /* already gone */ }
-    try { process.kill(this.pid, signal as NodeJS.Signals) } catch { /* already gone */ }
+/** The local interactive shell: a node-pty child of this process. */
+class LocalRawSession extends RawSessionBase {
+  private readonly pty: nodePty.IPty
+
+  constructor(
+    id: TerminalSessionId,
+    cwd: string | undefined,
+    cols: number,
+    rows: number,
+    t: DshellTerminalBridgeHostTranslator,
+    plan: { argv: readonly string[]; env?: Record<string, string> | undefined },
+    /**
+     * A real UTF-8 locale to run under, resolved from the ambient one when
+     * that is a C-family name (`shellLocale`); undefined leaves it alone.
+     */
+    locale: string | undefined = undefined,
+  ) {
+    super(id, 0, false, t)
+    const [file, ...args] = plan.argv
+    if (file === undefined) throw new Error('dshell PTY: spawn plan has no program')
+    this.pty = nodePty.spawn(file, args, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      ...(cwd === undefined || cwd === '' ? {} : { cwd }),
+      env: {
+        ...process.env,
+        ...(locale === undefined ? {} : { LC_ALL: locale }),
+        TERM: 'xterm-256color',
+        ...plan.env,
+      } as Record<string, string>,
+    })
+    ;(this as { pid: number }).pid = this.pty.pid
+    this.pty.onData((data: string) => { this.onData(this.decoder.write(data)) })
+    this.pty.onExit(({ exitCode, signal }) => {
+      this.exited({ kind: 'exited', exitCode, signal: exitSignalName(signal) })
+    })
+  }
+
+  protected write(text: string): void {
+    this.pty.write(text)
+  }
+
+  resize(cols: number, rows: number): void {
+    if (cols > 0 && rows > 0) this.pty.resize(cols, rows)
+  }
+
+  protected hardKill(): void {
+    this.pty.kill()
+  }
+
+  protected killTree(signal: NodeJS.Signals | TerminalSignal): void {
+    const pid = this.pid
+    if (pid === undefined) return
+    try { process.kill(-pid, signal as NodeJS.Signals) } catch { /* already gone */ }
+    try { process.kill(pid, signal as NodeJS.Signals) } catch { /* already gone */ }
+  }
+}
+
+/**
+ * A device session's shell: a pty channel on the device's own connection.
+ *
+ * There is no local process and no local pid — the shell is the device's — so
+ * everything the base can observe locally is answered from the channel instead:
+ * its output, its exit status, its window. The connection itself is opened by
+ * the plan, which is why a refusal arrives here as a rejected promise rather
+ * than as a dead child: it is recorded as the startup detail and the session
+ * ends, so `initialize` reports it exactly as it reports a local shell that
+ * died before its first prompt.
+ */
+class DeviceShellSession extends RawSessionBase {
+  private shell: DeviceShellHandle | undefined
+
+  constructor(
+    id: TerminalSessionId,
+    cols: number,
+    rows: number,
+    t: DshellTerminalBridgeHostTranslator,
+    private readonly plan: DeviceShellPlan,
+  ) {
+    super(id, 0, true, t)
+    void this.open(cols, rows)
+  }
+
+  /** Open the device shell, or record why it could not be opened. */
+  private async open(cols: number, rows: number): Promise<void> {
+    let shell: DeviceShellHandle
+    try {
+      shell = await this.plan.open({ rows, cols, terminalType: 'xterm-256color' })
+    } catch (error) {
+      this.startupDetail = error instanceof Error ? error.message : String(error)
+      // Structured, because the reader has to CHOOSE a presentation from it: a
+      // refused secret and a changed host key are both fixable, and only one of
+      // them is fixable by re-entering the secret.
+      ;(this as { failure: SshFailure | undefined }).failure = classifyDeviceFailure(error)
+      this.exited({ kind: 'exited', exitCode: null, signal: null })
+      return
+    }
+    if (this.closed) {
+      shell.close()
+      return
+    }
+    this.shell = shell
+    // A channel's bytes are Buffers, so the decoder lives here rather than in
+    // the base: node-pty hands over strings that are already decoded.
+    shell.stream.on('data', (chunk: Buffer) => { this.onData(this.decoder.write(chunk)) })
+    shell.stream.on('error', () => undefined)
+    void shell.done.then((outcome) => {
+      this.exited({
+        kind: 'exited',
+        exitCode: outcome.exitCode,
+        signal: outcome.signal as NodeJS.Signals | null,
+      })
+    })
+  }
+
+  protected write(text: string): void {
+    this.shell?.stream.write(text)
+  }
+
+  resize(cols: number, rows: number): void {
+    this.shell?.setWindow(rows, cols)
+  }
+
+  protected hardKill(): void {
+    this.shell?.close()
+  }
+
+  protected killTree(_signal: NodeJS.Signals | TerminalSignal): void {
+    // There is no local tree to signal. The channel close below is what the
+    // device reads as the session going away, and sshd hangs up the shell's
+    // process group for it — the same outcome a local kill produced.
+    this.shell?.close()
   }
 }
 
@@ -618,7 +810,7 @@ class LocalRawSession implements DshellPtySession {
 export class DshellPtyBackend implements TerminalBackend {
   readonly type = 'shell'
 
-  private readonly sessions = new Map<TerminalSessionId, LocalRawSession>()
+  private readonly sessions = new Map<TerminalSessionId, DshellPtySession>()
   private disposed = false
 
   constructor(
@@ -653,20 +845,22 @@ export class DshellPtyBackend implements TerminalBackend {
       sessionId: spec.owner?.id === undefined ? undefined : String(spec.owner.id),
       cwd: spec.cwd,
     })
-    // Checked against the RESOLVED plan, so a device session — whose plan is the
-    // ssh line — is never refused for being on a Windows host.
+    // Checked against the RESOLVED plan, so a device session — whose shell is
+    // the device's — is never refused for being on a Windows host.
     if (plan === undefined && !LOCAL_SHELL_SUPPORTED) {
       throw new TerminalError(LOCAL_SHELL_UNSUPPORTED_REASON, 'NO_SESSION')
     }
-    const session = new LocalRawSession(
-      spec.sessionId as TerminalSessionId,
-      spec.cwd,
-      this.cols,
-      this.rows,
-      this.t,
-      plan ?? LOCAL_SHELL,
-      await shellLocale(),
-    )
+    const session = plan === undefined
+      ? new LocalRawSession(
+        spec.sessionId as TerminalSessionId,
+        spec.cwd,
+        this.cols,
+        this.rows,
+        this.t,
+        LOCAL_SHELL,
+        await shellLocale(),
+      )
+      : new DeviceShellSession(spec.sessionId as TerminalSessionId, this.cols, this.rows, this.t, plan)
     this.sessions.set(spec.sessionId as TerminalSessionId, session)
     // Unnamed spawns are other plugins creating shells in dshell's world; the
     // bridge may want to claim them as the agent's shell. Fired after the

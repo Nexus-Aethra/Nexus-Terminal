@@ -1,11 +1,11 @@
 /**
  * The assembled-command lane of the device filesystem.
  *
- * One `ssh` invocation per operation, its output parsed back into the seam's
- * vocabulary. This is what the whole package did before the helper, and it
- * keeps two jobs: it is the tier a device without Node has — the helper *is* a
- * Node process, so nothing can be done about that from here — and it answers
- * while a helper connection is still being established.
+ * One command per operation, its output parsed back into the seam's vocabulary.
+ * This is what the whole package did before the helper, and it keeps two jobs: it
+ * is the tier a device without Node has — the helper *is* a Node process, so
+ * nothing can be done about that from here — and it answers while a helper
+ * connection is still being established.
  *
  * Its costs are the reason the helper exists, and they are visible in this
  * file: a filename may contain any byte but NUL, so a listing needs a
@@ -13,16 +13,25 @@
  * every invocation pins `LC_ALL=C`; and a failure can only be classified by
  * matching English text out of stderr, which reports a permission problem on a
  * non-English device as an unknown I/O fault.
+ *
+ * What changed with the transport is only how the command travels: it used to be
+ * one local `ssh` process per call, and it is now one channel on the device's
+ * pooled connection. The command strings below are the same lines they always
+ * were, which is why this lane's behaviour is unchanged apart from the cost.
  */
 import { FsError, FsVersion } from '@deepseek-ai/dsh-fs'
 import type { DshellSshTranslate } from './host-locales.js'
 import type {
   RemoteFsDeps, RemoteFsTransport, RemoteKind, RemoteListEntry, RemoteStat,
 } from './remote-fs-transport.js'
-import { localCwd, quote, sshArgv, sshEnv } from './runner.js'
+import { quote } from './shell-quote.js'
+import { deviceTransport } from './transport/transport.js'
 
 /** The error text this file's classifier reads; see the note in the module header. */
 const MISSING_PATH = /No such file or directory|cannot statx? .*No such/i
+
+/** How long one assembled command may run before the device is asked to stop. */
+const COMMAND_GRACE_MS = 5_000
 
 /**
  * `stat`'s machine-readable record: filesystem type, size, device, inode, and
@@ -52,74 +61,53 @@ interface RemoteRun {
   readonly truncated: boolean
 }
 
-/** The device filesystem over `ssh`, one command per operation. */
+/** The device filesystem over one channel per command. */
 export class ShellFsTransport implements RemoteFsTransport {
   constructor(private readonly deps: RemoteFsDeps) {}
 
   /** Run one command on the device and collect its output. */
   private async run(
     command: string,
-    options: { signal?: AbortSignal | undefined; stdin?: string | undefined; maxBytes?: number | undefined } = {},
+    options: { signal?: AbortSignal | undefined; stdin?: string | undefined } = {},
   ): Promise<RemoteRun> {
-    const maxBytes = options.maxBytes ?? 8 * 1024 * 1024
-    const handle = this.deps.ctx.subprocess.spawn({
-      argv: sshArgv(this.deps.device, command),
-      cwd: localCwd(),
-      stdio: {
-        stdin: options.stdin === undefined ? 'ignore' : { data: options.stdin },
-        stdout: { maxBytes },
-        stderr: { maxBytes: 64 * 1024 },
-      },
-      graceMs: 5_000,
-      env: sshEnv(this.deps.device),
+    const result = await deviceTransport().exec(this.deps.device, command, {
+      graceMs: COMMAND_GRACE_MS,
       ...options.signal === undefined ? {} : { signal: options.signal },
+      ...options.stdin === undefined ? {} : { stdin: options.stdin },
     })
-    const outcome = await handle.done
-    const stdout = handle.collected.stdout?.readFrom(0)
-    const stderr = handle.collected.stderr?.readFrom(0)
-    if (outcome.exitCode === null) {
-      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(outcome.signal ?? 'unknown') }), 'FS_ABORTED')
+    if (result.exitCode === null) {
+      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(result.signal ?? 'unknown') }), 'FS_ABORTED')
     }
-    return {
-      stdout: stdout?.text ?? '',
-      stderr: stderr?.text ?? '',
-      exitCode: outcome.exitCode,
-      truncated: stdout?.lossy === true,
-    }
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, truncated: result.truncated }
   }
 
   /**
    * Run one command and collect its stdout as raw bytes.
    *
    * Text collection decodes and would corrupt binary output, so image and
-   * byte-range reads go through a raw pipe instead.
+   * byte-range reads take the channel's own stream instead of a decoded one.
    */
   private async runBinary(command: string, signal?: AbortSignal): Promise<Buffer> {
-    const handle = this.deps.ctx.subprocess.spawn({
-      argv: sshArgv(this.deps.device, command),
-      cwd: localCwd(),
-      stdio: { stdin: 'ignore', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
-      graceMs: 5_000,
-      env: sshEnv(this.deps.device),
+    const run = await deviceTransport().open(this.deps.device, command, {
+      graceMs: COMMAND_GRACE_MS,
       ...signal === undefined ? {} : { signal },
     })
     const chunks: Buffer[] = []
-    if (handle.stdout !== undefined) {
-      for await (const chunk of handle.stdout as AsyncIterable<Buffer>) chunks.push(chunk)
-    }
-    const outcome = await handle.done
+    const stderr: string[] = []
+    run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk.toString('utf8')) })
+    for await (const chunk of run.stream as AsyncIterable<Buffer>) chunks.push(chunk)
+    const outcome = await run.done
     if (outcome.exitCode === null) {
       throw new FsError(this.deps.t('error.remoteSignal', { signal: String(outcome.signal ?? 'unknown') }), 'FS_ABORTED')
     }
     if (outcome.exitCode !== 0) {
-      // stderr was collected alongside the piped stdout and has to be read back
-      // for the classifier to see it: a failure handed an empty stream is
+      // stderr was collected alongside the streamed stdout and has to be read
+      // back for the classifier to see it: a failure handed an empty stream is
       // classified from nothing, and every read that failed for a knowable
       // reason reported an unknown I/O fault instead.
-      const stderr = handle.collected.stderr?.readFrom(0)
       throw classifyRemoteFailure({
         stdout: '',
-        stderr: stderr?.text ?? '',
+        stderr: stderr.join(''),
         exitCode: outcome.exitCode,
         truncated: false,
       }, command, this.deps.t)
@@ -203,17 +191,14 @@ export class ShellFsTransport implements RemoteFsTransport {
   async stream(path: string, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>> {
     const deps = this.deps
     return Promise.resolve((async function* stream(): AsyncIterable<Uint8Array> {
-      const handle = deps.ctx.subprocess.spawn({
-        argv: sshArgv(deps.device, `cat -- ${quote(path)}`),
-        cwd: localCwd(),
-        stdio: { stdin: 'ignore', stdout: 'pipe', stderr: { maxBytes: 64 * 1024 } },
-        graceMs: 5_000,
-        env: sshEnv(deps.device),
+      // Opened inside the generator, so a caller that never iterates never dials:
+      // nothing is left running on the device, because nothing was started.
+      const run = await deviceTransport().open(deps.device, `cat -- ${quote(path)}`, {
+        graceMs: COMMAND_GRACE_MS,
         ...signal === undefined ? {} : { signal },
       })
-      if (handle.stdout === undefined) throw new FsError(`cannot read "${path}"`, 'FS_IO_ERROR')
-      for await (const chunk of handle.stdout as AsyncIterable<Buffer>) yield chunk
-      const outcome = await handle.done
+      for await (const chunk of run.stream as AsyncIterable<Buffer>) yield chunk
+      const outcome = await run.done
       if (outcome.exitCode !== 0) {
         throw classifyRemoteFailure({ stdout: '', stderr: '', exitCode: outcome.exitCode ?? 1, truncated: false }, path, deps.t)
       }

@@ -375,15 +375,19 @@ is created.
 
 Devices themselves are registered on the **Plugins** panel — `插件` in the sidebar →
  `@nexus-aethra/dshell-bundle` → the `dshell-ssh` row's `配置` — with a name, host, port, user, remote
- working directory, and either `密钥` (an OpenSSH private key; leave it empty to use your local ssh
- agent / `~/.ssh/config`) or `密码`.
+ working directory, and either `密钥` (an OpenSSH private key) or `密码`, both held in a vault group.
 
-- Connections use `IdentitiesOnly=yes`, carrying only that device's own key;
-- Passwords go through OpenSSH's askpass hook, never onto a command line;
+- Connections use an embedded SSH client (`ssh2`), carrying only that device's own key — no host
+  `ssh` binary, no `~/.ssh/config`, no ssh agent;
+- Passwords are handed to that client directly, never onto a command line;
 - Keys and passwords live in `$DSH_HOME/dshell/ssh/keys/`, mode `0600`;
 - Host keys are trusted into dshell's own `known_hosts`, leaving your personal file alone. A successful
   `测试` reports `已连接 user@host（system）· N ms` and, when a host key is trusted,
   `主机密钥 SHA256:…（首次信任，请与服务器管理员核对 | 已信任）`.
+
+Not supported: hardware keys (`sk-*` / FIDO / PKCS#11), `~/.ssh/config` directives such as
+`ProxyJump` and `ProxyCommand`, and agent forwarding. A device behind a bastion needs the bastion
+itself registered as the device.
 
 Once bound to a device, that session's **commands, files and terminal all live on the device**:
 

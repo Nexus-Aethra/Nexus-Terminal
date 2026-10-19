@@ -348,14 +348,18 @@ flowchart LR
 真实的 ssh 往返先验证连通性，验证不过不会把会话建出来。
 
 设备本身在**插件面板**上登记：侧边栏 `插件` → `@nexus-aethra/dshell-bundle` → `dshell-ssh` 那一行的
-`配置`（名称、host、端口、用户名、远端工作目录；登录方式可选 `密钥`（OpenSSH 私钥，留空则用你本机
-ssh agent / `~/.ssh/config`）或 `密码`）。
+`配置`（名称、host、端口、用户名、远端工作目录；登录方式可选 `密钥`（OpenSSH 私钥）或 `密码`，
+两者都存在保险箱的分组里）。
 
-- 连接用 `IdentitiesOnly=yes`，只带这台设备自己的钥匙；
-- 密码通过 OpenSSH 的 askpass 传递，不出现在命令行里；
+- 连接用内置的 SSH 客户端（`ssh2`），只带这台设备自己的钥匙——不依赖宿主 `ssh` 程序、
+  不读 `~/.ssh/config`、不走 ssh agent；
+- 密码直接交给这个客户端，不出现在命令行里；
 - 密钥与密码写在 `$DSH_HOME/dshell/ssh/keys/`，权限 `0600`；
 - 主机密钥记到 dshell 自己的 `known_hosts`，不动你个人的那份。`测试` 成功时会显示
   `已连接 user@host（系统）· N ms` 和 `主机密钥 SHA256:…（首次信任，请与服务器管理员核对 | 已信任）`。
+
+暂不支持：硬件密钥（`sk-*` / FIDO / PKCS#11）、`~/.ssh/config` 里的 `ProxyJump` / `ProxyCommand`
+等指令、以及 agent 转发。跳板机后面的设备，需要把跳板机本身作为设备登记。
 
 绑定设备后，这个会话的**命令、文件和终端都在设备上**：
 
