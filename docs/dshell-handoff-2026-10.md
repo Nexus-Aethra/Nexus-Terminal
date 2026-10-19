@@ -7,29 +7,32 @@
 本文里的每条读数都是 2026-10-19 在本机（Linux，`/home/wpp/nexus/Nexus-Shell`）复跑或复扫得到的，
 命令一起写出来了，可以直接推翻我。
 
+> 2026-10-20 在 Windows 上复跑并修正过一轮：§0 的状态、§1 的版本/测试/工作区/npm 三行、
+> §5 补了一条只在 Windows 上炸的（§5 末），§7 的期望数字同步。桌面版的实测路径见 §5 末。
+
 ## 0. 三句话状态
 
 1. **宿主 `ssh` 依赖已经整个拆掉**：设备连接改走内置的 `ssh2` 客户端，Windows 上不再需要装
    OpenSSH Client，也不再读写用户的 `~/.ssh`。改动已提交（`7728876`）并推到
    `origin/feat/dshell-device-metrics`，领先 main **18 个提交**。
-2. **门禁全绿、真机验收通过**：561/561 测试、typecheck 干净、build 通过；DSHBox 容器里对
+2. **门禁全绿、真机验收通过**：564 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。
-3. **没发版、没打 tag**：0.1.14 线只发到 `0.1.14-alpha.3`（npm `alpha` dist-tag），
-   `latest` 仍是 `0.1.13`。合 main、发版、打 tag 都还没做——按规矩先问 wpplight。
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.7`（npm `alpha` dist-tag），
+   `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-device-metrics`，**已推 origin 并设了上游**，领先 main 18 个提交 | `git status -sb`、`git rev-list --count main..HEAD` |
-| HEAD | `7728876`（`feat(dshell/ssh): the transport is a library, not the host's ssh`） | `git log --oneline -1` |
+| 当前分支 | `feat/dshell-device-metrics`，**已推 origin 并设了上游**，领先 main 19 个提交 | `git status -sb`、`git rev-list --count main..HEAD` |
+| HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
-| 工作区 | 干净，只剩 8 个未跟踪的 `assets/*.mp4` | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.3` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 50 files / **561 tests passed**，约 2 s | `pnpm run test` |
+| 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
+| 版本 | 11 个包全部 `0.1.14-alpha.7` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 58 files / **567 tests passed / 44 skipped**，约 3 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.3` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.7` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -183,6 +186,42 @@ dshbox container start <id>
 **前提仍要说清**：以上是读代码 + Linux 本机跑出来的推断，没有在真机 macOS 上验过；
 `node-pty@1.2.0-beta.15` 在 mac 上的原生编译、dsh 桌面版 mac 包本身都没验过。
 
+**2026-10-20 在 Windows 桌面版上实测出的第三条**（§5 说的"只在 Linux 上成立"之外，
+还有一条**反过来只在 Windows 上炸**的）：Windows 上 `O_APPEND` 句柄**不能** `ftruncate`——
+`SetEndOfFile` 需要 `FILE_WRITE_DATA`，而追加句柄只有 `FILE_APPEND_DATA`，于是返回
+`ERROR_ACCESS_DENIED`，Node 报 `EPERM`。`terminal-bridge` 的 PTY 日志正是用追加句柄开的，
+spawn 重置时 `handle.truncate(0)` 直接抛 `EPERM`；而 dsh 宿主把**未捕获 rejection 当致命错误**
+（`dsh-app-boot` 的 `installFailLoud`），所以**整个桌面版被一条回滚日志带走**
+（`dsh: fatal load failure`，退出码 1）。
+
+修法是**按路径截断**——自己开一个读写句柄，各平台都有那个权限，追加句柄之后照样写到
+（新）文件尾；不引平台分支，Linux/macOS 语义不变。
+
+**两条教训，比这个 bug 本身更值得记住**：
+
+1. **Linux 容器里绿的东西，在 Windows 上可能直接 EPERM**。跨平台约束里，
+   "句柄语义"这一类和"路径分隔符"是同一级别的坑。
+2. **本地容器副本上的临时补丁会掩盖源码缺陷**。这块 EPERM 当初在容器里是用手写补丁
+   （`DSHELL-WIN-EPERM-PATCH`）绕过去的，容器全程绿；而走 npm 包的**桌面版照崩不误**——
+   补丁只活在容器那一份 `lib/buffer.js` 里，源码从没改过。**绕过症状的补丁不是修复。**
+
+**验收读数（2026-10-20，Windows 桌面版）**：把桌面 profile 的 `@nexus-aethra/dshell-bundle`
+换成新版（走 GUI 的「插件 → 添加插件」；中途**必须先卸载**——GUI 只认"这个插件装没装"，
+不认版本号，装之前还会拿上一次输入时的缓存结果挡你），重启宿主进程，再解锁分组 `test`、
+重连设备会话——**就是之前崩了两次的那一个**（终端会话 03:11 / tencent）：PTY 起来了，
+远端提示符 `root@VM-0-6-ubuntu:~#` 出来了，**没有新的崩溃日志**（日志目录里最新的一份仍是
+修复前的 `19-11-05` / `19-11-30`）。
+
+一条容易误判的事实：**桌面版的本机终端在 Windows 上根本起不来**，界面会明说
+"dshell 的集成终端需要一台 POSIX shell 来跑，而这台机器是 Windows"。这是设计，不是故障；
+所以 Windows 上唯一能跑通终端的路径是**绑设备**（ssh 过去，终端在那台机器上跑）。
+
+**顺带修掉的第二个坑**（同一个类，不同的调用点）：设备 shell 的起始目录用 `quote(root)`
+拼出来，于是 `~` 被引号包住 → 设备读到的是"一个叫 `~` 的目录" → `cd` 失败 → 每起一次终端
+都打一行「dshell: 远端目录 ~ 不存在，已回到登录目录」。`quoteDevicePath` 早就在
+`shell-quote.ts` 里写好了（tilde 必须在引号外，理由写在那儿），只是 `deviceShellPlan`
+漏用了它。现在命令构造抽成了可测的 `deviceShellCd`，并补了断言：要 `cd ~`，不能是 `cd '~'`。
+
 ## 6. 交接纪律（先读这条再看代码）
 
 - **绝不 `git add -A`**。工作区的 `??` 有 8 个成片 mp4，只按路径 add；未跟踪文件不删。
@@ -209,7 +248,7 @@ dshbox container start <id>
 cd /home/wpp/nexus/Nexus-Shell
 git status -sb                 # 应显示与 origin/feat/dshell-device-metrics 同步
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 561/561 + 干净
+pnpm run test && pnpm run typecheck     # 期望 564/564 + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 git status --short             # 只剩 assets/*.mp4 八个未跟踪，就是干净现场
 ```
