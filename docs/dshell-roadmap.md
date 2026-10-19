@@ -4528,3 +4528,110 @@ web template:
   `.deb` rebuild, not an npm step (design 10.30's profile rules).
 - The token in `~/.npmrc.publish` has been pasted through a transcript and
   should be rotated.
+
+## Phase 10.46 — the transport is a library, not the host's ssh
+
+Committed 2026-10-19 as `7728876` on `feat/dshell-device-metrics`.
+
+The host `ssh` binary was the one dependency dshell could not supply, and it
+failed in four ways at once: absent on a stock Windows install until the user
+adds the OpenSSH Client optional feature; reading `~/.ssh/config` and
+`~/.ssh/known_hosts`, which are the user's files and not dshell's to write;
+costing a process spawn per command that the harness then wrapped in a systemd
+scope of its own (Phase 10.13 measured that at 0.39 s a call); and an
+spawn-ENOENT that only ever fired on Windows. Replacing it with an in-process
+`ssh2` client removes all four, and it is what lets a device session's terminal
+be a session rather than a wrapper around someone else's.
+
+### The three doors
+
+`ssh/src/transport/transport.ts` pools one client per device, keyed by the
+device AND a fingerprint of the credentials it was opened with — a rotated key
+must not keep serving from a connection authenticated with the old one, which
+would look exactly like a device that still accepts it. Over that pool:
+
+| door | shape | used by |
+| --- | --- | --- |
+| `exec` | one channel, bounded collect, closed when the command ends | test, helper deploy, `remote-fs-shell` |
+| `open` | one channel kept alive, fed through dsh's `SubprocessHandle` seam | the legacy command lane for a bound session |
+| `shell` | a pty channel | the device terminal |
+
+`open` is the seam that matters. dsh hands a plugin a `SubprocessHandle`, and
+`ssh/src/channel-process.ts` is one — a `PassThrough` for each of stdin, stdout
+and stderr over a channel, with the same collect-and-spill contract dsh's own
+runner implements. So the harness's caller sees the object it already knows,
+while the bytes never leave this process. `runner.ts`, the askpass helper and
+`ssh-client.ts` are gone, and with them the `ctl/` sockets the data-root
+migration had to step around.
+
+### Host keys are dshell's own
+
+`ssh/src/transport/known-hosts.ts` keeps a `known_hosts` under dshell's data
+root in OpenSSH's hashed format (`|1|<salt>|<hmac>`), read and written by this
+package alone. First contact is trust-on-first-use and says so; a later
+disagreement is refused with both fingerprints rather than silently accepted.
+`probeHostKey` asks a host for its key without authenticating, which is what
+the device card's key-change flow reads.
+
+A compatibility reading worth recording: a `known_hosts` written by the
+PREVIOUS build was read back correctly by the new one (the container's entry
+predates this commit and the test still reported 已信任), so an upgrade does
+not re-learn every host.
+
+### What is deliberately not covered
+
+Written into `dshell-architecture.md` § 19 and both READMEs rather than left to
+be discovered:
+
+- **hardware keys** (`sk-*` / FIDO / PKCS#11) — the signature has to happen in
+  a device or a daemon that holds it, and `ssh2` has neither.
+- **`~/.ssh/config`** — `ProxyJump`, `ProxyCommand`, `Include`, `Match` and
+  per-host options are not read. A device behind a bastion needs the bastion
+  itself registered as the device.
+- **agent forwarding** and `ssh-add` — the agent is the host's; dshell
+  authenticates only with the credential the vault holds.
+- **security cadence follows `ssh2`** — the CVE surface of the SSH
+  implementation is now a dependency's release schedule rather than the
+  operating system's. Pinned at exactly `1.17.0`.
+
+The remote command line is unchanged on purpose: `LC_ALL=C` still prefixes every
+remote command, a command's text still travels verbatim, and the settle marker
+still rides an injected `PROMPT_COMMAND` printing OSC `133;D`.
+
+### Acceptance
+
+Container `dshell-metrics-run` (dsh `v0.2.1-rc.2`) with the local build injected,
+against the real device:
+
+| what | reading |
+| --- | --- |
+| connection test | `已连接 root@VM-0-6-ubuntu · 1096ms`, host key `SHA256:ptAAuu4t…（已信任）` |
+| helper deploy | `present`, digest matches, 319 ms |
+| device terminal | remote prompt `root@VM-0-6-ubuntu:~#`, OSC `133;D;0` + `3008;…exit=success` |
+| Ctrl+C | `sleep 30` → `exitCode: 130` |
+| file list / write / read back / search | `/root` listed; 32-byte local→remote copy `done`; `cat` on the device returns the bytes; `grep -rl` finds it |
+| no host `ssh` | exactly one TCP connection to `:22`, owned by the harness process itself |
+
+Plus a pre-flight outside the container: pure-JS `ssh2` (no native binding, which
+is what the container ends up with) dials the device, passes the host-key
+verifier and runs a command with exit code 0.
+
+The suite is 50 files / 561 tests, and it is green on ten consecutive runs —
+the tenth matters, because one of them exposed a real flake in
+`transport.spec.ts`'s `channelOf`, which waited a fixed number of event-loop
+turns for a channel that dialing reaches through real file I/O. It now waits for
+the run to have subscribed to the channel's outcome, against a wall-clock
+deadline. A gate that passes once is not a gate.
+
+### Not yet done
+
+No release, no tag: the 0.1.14 line stops at `0.1.14-alpha.3` on npm's `alpha`
+dist-tag while `latest` stays `0.1.13`. Merging to main, releasing and tagging
+are all still owed a decision.
+
+> **This journal has a gap.** Phases 10.46 onward are recorded here, but the
+> work between 10.45 (the 0.1.2 release) and this one — the credential vault,
+> the device form moving to vault groups, the device metrics readout, the 0.1.14
+> alpha line — is not written up as phases. Read
+> [`dshell-handoff-2026-10.md`](./dshell-handoff-2026-10.md) for the live state
+> and `git log` for the sequence.

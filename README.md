@@ -467,7 +467,7 @@ have something to say:
 | `中断点` | You handed this turn to someone else and are waiting (`⏸ 等待 <peer> 回信`); reversible with `撤回` |
 | `管道任务` | Another session delegated work to you; lists the pending tickets |
 | `连接` | The host websocket dropped; offers `重新连接` |
-On Windows the integrated terminal cannot run: it needs a POSIX shell and there is none on the host, so the terminal view says so and offers the way out — bind a device and the session connects over ssh, with the terminal running on that machine. A device-bound session is unaffected; Windows is a fine place to run an `ssh` client from.
+On Windows the integrated terminal cannot run: it needs a POSIX shell and there is none on the host, so the terminal view says so and offers the way out — bind a device and the session's terminal runs on that machine instead. A device-bound session is unaffected, and needs nothing installed on Windows: the connection is dshell's own SSH client, not the operating system's.
 
 Opening the card heads it with the machine this session runs on: CPU and memory, each with a bar carrying the whole green→yellow→orange→red ramp and clipped to the share in use, so the colour at the bar's edge is the colour for that load. Below them are its cores, load average and exact memory. A session bound to a device reports the **device's** figures and names it, and an unreachable one says so rather than falling back to this machine. Nothing is shown until the session has taken its first input — until then the device is still yours to pick.
 

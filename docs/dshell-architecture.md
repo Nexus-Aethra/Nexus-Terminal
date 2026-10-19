@@ -667,7 +667,9 @@ Five things make that safe and usable rather than clever:
 - **The functions are code on that machine.** That is the point — it is the user's
   own Tab — and it happens in a separate, short-lived process with a read-only
   policy (honest for a local session; for a device the command runs under the
-  device's own policy, because the only process here is `ssh`).
+  device's own policy, because the only thing that reaches the device is a
+  channel on dshell's own connection — § 19 — and the device applies its own
+  rules to whatever it is asked to run).
 - **The answer is asked for AFTER the fast one.** Two phases: the host answers
   from what it already knows — memory, not a fresh round trip, when the line is
   one the shell will answer (see below) — and says `pending` when the shell might
@@ -690,7 +692,7 @@ terminal: the reader is typing a spelling there, not asking about the world.
 
 A device Tab used to be **1.2–1.6 s** where the same Tab on this machine was
 6 ms, and the network was not the reason. Measured against the SSH device this
-project tests with:
+project tests with, on the build that still ran a host `ssh` per command:
 
 | what | cost |
 | --- | --- |
@@ -703,8 +705,16 @@ project tests with:
 The 0.39 s is not the wire: every command dsh runs locally is wrapped as
 `systemd-run --user --scope … node --import tsx …/subprocess-local/src/bin.ts --
 ssh …`, so each call pays a transient systemd scope, a Node process and tsx
-transpiling dsh's runner. That price belongs to the harness, not to dshell, and
-the only thing this side controls is **how many calls a keystroke makes**.
+transpiling dsh's runner. That price belonged to the harness, not to dshell, and
+the only thing this side controlled was **how many calls a keystroke makes**.
+
+> Those two rows are now history, and the reason is § 19: the device transport
+> is an in-process `ssh2` client, so a device reading no longer pays a process
+> spawn at all — it is a channel on a socket that is already open. The rules
+> below are unchanged and still load-bearing, because the network round trips
+> they save are the part the transport cannot remove. A device reading is now
+> one round trip rather than one round trip plus 0.39 s of someone else's
+> process.
 
 So, four rules:
 
@@ -894,9 +904,8 @@ on purpose:
 
 | what | where it goes |
 | --- | --- |
-| `dshell/ssh` (minus `ctl/`), `dshell/buffer`, `dshell/tags.json`, `terminal-mode.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
+| `dshell/ssh`, `dshell/buffer`, `dshell/tags.json`, `terminal-mode.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
 | `dshell/mnt/**` | **stays** — each directory is a session's working directory, and dsh recorded that as an absolute path when the session was created; moving them would break every existing device session |
-| `dshell/ssh/ctl/**` | stays — Unix sockets belonging to the process that is running right now, recreated on demand |
 | `dshell/ssh/keys/**` | moves with the rest of `dshell/ssh` — a private key is a record, and its 0600 mode travels with it |
 
 Nothing at the destination is ever replaced. A file that is already there is

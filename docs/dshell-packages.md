@@ -295,6 +295,11 @@ when it contributes to model-visible state.
     provider that resolves a bound session's tree over SSH. It also
     publishes `dshellSshRouting` for packages that need to know which
     device a session runs on.
+  - Every remote action goes through `src/transport/`, an in-process
+    `ssh2` client — there is no host `ssh` binary, no `~/.ssh/config`
+    and no ssh agent anywhere in the stack. See
+    [`dshell-architecture.md`](./dshell-architecture.md) § 19 for the shape
+    and for what that excludes.
   - An assignment always carries the local **mount** directory that stands
     in for its device tree, because the `ctx.fs` seam refuses to guess one:
     a binding without a mount routes the shell only, and every file
