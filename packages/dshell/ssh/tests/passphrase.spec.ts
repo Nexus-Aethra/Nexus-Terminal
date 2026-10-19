@@ -9,28 +9,26 @@
  * questions structurally, so these pin the same decisions one layer down.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { connectConfig } from '../src/transport/auth.js'
+import { DeviceSshError } from '../src/transport/errors.js'
 import type { DeviceConnection } from '../src/devices.js'
 
-/** A directory holding the secrets these cases read, removed with the process. */
-const secrets = mkdtempSync(join(tmpdir(), 'dshell-auth-'))
-afterAll(() => { rmSync(secrets, { recursive: true, force: true }) })
-
-/** Write one secret exactly the way the device store writes it. */
-function secret(name: string, body: string): string {
-  const path = join(secrets, name)
-  writeFileSync(path, body.endsWith('\n') ? body : `${body}\n`, { mode: 0o600 })
-  return path
+/**
+ * One stored secret, as the store keeps it.
+ *
+ * Every writer in this package ends a secret with exactly one newline. The
+ * transport strips it from a password and from a passphrase, and keeps it on a
+ * key — where it is part of the PEM encoding.
+ */
+function stored(body: string): string {
+  return body.endsWith('\n') ? body : `${body}\n`
 }
 
 const KEY_BODY = '-----BEGIN OPENSSH PRIVATE KEY-----\nbody\n-----END OPENSSH PRIVATE KEY-----\n'
-const keyFile = secret('id_ed25519', KEY_BODY)
-const passphraseFile = secret('id_ed25519.passphrase', 'correct horse battery staple')
-const passwordFile = secret('web.password', 'not a real password')
+const keyBody = stored(KEY_BODY)
+const passphraseBody = stored('correct horse battery staple')
+const passwordBody = stored('not a real password')
 
 function device(over: Partial<DeviceConnection> = {}): DeviceConnection {
   return {
@@ -41,15 +39,31 @@ function device(over: Partial<DeviceConnection> = {}): DeviceConnection {
     user: 'ops',
     remoteRoot: '~',
     auth: 'key',
-    secretFile: undefined,
-    passphraseFile: undefined,
+    secret: undefined,
     ...over,
   }
 }
 
+/**
+ * A device holding one secret, and optionally the passphrase beside it.
+ *
+ * The secret is handed over as a resolver, the way the device store hands it
+ * over: opened when the connection is made, not remembered from an earlier read
+ * — because a secret sealed in the vault is opened through its group, and a group
+ * that is locked refuses to open it.
+ */
+function holding(secret: string | undefined, passphrase?: string): DeviceConnection {
+  return device({
+    secret: {
+      open: async () => secret,
+      ...(passphrase === undefined ? {} : { passphrase: async () => passphrase }),
+    },
+  })
+}
+
 describe('a key device', () => {
   it('offers exactly its own key, and nothing else', async () => {
-    const config = await connectConfig(device({ secretFile: keyFile }))
+    const config = await connectConfig(holding(keyBody))
     expect(config.privateKey).toBe(KEY_BODY)
     // No agent is ever configured, so an ambient identity cannot be reached by
     // accident — the same guarantee `IdentitiesOnly=yes` used to give.
@@ -59,15 +73,15 @@ describe('a key device', () => {
   })
 
   it('carries the passphrase with the key it unlocks', async () => {
-    const config = await connectConfig(device({ secretFile: keyFile, passphraseFile }))
+    const config = await connectConfig(holding(keyBody, passphraseBody))
     expect(config.privateKey).toBe(KEY_BODY)
-    // The stored file ends with the newline its writer appended, and a
+    // The stored secret ends with the newline its writer appended, and a
     // passphrase that carries it is a key that will not decrypt.
     expect(config.passphrase).toBe('correct horse battery staple')
   })
 
   it('never sends a passphrase where there is no key to unlock', async () => {
-    const config = await connectConfig(device({ passphraseFile }))
+    const config = await connectConfig(holding(undefined, passphraseBody))
     expect(config.privateKey).toBeUndefined()
     expect(config.passphrase).toBeUndefined()
   })
@@ -75,7 +89,9 @@ describe('a key device', () => {
 
 describe('a password device', () => {
   it('sends the password and never a key', async () => {
-    const config = await connectConfig(device({ auth: 'password', secretFile: passwordFile }))
+    const config = await connectConfig(device({
+      auth: 'password', secret: { open: async () => passwordBody },
+    }))
     expect(config.password).toBe('not a real password')
     expect(config.privateKey).toBeUndefined()
   })
@@ -84,7 +100,8 @@ describe('a password device', () => {
     // A stray passphrase must not become the password: the two answer different
     // prompts, and only one of them is asked for here.
     const config = await connectConfig(device({
-      auth: 'password', secretFile: passwordFile, passphraseFile,
+      auth: 'password',
+      secret: { open: async () => passwordBody, passphrase: async () => passphraseBody },
     }))
     expect(config.password).toBe('not a real password')
     expect(config.passphrase).toBeUndefined()
@@ -99,6 +116,26 @@ describe('a device with no stored secret', () => {
     expect(config.password).toBeUndefined()
     expect(config.privateKey).toBeUndefined()
     expect(config.passphrase).toBeUndefined()
+  })
+})
+
+describe('a credential that cannot be opened', () => {
+  it('fails the connection rather than connecting with no identity', async () => {
+    // The device store refuses here — a secret that is not on disk any more is
+    // a credential problem, and the refusal says so without naming the path.
+    // The transport has to pass that refusal on: falling through to a config
+    // with no password would reach for an ambient identity, which is the one
+    // thing this module is built to refuse.
+    const error = await connectConfig(device({
+      auth: 'password',
+      secret: {
+        open: async () => {
+          throw new DeviceSshError('auth', 'the credential for this device could not be read; re-enter the secret for this device')
+        },
+      },
+    })).catch((raised: unknown) => raised)
+    expect(error).toBeInstanceOf(DeviceSshError)
+    expect((error as Error).message).toContain('credential for this device could not be read')
   })
 })
 

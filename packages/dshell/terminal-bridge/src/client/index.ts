@@ -142,6 +142,18 @@ export interface PtyStreamState {
    */
   lockedGroup: boolean
   /**
+   * Host-reported: no shell was ever attempted for this session, because the
+   * session has no live agent to run one.
+   *
+   * Separate from `status` for the same reason `lockedGroup` is: the view has
+   * to CHOOSE a presentation. A session nobody has sent anything to is WAITING
+   * — it is not a broken connection and it is not a failure the reader has to
+   * act on — and a chip that read it as a failure announced a fault that had
+   * not happened, then lost the fact that the session was simply waiting for
+   * its first command.
+   */
+  noShell: boolean
+  /**
    * Host-reported: this failure is one the user can act on.
    *
    * Separate from `reason` for the same reason `localUnsupported` is: the view
@@ -243,6 +255,7 @@ export class PtyStreamService extends Service {
     since: Date.now(),
     localUnsupported: false,
     lockedGroup: false,
+    noShell: false,
     failure: undefined,
   })
 
@@ -383,7 +396,11 @@ export class PtyStreamService extends Service {
     if (id === undefined) return
     this.clearRetryTimer()
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false })
+    // A reconnect is a FRESH attempt: whatever the last one was refused for
+    // may have been fixed since — a group the reader has just unlocked, most
+    // of all. Leaving the old refusal in place would keep the chip saying
+    // "locked" after the lock is gone.
+    this.patch({ attempt: 0, exhausted: false, lockedGroup: false })
     this.performReconnect(id)
   }
 
@@ -523,7 +540,7 @@ export class PtyStreamService extends Service {
     if (this.attempt === 0 && !this.state.getSnapshot().exhausted
       && this.state.getSnapshot().reason === undefined) return
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined, lockedGroup: false })
+    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined, lockedGroup: false, noShell: false })
   }
 
   private clearRetryTimer(): void {
@@ -750,6 +767,7 @@ export class PtyStreamService extends Service {
         // A new session has not failed yet, whatever the last one did.
         localUnsupported: false,
         lockedGroup: false,
+        noShell: false,
         failure: undefined,
       })
     } else {
@@ -881,6 +899,7 @@ export class PtyStreamService extends Service {
         reason: typeof frame.message === 'string' ? frame.message : undefined,
         detail: undefined,
         lockedGroup: frame.lockedGroup === true,
+        noShell: frame.noShell === true,
         failure: frame.failure,
       })
       // A locked group is not a transport failure: the identical refusal comes

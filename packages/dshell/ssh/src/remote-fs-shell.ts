@@ -24,8 +24,8 @@ import type { DshellSshTranslate } from './host-locales.js'
 import type {
   RemoteFsDeps, RemoteFsTransport, RemoteKind, RemoteListEntry, RemoteStat,
 } from './remote-fs-transport.js'
-import { quote } from './shell-quote.js'
-import { deviceTransport } from './transport/transport.js'
+import { quote, quoteDevicePath } from './shell-quote.js'
+import { deviceTransport, type DeviceOutcome } from './transport/transport.js'
 
 /** The error text this file's classifier reads; see the note in the module header. */
 const MISSING_PATH = /No such file or directory|cannot statx? .*No such/i
@@ -76,7 +76,12 @@ export class ShellFsTransport implements RemoteFsTransport {
       ...options.stdin === undefined ? {} : { stdin: options.stdin },
     })
     if (result.exitCode === null) {
-      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(result.signal ?? 'unknown') }), 'FS_ABORTED')
+      // Two different endings, and one message for both of them was a lie: a
+      // connection the far side dropped was reported as a signal that never
+      // arrived, which sent the reader looking for the wrong thing.
+      throw result.connectionLost === true
+        ? new FsError(this.deps.t('error.remoteLost'), 'FS_IO_ERROR')
+        : new FsError(this.deps.t('error.remoteSignal', { signal: String(result.signal ?? 'unknown') }), 'FS_ABORTED')
     }
     return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, truncated: result.truncated }
   }
@@ -88,31 +93,41 @@ export class ShellFsTransport implements RemoteFsTransport {
    * byte-range reads take the channel's own stream instead of a decoded one.
    */
   private async runBinary(command: string, signal?: AbortSignal): Promise<Buffer> {
-    const run = await deviceTransport().open(this.deps.device, command, {
-      graceMs: COMMAND_GRACE_MS,
-      ...signal === undefined ? {} : { signal },
-    })
-    const chunks: Buffer[] = []
-    const stderr: string[] = []
-    run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk.toString('utf8')) })
-    for await (const chunk of run.stream as AsyncIterable<Buffer>) chunks.push(chunk)
-    const outcome = await run.done
-    if (outcome.exitCode === null) {
-      throw new FsError(this.deps.t('error.remoteSignal', { signal: String(outcome.signal ?? 'unknown') }), 'FS_ABORTED')
+    const attempt = async (): Promise<{ outcome: DeviceOutcome; bytes: Buffer; stderr: string }> => {
+      const run = await deviceTransport().open(this.deps.device, command, {
+        graceMs: COMMAND_GRACE_MS,
+        ...signal === undefined ? {} : { signal },
+      })
+      const chunks: Buffer[] = []
+      const stderr: string[] = []
+      run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk.toString('utf8')) })
+      for await (const chunk of run.stream as AsyncIterable<Buffer>) chunks.push(chunk)
+      const outcome = await run.done
+      return { outcome, bytes: Buffer.concat(chunks), stderr: stderr.join('') }
     }
-    if (outcome.exitCode !== 0) {
+    const first = await attempt()
+    // A read is repeatable by nature, and the transport has already dropped the
+    // connection that lost this one: one more attempt on a fresh channel is the
+    // difference between a lost connection and a failed read.
+    const result = first.outcome.connectionLost === true ? await attempt() : first
+    if (result.outcome.exitCode === null) {
+      throw result.outcome.connectionLost === true
+        ? new FsError(this.deps.t('error.remoteLost'), 'FS_IO_ERROR')
+        : new FsError(this.deps.t('error.remoteSignal', { signal: String(result.outcome.signal ?? 'unknown') }), 'FS_ABORTED')
+    }
+    if (result.outcome.exitCode !== 0) {
       // stderr was collected alongside the streamed stdout and has to be read
       // back for the classifier to see it: a failure handed an empty stream is
       // classified from nothing, and every read that failed for a knowable
       // reason reported an unknown I/O fault instead.
       throw classifyRemoteFailure({
         stdout: '',
-        stderr: stderr.join(''),
-        exitCode: outcome.exitCode,
+        stderr: result.stderr,
+        exitCode: result.outcome.exitCode,
         truncated: false,
       }, command, this.deps.t)
     }
-    return Buffer.concat(chunks)
+    return result.bytes
   }
 
   /** Run one command that must succeed, mapping its failure onto the seam's codes. */
@@ -130,14 +145,14 @@ export class ShellFsTransport implements RemoteFsTransport {
   async resolve(path: string, signal?: AbortSignal): Promise<string> {
     // `-m` canonicalizes a path that does not exist yet, the way the local
     // backend resolves a missing file through its nearest existing ancestor.
-    const result = await this.runOrThrow(`realpath -m -- ${quote(path)}`, path, { signal })
+    const result = await this.runOrThrow(`realpath -m -- ${quoteDevicePath(path)}`, path, { signal })
     return result.stdout.trim()
   }
 
   /** @inheritDoc */
   async stat(path: string, follow: boolean, signal?: AbortSignal): Promise<RemoteStat | undefined> {
     const flag = follow ? '-Lc' : '-c'
-    const result = await this.run(`LC_ALL=C stat ${flag} ${quote(STAT_FORMAT)} -- ${quote(path)}`, { signal })
+    const result = await this.run(`LC_ALL=C stat ${flag} ${quote(STAT_FORMAT)} -- ${quoteDevicePath(path)}`, { signal })
     if (result.exitCode !== 0) {
       if (MISSING_PATH.test(result.stderr)) return undefined
       throw classifyRemoteFailure(result, path, this.deps.t)
@@ -153,7 +168,7 @@ export class ShellFsTransport implements RemoteFsTransport {
   /** @inheritDoc */
   async list(path: string, signal?: AbortSignal): Promise<RemoteListEntry[]> {
     const result = await this.runOrThrow(
-      `LC_ALL=C find -- ${quote(path)} -mindepth 1 -maxdepth 1 -printf ${quote(FIND_FORMAT)}`,
+      `LC_ALL=C find -- ${quoteDevicePath(path)} -mindepth 1 -maxdepth 1 -printf ${quote(FIND_FORMAT)}`,
       path,
       { signal },
     )
@@ -182,8 +197,8 @@ export class ShellFsTransport implements RemoteFsTransport {
     // A window at the start is one `head`; further in, `tail` skips to it. Two
     // programs because POSIX `head` has no offset and `tail` has no length.
     const command = offset === 0
-      ? `head -c ${String(length)} -- ${quote(path)}`
-      : `tail -c +${String(offset + 1)} -- ${quote(path)} | head -c ${String(length)}`
+      ? `head -c ${String(length)} -- ${quoteDevicePath(path)}`
+      : `tail -c +${String(offset + 1)} -- ${quoteDevicePath(path)} | head -c ${String(length)}`
     return await this.runBinary(command, signal)
   }
 
@@ -193,7 +208,7 @@ export class ShellFsTransport implements RemoteFsTransport {
     return Promise.resolve((async function* stream(): AsyncIterable<Uint8Array> {
       // Opened inside the generator, so a caller that never iterates never dials:
       // nothing is left running on the device, because nothing was started.
-      const run = await deviceTransport().open(deps.device, `cat -- ${quote(path)}`, {
+      const run = await deviceTransport().open(deps.device, `cat -- ${quoteDevicePath(path)}`, {
         graceMs: COMMAND_GRACE_MS,
         ...signal === undefined ? {} : { signal },
       })
@@ -223,7 +238,7 @@ export class ShellFsTransport implements RemoteFsTransport {
       'if [ -e "$1" ]; then chmod --reference="$1" "$t" 2>/dev/null || true; fi',
       'mv -f -- "$t" "$1"',
     ].join(' && ')
-    const result = await this.run(`sh -c ${quote(script)} sh ${quote(path)}`, { signal, stdin: content })
+    const result = await this.run(`sh -c ${quote(script)} sh ${quoteDevicePath(path)}`, { signal, stdin: content })
     if (result.exitCode !== 0) throw classifyRemoteFailure(result, path, this.deps.t)
     // No metadata comes back from a shell script, so the caller asks again: one
     // extra round trip on this lane only.
@@ -246,7 +261,7 @@ export class ShellFsTransport implements RemoteFsTransport {
       'if [ -e "$1" ]; then chmod --reference="$1" "$t" 2>/dev/null || true; else chmod 644 "$t" 2>/dev/null || true; fi',
       'mv -f -- "$t" "$1" || { rm -f -- "$t"; exit 15; }',
     ].join(' && ')
-    const result = await this.run(`sh -c ${quote(script)} sh ${quote(path)}`, { signal, stdin: Buffer.from(bytes).toString('base64') })
+    const result = await this.run(`sh -c ${quote(script)} sh ${quoteDevicePath(path)}`, { signal, stdin: Buffer.from(bytes).toString('base64') })
     if (result.exitCode !== 0) throw classifyRemoteFailure(result, path, this.deps.t)
     return undefined
   }
@@ -254,25 +269,25 @@ export class ShellFsTransport implements RemoteFsTransport {
   /** @inheritDoc — one `mkdir -p` per call, batched by the caller. */
   async mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void> {
     const flags = recursive ? '-p' : ''
-    await this.runOrThrow(`mkdir ${flags} -- ${paths.map(path => quote(path)).join(' ')}`, paths[0] ?? '', { signal })
+    await this.runOrThrow(`mkdir ${flags} -- ${paths.map(path => quoteDevicePath(path)).join(' ')}`, paths[0] ?? '', { signal })
   }
 
   /** @inheritDoc — `rm -rf` with optional `-f`. */
   async remove(path: string, force: boolean, signal?: AbortSignal): Promise<void> {
     const flags = `${force ? '-f' : ''} -r`.trim()
-    await this.runOrThrow(`rm ${flags} -- ${quote(path)}`, path, { signal })
+    await this.runOrThrow(`rm ${flags} -- ${quoteDevicePath(path)}`, path, { signal })
   }
 
   /** @inheritDoc — `mv`, with `-f` for overwrite semantics. */
   async rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<undefined> {
-    const result = await this.run(`mv ${overwrite ? '-f' : ''} -- ${quote(from)} ${quote(to)}`, { signal })
+    const result = await this.run(`mv ${overwrite ? '-f' : ''} -- ${quoteDevicePath(from)} ${quoteDevicePath(to)}`, { signal })
     if (result.exitCode !== 0) throw classifyRemoteFailure(result, to, this.deps.t)
     return undefined
   }
 
   /** @inheritDoc — `sha256sum -z` writes `hash\0name`, so the filename never sneaks into the digest. */
   async sha256(path: string, signal?: AbortSignal): Promise<string> {
-    const result = await this.runOrThrow(`sha256sum -- ${quote(path)}`, path, { signal })
+    const result = await this.runOrThrow(`sha256sum -- ${quoteDevicePath(path)}`, path, { signal })
     const space = result.stdout.indexOf(' ')
     return space < 0 ? result.stdout.trim() : result.stdout.slice(0, space).trim()
   }

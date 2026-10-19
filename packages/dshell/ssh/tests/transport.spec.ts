@@ -9,7 +9,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Duplex, PassThrough } from 'node:stream'
@@ -38,10 +38,14 @@ function device(over: Partial<DeviceConnection> = {}): DeviceConnection {
     user: 'ops',
     remoteRoot: '~',
     auth: 'key',
-    secretFile: undefined,
-    passphraseFile: undefined,
+    secret: undefined,
     ...over,
   }
+}
+
+/** A device holding one secret, opened the way the store opens it. */
+function holding(secret: string): DeviceConnection {
+  return device({ secret: { open: async () => secret } })
 }
 
 /** An ed25519 public key blob, as the handshake hands one over. */
@@ -216,11 +220,9 @@ function factory(...clients: FakeClient[]): () => SshClient {
   }
 }
 
-/** Write one secret file the way the device store writes it. */
-function writeSecret(name: string, body: string): string {
-  const path = join(home, name)
-  writeFileSync(path, `${body}\n`)
-  return path
+/** One stored secret, as the device store writes it. */
+function stored(body: string): string {
+  return `${body}\n`
 }
 
 describe('running one command', () => {
@@ -336,16 +338,16 @@ describe('the connection a device keeps', () => {
   })
 
   it('re-dials when the credential changed', async () => {
-    // A rotated secret keeps its path, so the connection has to be fingerprinted
+    // A rotated secret keeps its place, so the connection has to be fingerprinted
     // by the secret itself or it would keep answering as the old identity.
     const first = new FakeClient()
     const second = new FakeClient()
     const clients = [first, second]
     const transport = new DeviceTransport(() => clients.shift() ?? new FakeClient())
-    const one = transport.exec(device({ secretFile: writeSecret('one', 'one') }), 'one')
+    const one = transport.exec(holding(stored('one')), 'one')
     ;(await channelOf(first)).finish(0)
     await one
-    const two = transport.exec(device({ secretFile: writeSecret('two', 'two') }), 'two')
+    const two = transport.exec(holding(stored('two')), 'two')
     ;(await channelOf(second)).finish(0)
     await two
     // The newline its writer appended travels with the key: it is part of the
@@ -362,6 +364,88 @@ describe('the connection a device keeps', () => {
     await running
     transport.release('web')
     expect(client.ended).toBe(true)
+  })
+})
+
+describe('a channel the far side tears down', () => {
+  it('runs the command once more, on the same connection', async () => {
+    // A channel can be torn down on its own, and the connection is usually
+    // fine. Ending the connection to retry one command would kill every other
+    // operation running on it — which is how one lost channel became several
+    // failed reads and a dead turn.
+    const client = new FakeClient()
+    const transport = new DeviceTransport(factory(client))
+
+    const running = transport.exec(device(), 'ls')
+    // The far side drops the channel: it closes, and no exit status comes with it.
+    ;(await channelOf(client)).close()
+    ;(await channelOf(client, 1)).finish(0)
+
+    const result = await running
+    expect(result.exitCode).toBe(0)
+    // The command ran again — on the same connection, over a new channel.
+    expect(client.execs.map(entry => entry.command)).toEqual(['ls', 'ls'])
+    // And the connection was left alone: whatever else was running on it is
+    // still running.
+    expect(client.ended).toBe(false)
+  })
+
+  it('reports the loss as a loss, not as a signal that never arrived', async () => {
+    const client = new FakeClient()
+    const transport = new DeviceTransport(factory(client))
+
+    const running = transport.exec(device(), 'ls')
+    ;(await channelOf(client)).close()
+    // The retry is dropped too: now the loss is what the caller is told.
+    ;(await channelOf(client, 1)).close()
+
+    const result = await running
+    expect(result.exitCode).toBeNull()
+    expect(result.signal).toBeNull()
+    expect(result.connectionLost).toBe(true)
+  })
+
+  it('reports a run we stopped as a signal, not as a lost connection', async () => {
+    // The two are different facts: we sent SIGTERM, so the signal is what
+    // happened. Calling it a lost connection would send the reader looking for
+    // a network fault that is not there.
+    const client = new FakeClient()
+    const transport = new DeviceTransport(factory(client))
+    const controller = new AbortController()
+    const running = transport.exec(device(), 'sleep 100', { signal: controller.signal })
+    const channel = await channelOf(client)
+    controller.abort()
+
+    const result = await running
+    expect(result.exitCode).toBeNull()
+    expect(result.signal).toBe('SIGTERM')
+    expect(result.connectionLost).toBeFalsy()
+  })
+})
+
+describe('readers that arrive together', () => {
+  it('share one connection, not one each', async () => {
+    // The prompt assembly reads several files at once, and every one of those
+    // reads is a device operation. Without one shared dial, each of them found
+    // the pool empty, dialled its own connection, and left every connection but
+    // the last one orphaned — six connections for one turn, and a pool holding
+    // one that nobody was using.
+    const client = new FakeClient()
+    let dialled = 0
+    const transport = new DeviceTransport(() => { dialled += 1; return client })
+
+    const running = [
+      transport.exec(device(), 'a'),
+      transport.exec(device(), 'b'),
+      transport.exec(device(), 'c'),
+    ]
+    for (const index of [0, 1, 2]) (await channelOf(client, index)).finish(0)
+    const results = await Promise.all(running)
+
+    expect(results.map(result => result.exitCode)).toEqual([0, 0, 0])
+    // Three commands, one connection.
+    expect(client.execs.map(entry => entry.command)).toEqual(['a', 'b', 'c'])
+    expect(dialled).toBe(1)
   })
 })
 

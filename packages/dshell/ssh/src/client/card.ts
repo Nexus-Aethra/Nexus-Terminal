@@ -143,7 +143,8 @@ function Chevron({ open }: { open: boolean }): ReactElement {
  *
  * The device itself holds no secret: `credentialId` points into the vault, and
  * the login method follows whichever credential is picked. A device with no
- * credential at all authenticates the way the machine's own ssh does.
+ * credential at all has NO identity to offer — the transport never reaches for
+ * an ambient one — so it can only fail to log in.
  */
 const BLANK = {
   id: undefined as string | undefined,
@@ -197,6 +198,12 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
+  // The group that is actually holding a device's credential, read from the
+  // current state: a refusal is a moment, and the group stays locked after any
+  // other call has answered.
+  const lockedGroup = snapshot.devices
+    .map(device => ssh.lockedGroupForDevice(device.id))
+    .find(group => group !== undefined)
   const edit = (field: keyof typeof BLANK, value: string): void => {
     setForm(current => ({ ...current, [field]: value }))
   }
@@ -342,8 +349,8 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
                     style: credentialChipStyle(credential.id === form.credentialId),
                     onClick: () => { pickCredential(credential.id) },
                   }, `${credential.name} · ${credential.kind === 'key' ? t('auth.key') : t('auth.password')}`)),
-                  // The way back to a device that authenticates without a stored
-                  // credential: the machine's own ssh agent, exactly as before.
+                  // The way back to a device with no credential at all: it has no
+                  // identity to offer, so it can only fail to log in.
                   form.credentialId !== ''
                     ? createElement('button', {
                         type: 'button', style: actionStyle, onClick: () => { pickCredential('') },
@@ -356,14 +363,16 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
           // below holds the key. The button re-opens that group's unlock box,
           // because the reader may have scrolled past it — or dismissed the
           // panel — since the refusal arrived.
-          snapshot.lockedGroup !== undefined
+          // The group is read from the CURRENT state, not from the last
+          // refusal: a refusal is a moment, and the group stays locked after
+          // any other call has answered. A button that appears only while a
+          // refusal is the newest thing on the wire disappears the moment the
+          // reader touches the vault — which is where they are going.
+          lockedGroup !== undefined
             ? createElement('button', {
               type: 'button', style: actionStyle,
-              onClick: () => {
-                const group = snapshot.lockedGroup
-                if (group !== undefined) ssh.requestUnlock(group)
-              },
-            }, t('card.goUnlock', { name: snapshot.lockedGroup.name }))
+              onClick: () => { ssh.requestUnlock(lockedGroup) },
+            }, t('card.goUnlock', { name: lockedGroup.name }))
             : null,
           snapshot.testResult !== undefined ? createElement('div', { style: resultStyle }, snapshot.testResult) : null,
           createElement('button', {
@@ -417,7 +426,13 @@ function HostTrustLine(props: {
         // One entry is the normal case; several key types on one host would
         // otherwise wrap the row, and the full set stays in the tooltip.
         `${keys[0]?.keyType ?? ''} ${shortFingerprint(keys[0]?.fingerprint)}`),
-    device.hasPassphrase === true ? createElement('span', { style: trustBadgeStyle }, t('device.passphrase')) : null,
+    // The passphrase badge follows the CREDENTIAL when there is one: a device
+    // that logs in through the vault keeps its passphrase in the credential, not
+    // beside its own key — and the two views of the same fact must not disagree.
+    (device.hasPassphrase === true
+      || (device.credentialId !== undefined
+        && ssh.getSnapshot().credentials.find(row => row.id === device.credentialId)?.hasPassphrase === true))
+      ? createElement('span', { style: trustBadgeStyle }, t('device.passphrase')) : null,
     createElement('button', {
       type: 'button',
       style: actionStyle,

@@ -8,6 +8,8 @@
  * reads a kind rather than a sentence.
  */
 
+import { VaultLockedError } from '../vault.js'
+
 /** Why a connection or command could not be served. */
 export type DeviceFailureKind =
   /** The device refused the credentials this package holds. */
@@ -61,20 +63,11 @@ const LEVEL_KINDS: Readonly<Record<string, DeviceFailureKind>> = {
  */
 export function classifyDeviceError(error: unknown): DeviceFailureKind {
   if (error instanceof DeviceSshError) return error.kind
+  // A credential whose group is locked is an authentication problem, not a
+  // transport one: re-dialling would fail the same way, and the refusal names
+  // the group to unlock.
+  if (error instanceof VaultLockedError) return 'auth'
   const level = (error as { level?: unknown } | undefined)?.level
   if (typeof level === 'string' && level in LEVEL_KINDS) return LEVEL_KINDS[level]
   return 'transport'
-}
-
-/**
- * One line describing a failure, for a log or a diagnostic that has no
- * translator of its own. The refusal a READER sees is composed by the caller
- * that has one.
- *
- * @param error - what the client or the channel raised.
- * @returns the message to report.
- */
-export function deviceErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message !== '') return error.message
-  return String(error)
 }

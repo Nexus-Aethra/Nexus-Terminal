@@ -93,9 +93,6 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         return await state()
       case 'delete':
         await deps.router.removeDevice(input.deviceId)
-        // The device's materialized secrets go with it: they are named after
-        // the device, so nothing else will ever ask for them again.
-        await deps.router.credentials.sweepPlaintext()
         return await state()
       case 'test': {
         // Run the test BEFORE reading state, for the same reason the install
@@ -198,9 +195,9 @@ export function createSshRoute(deps: SshRouteDeps): ConnectionFetchRoute {
         await deps.router.unlockGroup(input.groupId, input.token)
         return { ...await state(), ...await vaultFace(deps) }
       case 'vaultLock':
-        // Locking also drops the plaintext this process handed out to `ssh`, so
-        // the disk is clean again rather than merely unreadable to us — and the
-        // connections lose their secrets with it, which the router rebuilds.
+        // Locking drops the key the plaintext was opened with, so the secret
+        // cannot be read again — and the connections lose it with it, which the
+        // router rebuilds.
         await deps.router.lockGroups(input.groupId)
         return { ...await state(), ...await vaultFace(deps) }
       case 'vaultSetToken':

@@ -50,6 +50,17 @@ export interface WireFrame {
    */
   lockedGroup?: boolean
   /**
+   * `error` frames: the host never attempted a shell for this session, because
+   * the session has no live agent to run one.
+   *
+   * A session in agent mode owns no shell until it is asked to do something,
+   * and the bridge reports that exactly as it reports a shell that failed to
+   * start. The two need opposite presentations — one is a session waiting, the
+   * other is a session in trouble — so the client is told which it got instead
+   * of reading it out of the message.
+   */
+  noShell?: boolean
+  /**
    * `closed`/`error` frames: a failure the reader can act on, when the message
    * alone does not say which action. A refused secret and a changed host key
    * both arrive as one sentence, and only one of them is fixable by re-entering

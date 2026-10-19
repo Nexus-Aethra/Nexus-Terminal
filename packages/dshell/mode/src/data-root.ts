@@ -101,11 +101,17 @@ interface RootMove {
  * that a device connection is an `ssh2` client inside this process, so the
  * directory holds records only — and a record means the same thing under either
  * root, which is the whole test for belonging on this list.
+ *
+ * The names are LOGICAL — they say which tree moved, not where it lives — so they
+ * are written in POSIX on every machine, and the record a reader can read and a
+ * log line they can compare say the same thing everywhere. The path itself is
+ * built with `join`, which turns them into the host's own spelling: a Windows
+ * host gets `dshell\ssh` on disk and `dshell/ssh` in the record.
  */
 const ROOT_MOVES: readonly RootMove[] = [
-  { path: join('dshell', 'ssh') },
-  { path: join('dshell', 'buffer') },
-  { path: join('dshell', 'tags.json') },
+  { path: 'dshell/ssh' },
+  { path: 'dshell/buffer' },
+  { path: 'dshell/tags.json' },
   { path: 'terminal-mode.json' },
   { path: 'dshell-pty' },
 ]

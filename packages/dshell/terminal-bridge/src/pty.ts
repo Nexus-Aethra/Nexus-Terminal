@@ -151,6 +151,35 @@ export function lockedVaultRefusal(error: unknown): boolean {
 }
 
 /**
+ * The failure of a session that has no live agent, so no shell was attempted.
+ *
+ * A session in agent mode owns no shell until it is asked to do something: the
+ * bridge waits for the session's agent to materialize, and a session nobody has
+ * sent anything to never gets one. The client has to be able to tell this apart
+ * from a shell that failed to start, because the two need opposite
+ * presentations — one is a session waiting, the other is a session in trouble —
+ * and the message text alone says neither.
+ *
+ * @param sessionId - the session the bridge waited for.
+ */
+export class NoAgentError extends Error {
+  constructor(sessionId: string) {
+    super(`dshell-bridge: no live agent for session "${sessionId}"`)
+    this.name = 'NoAgentError'
+  }
+}
+
+/**
+ * Whether a failure means no shell was ever attempted for this session.
+ *
+ * @param error - whatever the shell attempt rejected with.
+ * @returns whether the session had no live agent to run a shell.
+ */
+export function noShellRefusal(error: unknown): boolean {
+  return error instanceof NoAgentError
+}
+
+/**
  * The last connection diagnostic in a stretch of terminal output.
  *
  * A device session's terminal is a local `ssh` process, so "cannot connect"

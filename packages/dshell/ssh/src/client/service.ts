@@ -342,6 +342,23 @@ export class SshClientService extends Service {
   }
 
   /**
+   * The locked group holding one DEVICE's credential, when there is one.
+   *
+   * Read from the current state rather than from the last refusal: a refusal is
+   * a moment, and the group stays locked after any other call has answered. A
+   * button whose target came from the refusal would vanish the moment the
+   * reader touched the vault — which is where they are going.
+   */
+  lockedGroupForDevice(deviceId: string): { readonly id: string; readonly name: string } | undefined {
+    const credentialId = this.snapshot.devices.find(row => row.id === deviceId)?.credentialId
+    if (credentialId === undefined) return undefined
+    const groupId = this.snapshot.credentials.find(row => row.id === credentialId)?.group
+    if (groupId === undefined) return undefined
+    const group = this.snapshot.groups.find(row => row.id === groupId)
+    return group?.sealed === true && group.locked ? { id: group.id, name: group.name } : undefined
+  }
+
+  /**
    * Take the user to this plugin's card, with one session's locked group's
    * unlock box already open.
    *

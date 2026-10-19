@@ -173,6 +173,12 @@ export const zh = {
   'status.jobsRunning': '{count} 个后台任务运行中',
   'status.terminalEnded': 'AI 终端已结束',
   'status.linkBroken': '终端连接中断',
+  // A credential sealed in a locked vault group. The token is the way out, so
+  // the card names the way out instead of claiming the connection broke.
+  'status.linkLocked': '凭据已锁定',
+  'status.lockedGroup': '凭据在加密分组「{name}」里，该分组当前锁着。',
+  'status.unlock': '输入分组令牌解锁',
+  'status.unlockUnavailable': '打不开 SSH 设置，请到「设置 → 插件 → SSH 设备」里手动解锁该分组。',
   'status.plan': '计划',
   'status.agents': '智能体',
   'status.loading': '读取中…',
@@ -502,6 +508,10 @@ export const en = {
   'status.jobsRunning': '{count} background jobs running',
   'status.terminalEnded': 'AI terminal ended',
   'status.linkBroken': 'Terminal connection lost',
+  'status.linkLocked': 'Credential locked',
+  'status.lockedGroup': 'The credential sits in the encrypted group "{name}", which is locked.',
+  'status.unlock': 'Enter the group token to unlock',
+  'status.unlockUnavailable': 'Cannot open the SSH settings; unlock the group under "Settings → Plugins → SSH devices".',
   'status.plan': 'Plan',
   'status.agents': 'Agents',
   'status.loading': 'Reading…',

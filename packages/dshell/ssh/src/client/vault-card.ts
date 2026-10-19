@@ -10,7 +10,8 @@
  *
  * The panel also carries no secret. A credential row can say its name, its kind
  * and which devices use it; it can never show what it holds, because the host
- * only ever sends the answer to `ssh`, never to the browser.
+ * opens the credential in memory and hands the bytes to the transport — never to
+ * the browser.
  */
 
 import {

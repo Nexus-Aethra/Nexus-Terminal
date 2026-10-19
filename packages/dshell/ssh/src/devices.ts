@@ -10,12 +10,13 @@
  * only whether a key exists, never its contents.
  */
 
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { DshellSshTranslate } from './host-locales.js'
 import type { DeviceAuth, DeviceInput, DeviceView } from './protocol.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import type { CredentialStore } from './credentials.js'
+import { DeviceSshError } from './transport/errors.js'
 
 /** A stored device record; the secret path is absent when none is stored. */
 interface DeviceRecord {
@@ -25,7 +26,7 @@ interface DeviceRecord {
   port: number
   user: string
   remoteRoot: string
-  /** Login method; `key` may still have no stored secret (the ambient agent). */
+  /** Login method; a `key` device with no stored secret has no identity to offer. */
   auth: DeviceAuth
   /**
    * The vault credential this device logs in with, instead of its own files.
@@ -73,16 +74,44 @@ export interface DeviceConnection {
   readonly user: string
   readonly remoteRoot: string
   readonly auth: DeviceAuth
-  /** Stored key or password file, when one exists. */
-  readonly secretFile: string | undefined
   /**
-   * Stored passphrase file, when the key needs one.
+   * The device's stored secret, resolved when a connection is made.
    *
-   * The connection carries both because the transport may only be handed a
-   * passphrase where a key is actually stored: see `connectConfig` in
-   * `transport/auth.ts`.
+   * A resolver rather than a value, because a secret sealed in the vault is
+   * opened through its group: the device list is cached for the life of a
+   * session, and a secret resolved when that list was read would outlive the
+   * unlock that produced it. Resolving at the connection means a group locked in
+   * between refuses the connection, which is the honest outcome — and a refusal
+   * that names the group, rather than a file that is not there any more.
    */
-  readonly passphraseFile: string | undefined
+  readonly secret: DeviceSecret | undefined
+}
+
+/**
+ * How one device's stored secret is obtained.
+ *
+ * The two parts answer to two different prompts — the key and its passphrase
+ * are read as two separate facts, and one file can only be one of them.
+ *
+ * Both hand back PLAINTEXT rather than a path. The transport used to be given a
+ * path to a key file, and that file was the only reason a sealed secret had to be
+ * written down at all: an external `ssh` can only read a path. The transport is
+ * a library now, so it is given the bytes, and a credential sealed in a group is
+ * opened through that group — never written to disk to be read back.
+ */
+export interface DeviceSecret {
+  /**
+   * The key or the password, as it should be sent.
+   *
+   * @returns the secret, or undefined when the device holds no such secret.
+   */
+  readonly open: () => Promise<string | undefined>
+  /**
+   * The key's passphrase, when the key needs one.
+   *
+   * @returns the passphrase, or undefined when there is none.
+   */
+  readonly passphrase?: () => Promise<string | undefined>
 }
 
 /** Stored secret path of a parsed record, accepting the legacy field name. */
@@ -99,6 +128,31 @@ function readSecretPath(raw: Record<string, unknown>): { secretFile?: string; pa
     }
   }
   return {}
+}
+
+/**
+ * The bytes of a device's own stored secret, or a refusal the reader can act on.
+ *
+ * A raw ENOENT here names the file's absolute path and reads as a broken
+ * filesystem; what it actually means is that the credential this device needs
+ * is not on disk any more, which is a credential problem — re-enter the secret
+ * — and not a dead device. The path stays in `cause`, where a log has it, and
+ * out of the sentence the reader sees.
+ *
+ * @param path - the file holding the secret, if the device has one.
+ * @returns the secret, or undefined when the device holds no such file.
+ */
+async function readStoredSecret(path: string | undefined): Promise<string | undefined> {
+  if (path === undefined) return undefined
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    throw new DeviceSshError(
+      'auth',
+      'the credential for this device could not be read; re-enter the secret for this device',
+      { cause: error },
+    )
+  }
 }
 
 /** Coerce one parsed record, dropping anything that cannot be used. */
@@ -191,6 +245,20 @@ export class DeviceStore {
     const record = this.records.find(candidate => candidate.id === deviceId)
     if (record === undefined) return undefined
     const credentialId = referenceOf(record)
+    // The secret, resolved twice on purpose. The eager one is how a device whose
+    // credential sits in a locked group is found: the refusal has to be raised
+    // where the group is known, because a group id is what the route turns into a
+    // pointer at the right unlock box. The lazy one is what the transport reads,
+// and it goes through the group again — a group locked after this connection
+    // was built refuses the secret rather than handing over plaintext nobody may
+    // use any more.
+    if (credentialId !== undefined) await this.credentials.open(credentialId, 'secret')
+    const open = credentialId === undefined
+      ? async (): Promise<string | undefined> => await readStoredSecret(record.secretFile)
+      : async (): Promise<string | undefined> => await this.credentials.open(credentialId, 'secret')
+    const passphrase = credentialId === undefined
+      ? async (): Promise<string | undefined> => await readStoredSecret(record.passphraseFile)
+      : async (): Promise<string | undefined> => await this.credentials.open(credentialId, 'passphrase')
     return {
       id: record.id,
       name: record.name,
@@ -199,12 +267,7 @@ export class DeviceStore {
       user: record.user,
       remoteRoot: record.remoteRoot,
       auth: record.auth,
-      ...(credentialId === undefined
-        ? { secretFile: record.secretFile, passphraseFile: record.passphraseFile }
-        : {
-          secretFile: await this.credentials.usablePath(credentialId, 'secret', record.id),
-          passphraseFile: await this.credentials.usablePath(credentialId, 'passphrase', record.id),
-        }),
+      secret: { open, passphrase },
     }
   }
 
@@ -222,7 +285,7 @@ export class DeviceStore {
     if (input.id !== undefined && existing === undefined) throw new Error(t('error.unknownDevice', { id: input.id }))
     // An empty reference means "no credential": the form sends it to clear one,
     // and storing the empty string would leave a device that reads as holding a
-    // credential it cannot resolve (`hasSecret` true, `usablePath` finding
+    // credential it cannot resolve (`hasSecret` true, the store finding
     // nothing). Normalizing here keeps the document free of them; records
     // written before this still read correctly through {@link referenceOf}.
     const credentialId = input.credentialId === '' ? undefined : input.credentialId
@@ -409,19 +472,5 @@ export class DeviceStore {
     const temporary = `${this.documentPath}.tmp`
     await writeFile(temporary, JSON.stringify({ devices: this.records }, null, 2), 'utf8')
     await rename(temporary, this.documentPath)
-  }
-}
-
-/**
- * Whether a stored key file still exists (a device whose key was removed
- * out-of-band must fail loud rather than fall back to an ambient identity).
- * @param path - key file recorded on the device.
- * @returns whether the file is present.
- */
-export async function keyExists(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile()
-  } catch {
-    return false
   }
 }

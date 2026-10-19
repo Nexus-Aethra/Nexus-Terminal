@@ -38,7 +38,7 @@ import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
 import { injectTuiCss } from './tui-css.js'
 import { applyTabLock } from './terminal-mode-lock.js'
 import { toggledChoice, type TuiChoice } from './tui.js'
-import { StatusChip, type PipeSeat, type PipeTicket, type StatusChipInjected } from './status-card.js'
+import { StatusCardBoundary, StatusChip, type PipeSeat, type PipeTicket, type StatusChipInjected, type StatusChipProps } from './status-card.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
@@ -106,6 +106,19 @@ const MODE_ALIASES = new Map<string, SessionMode>([
   ['agent', 'agent'],
   ['terminal', 'shell'],
 ])
+
+/**
+ * The status chip, behind the boundary that keeps a fault in the card off the
+ * terminal it floats over.
+ *
+ * The card projects state owned by four different services; a fault in any of
+ * those projections must cost the reader the card and never the terminal. The
+ * boundary was written for exactly that and then never wired in — so a thrown
+ * render in the card took the whole panel with it.
+ */
+function BoundedStatusChip(props: StatusChipProps): ReactElement | null {
+  return createElement(StatusCardBoundary, null, createElement(StatusChip, props))
+}
 
 /**
  * Hide one composer surface from stock sessions.
@@ -350,6 +363,14 @@ export function apply(ctx: Context): void {
     openConversation = (target) => { scope.uiWorkspace.openSession(target) }
   })
   let sshSeat: SshSeat | undefined
+  /**
+   * Subscribers the SSH forwarder below took before the seat arrived.
+   *
+   * Same story as `deviceListeners`, one service over: `dshellSsh` is reached
+   * through `inject`, which answers once the service is up — possibly after a
+   * surface that reads it has already been built.
+   */
+  const sshListeners = new Set<() => void>()
   // The device seat is built ONCE: `useSyncExternalStore` demands a stable
   // `snapshot` identity AND a cached return value, so the projection of the
   // ssh service's own snapshot is memoized by that snapshot's identity.
@@ -423,7 +444,37 @@ export function apply(ctx: Context): void {
       revokeHostKey: async deviceId => { await ssh.revokeHostKey(deviceId) },
       subscribe: listener => ssh.subscribe(listener),
     }
+    // Relay to whoever subscribed before the seat existed (see `sshForward`).
+    ssh.subscribe(() => { for (const listener of [...sshListeners]) listener() })
   })
+  /**
+   * The SSH seat, forwarded.
+   *
+   * `sshSeat` is built inside the `inject` callback above, and that callback
+   * answers once the SSH plugin's service is up — possibly after a surface
+   * that reads it has already been built. A surface handed the variable
+   * itself would keep the `undefined` it was given: the status chip would
+   * have no way to the vault group that is holding a session's credential, and
+   * the terminal view would subscribe to nothing.
+   *
+   * So the seat is handed over as a forwarder instead: built once, reading
+   * through at call time, and relaying the subscriptions it collected early.
+   * The same shape as `deviceForward` above, for the same reason.
+   */
+  const sshForward: SshSeat = {
+    bindingOf: sessionId => sshSeat?.bindingOf(sessionId),
+    devices: () => sshSeat?.devices() ?? [],
+    revealSettings: sessionId => sshSeat?.revealSettings(sessionId) ?? false,
+    lockedGroupForSession: sessionId => sshSeat?.lockedGroupForSession(sessionId),
+    unlock: async (groupId, token) => { await sshSeat?.unlock(groupId, token) },
+    hostKeys: async deviceId => await sshSeat?.hostKeys(deviceId) ?? [],
+    probeHostKey: async deviceId => await sshSeat?.probeHostKey(deviceId),
+    revokeHostKey: async deviceId => { await sshSeat?.revokeHostKey(deviceId) },
+    subscribe: listener => {
+      sshListeners.add(listener)
+      return () => { sshListeners.delete(listener) }
+    },
+  }
   // The cross-session pipe is the same story one package over: reached by
   // service key, reduced to the reads the status card's pipe rows need. A
   // composition without `dshell-buffer` simply leaves those rows absent.
@@ -697,9 +748,13 @@ export function apply(ctx: Context): void {
           pipe: pipeSeat,
           openConversation,
           modes,
+          // The vault group that is holding this session's credential, and the
+          // way out of it. The chip is where the reader is when the terminal
+          // says it cannot start, so this is where the way out belongs.
+          ssh: sshForward,
         }),
       },
-      gated(StatusChip),
+      gated(BoundedStatusChip),
     ),
   )
   /**
@@ -883,7 +938,7 @@ export function apply(ctx: Context): void {
             sessionId,
             pty,
             sessions,
-            ssh: sshSeat,
+            ssh: sshForward,
             pipe: pipeSeat,
             // Attachments arrive as opaque refs; the conversation service owns the
             // only sanctioned way to turn one into a URL.

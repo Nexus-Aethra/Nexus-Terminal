@@ -42,7 +42,7 @@ import { hostCopy, type DshellTerminalBridgeHostTranslator } from './host-locale
 import { createHostCopy } from './host-copy.js'
 import { createLocaleRoute } from './locale-route.js'
 import { createDirsRoute } from './dirs-route.js'
-import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, classifyDeviceFailure, diagnosticTail, exitLabel, lockedVaultRefusal, type DshellPtySession, type DeviceShellPlan, type SshFailure } from './pty.js'
+import { DshellPtyBackend, LOCAL_SHELL_SUPPORTED, NoAgentError, classifyDeviceFailure, diagnosticTail, exitLabel, lockedVaultRefusal, noShellRefusal, type DshellPtySession, type DeviceShellPlan, type SshFailure } from './pty.js'
 import { ForegroundState, foregroundProgram, watchForeground } from './foreground.js'
 import { createPtyRoute } from './route.js'
 import { createStreamRoutes } from './stream.js'
@@ -494,7 +494,7 @@ export class DshellTerminalBridge extends Service {
       const agent = this.ctx.get('agents')?.get(dshSessionId as SessionId)
       if (agent !== undefined) return agent
       if (Date.now() >= deadline) {
-        throw new Error(`dshell-bridge: no live agent for session "${dshSessionId}"`)
+        throw new NoAgentError(dshSessionId)
       }
       await new Promise(resolve => { setTimeout(resolve, AGENT_WAIT_POLL_MS) })
     }
@@ -1612,6 +1612,10 @@ export class DshellTerminalBridge extends Service {
         // A locked vault group is the other one: the shell was never attempted,
         // the token is the way out, and a retry would only repeat the refusal.
         ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
+        // And the third: the session has no live agent, so no shell was
+        // attempted at all. Nothing is broken and nothing is waiting on a
+        // token — the session simply has not been asked to do anything yet.
+        ...noShellRefusal(error) ? { noShell: true } : {},
         // A device whose credential or host key was refused: the message alone
         // does not say which of the two the reader can act on.
         ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
@@ -1638,6 +1642,7 @@ export class DshellTerminalBridge extends Service {
         sessionId: dshSessionId,
         ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
         ...lockedVaultRefusal(error) ? { lockedGroup: true } : {},
+        ...noShellRefusal(error) ? { noShell: true } : {},
         ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
       })
     })

@@ -12,13 +12,13 @@
  * token-protected and the secrets already in it are still readable, because
  * they were never lying about being plain.
  *
- * **What a sealed group resists, and what it does not.** It resists the disk —
- * copy the `dshell/ssh` directory away and every credential in a sealed group is
- * a sealed blob. It does NOT resist a process running as the same user while the
- * group is unlocked, because `ssh` is an external binary that must be handed a
- * file it can open; the plaintext therefore exists for as long as the unlock
- * does. That boundary is where every vault that has to feed a foreign binary
- * stops. The honest summary is: locked means clean, unlocked means in use.
+ * **What a sealed group resists, and what it does not.** It resists the disk.
+ * Copy the `dshell/ssh` directory away and every credential in a sealed group is
+ * a sealed blob, and the plaintext that opens them is never written down: it
+ * exists in this process's memory, and in no file at all. It does NOT resist a
+ * process running as the same user while the group is unlocked, because that
+ * process can ask this one to open what it holds. The honest summary is: locked
+ * means clean, and unlocked means in use — in memory, not on disk.
  *
  * **A plain group is not protected at all**, and the UI says so rather than
  * letting an unencrypted row look like it sits inside a vault.
@@ -34,7 +34,7 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'node:crypto'
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -151,11 +151,6 @@ export class SecretVault {
 
   private get documentPath(): string {
     return join(this.root(), 'vault.json')
-  }
-
-  /** Where a decrypted secret is written so `ssh` can open it. */
-  get runDir(): string {
-    return join(this.root(), 'run')
   }
 
   /**
@@ -277,11 +272,18 @@ export class SecretVault {
     this.keys.set(groupId, key)
   }
 
-  /** Drop one group's key and every plaintext handed out from it. */
+  /**
+   * Drop one group's key.
+   *
+   * The plaintext that key opened is not written anywhere, so dropping the key
+   * is the whole of the lock: there is no copy on disk to sweep and no cache of
+   * one to invalidate. A connection that resolved its secret before the lock is
+   * refused after it, because every read goes through the group and the group no
+   * longer has a key.
+   */
   async lock(groupId?: string): Promise<void> {
     if (groupId === undefined) this.keys.clear()
     else this.keys.delete(groupId)
-    await this.clearRunDir()
   }
 
   /** Whether a group is sealed, without exposing anything else about it. */
@@ -397,38 +399,20 @@ export class SecretVault {
   }
 
   /**
-   * Write a decrypted secret where `ssh` can open it.
+   * Remove the directory the old design kept its plaintext in.
    *
-   * The plaintext lives in its own directory rather than beside the sealed files,
-   * so a reader can see at a glance what is live: an entry under `run/` means a
-   * credential is currently usable, and locking empties it.
+   * Before the transport became a library, a sealed secret had to be unsealed
+   * into a file, because the external `ssh` could only be handed a path to read.
+   * That file lived under `run/`, and an installation upgraded from that design
+   * still has the directory — possibly holding the plaintext of a secret whose
+   * group was locked before the process was killed rather than stopped.
    *
-   * @param name - a path-safe file name, unique per secret.
-   * @param plaintext - the secret.
-   * @returns the absolute path to hand to `ssh`.
+   * Nothing writes there any more, so the directory is pure leftover. Swept once
+   * at start-up, which is the only moment it can be: those files are not this
+   * process's to keep, and no later moment would know they were there.
    */
-  async materialize(name: string, plaintext: string): Promise<string> {
-    await mkdir(this.runDir, { recursive: true, mode: 0o700 })
-    const path = join(this.runDir, name)
-    await writeFile(path, plaintext.endsWith('\n') ? plaintext : `${plaintext}\n`, { mode: 0o600 })
-    return path
-  }
-
-  /**
-   * Remove every materialized secret.
-   *
-   * Run at start-up as well as on lock: a host killed rather than stopped left
-   * plaintext behind with nothing holding the key any more, and that file is
-   * pure downside now.
-   */
-  async clearRunDir(): Promise<void> {
-    let names: string[]
-    try {
-      names = await readdir(this.runDir)
-    } catch {
-      return
-    }
-    for (const name of names) await rm(join(this.runDir, name), { force: true }).catch(() => {})
+  async sweepLegacyRunDir(): Promise<void> {
+    await rm(join(this.root(), 'run'), { recursive: true, force: true }).catch(() => {})
   }
 }
 

@@ -7,8 +7,10 @@
  * a separate file written 0600 under `$DSH_HOME/dshell/ssh/keys/`.
  *
  * This module is imported by the browser half through the package's
- * `./protocol` subpath, so it must stay free of value imports: anything it
- * pulls in would be bundled into the client.
+ * `./protocol` subpath, so it must stay free of HOST imports: anything it
+ * pulls in would be bundled into the client. The re-exports below are the
+ * shared layer's own values and types, and the shared layer carries no host
+ * code — so what must not appear here is a `node:` import, not a value.
  */
 
 /** Exact `/api` route path owned by the SSH device registry. */

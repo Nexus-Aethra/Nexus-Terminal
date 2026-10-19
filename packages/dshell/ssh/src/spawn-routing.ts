@@ -28,7 +28,6 @@
  * directory as its working directory, so a tool that prints relative paths
  * prints them relative to the same tree its input named.
  */
-import { basename } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type { SubprocessHandle, SubprocessRuntime, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
@@ -74,12 +73,26 @@ interface SubprocessShape {
  * @returns the device-side program name, or undefined when unknown.
  */
 export function deviceProgram(program: string): string | undefined {
-  const name = basename(program)
+  // The last segment, split on BOTH separators and by this module rather than
+  // by `node:path`: the device is a POSIX machine whatever the host is, so the
+  // name it answers to cannot depend on the host's path rules. `basename` on a
+  // POSIX host leaves `C:\…\rg.exe` whole, and the name would then be read
+  // differently on the two hosts.
+  const name = (program.split(/[/\\]/u).pop() ?? program).replace(/\.exe$/iu, '')
   // The search tool's resolver produces either `rg` (the platform package) or
   // the single-file runtime's `<executable>-rg` sidecar; both mean the device's.
   if (name === 'rg' || name.endsWith('-rg')) return 'rg'
-  // A bare name is the device's to resolve from its own PATH.
-  return program.includes('/') ? undefined : program
+  // A bare name is the device's to resolve from its own PATH. A PATH is not:
+  // the device cannot execute a location in the HOST's filesystem, and a
+  // location handed over as if it were a name would run whatever happens to
+  // carry that name on the device — or nothing at all.
+  //
+  // BOTH platforms' separators are tested, because a check for '/' alone let
+  // a Windows path through as a bare name: `C:\Windows\System32\cmd.exe` has
+  // no forward slash, so it was sent to the device verbatim and died there
+  // with an ENOENT that named the host's own directory.
+  if (program.includes('/') || program.includes('\\')) return undefined
+  return program
 }
 
 /**

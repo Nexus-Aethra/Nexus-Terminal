@@ -31,7 +31,7 @@
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { localHelperArtifact } from '../src/connection.js'
@@ -40,7 +40,7 @@ import { localHelperArtifact } from '../src/connection.js'
 // below are compared against ones built with `join`, which does not.
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const REPO_ROOT = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
-const ARTIFACT = `${PACKAGE_ROOT}/lib/helper.js`
+const ARTIFACT = join(PACKAGE_ROOT, 'lib', 'helper.js')
 
 /**
  * Every module specifier the bundle would resolve at runtime.
@@ -62,7 +62,7 @@ function importSpecifiers(source: string): string[] {
 
 /** The version a package resolves to inside one directory's `node_modules`. */
 function zodVersion(packageDirectory: string): string {
-  const manifest = JSON.parse(readFileSync(`${packageDirectory}/node_modules/zod/package.json`, 'utf8')) as { version: string }
+  const manifest = JSON.parse(readFileSync(join(packageDirectory, 'node_modules', 'zod', 'package.json'), 'utf8')) as { version: string }
   return manifest.version
 }
 
@@ -94,9 +94,9 @@ describe('the device helper artifact', () => {
 
   it('leaves no tsc intermediate for the tarball to ship', () => {
     for (const dead of ['lib/helper-entry.js', 'lib/helper/run.js']) {
-      expect(existsSync(`${PACKAGE_ROOT}/${dead}`), `${dead} should be removed by scripts/drop-intermediates.mjs`).toBe(false)
+      expect(existsSync(join(PACKAGE_ROOT, dead)), `${dead} should be removed by scripts/drop-intermediates.mjs`).toBe(false)
     }
     // Its neighbour is a real host module and must survive the cleanup.
-    expect(existsSync(`${PACKAGE_ROOT}/lib/helper/protocol.js`)).toBe(true)
+    expect(existsSync(join(PACKAGE_ROOT, 'lib', 'helper', 'protocol.js'))).toBe(true)
   })
 })

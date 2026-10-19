@@ -37,6 +37,53 @@ import { useDshellTheme, type Theme } from './theme.js'
 import type { TerminalModeClient } from './terminal-mode.js'
 import { sessionStatusSeat } from './session-status.js'
 import { cpuPercent, deviceMetricsSeat, memoryAmount } from './device-metrics.js'
+import type { SshSeat } from './block-view.js'
+
+/**
+ * What the chip says about a session's terminal link.
+ *
+ * `none` is nothing to say, `connecting` is a handshake in flight, `waiting`
+ * is a session that owns no shell yet, `locked` is a credential the reader can
+ * unlock, and `broken` is a failure.
+ */
+export type LinkView = 'none' | 'connecting' | 'waiting' | 'locked' | 'broken'
+
+/** The facts a link's presentation is chosen from. */
+export interface LinkFacts {
+  /** The host's own link state. */
+  status: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
+  /** Whether the bound shell ever reached a prompt. */
+  ready: boolean
+  /** The host never attempted a shell: the session has no live agent. */
+  noShell: boolean
+  /** The spawn was refused because the credential's vault group is locked. */
+  lockedGroup: boolean
+}
+
+/**
+ * Which presentation a terminal link gets.
+ *
+ * The link's own state is not enough, and the host says why: a session that
+ * owns no shell yet reports a closed link exactly as a shell that died does,
+ * and a locked credential reports the same closed link as an unreachable
+ * device. The three need opposite things — nothing, a token, a retry — so the
+ * host marks the first two structurally and this reads the marks.
+ *
+ * @param facts - the link's facts.
+ * @returns what to show about it.
+ */
+export function linkView(facts: LinkFacts): LinkView {
+  if (facts.status === 'idle' || facts.status === 'open') return 'none'
+  if (facts.status === 'connecting') return 'connecting'
+  // The lock outranks everything else: a retry brings back the same refusal,
+  // and the token is the only thing that changes it.
+  if (facts.lockedGroup) return 'locked'
+  // No shell was ever attempted, so nothing failed. The session is waiting for
+  // its first command, and saying so beats announcing a fault that had not
+  // happened.
+  if (facts.noShell) return 'waiting'
+  return 'broken'
+}
 
 /** One item of the session's task list, as the `todo/write` event carries it. */
 export interface TodoItem {
@@ -413,6 +460,14 @@ export interface StatusChipInjected {
   openConversation?: ((target: SessionTarget) => void) | undefined
   /** The terminal-mode seat: the chip is gated on it, so a stock session has none. */
   modes: TerminalModeClient
+  /**
+   * The SSH plugin's face; absent in a composition without it.
+   *
+   * Read for one thing only: the vault group whose lock is refusing this
+   * session's terminal. The chip is where the reader is when the terminal says
+   * it cannot start, so this is where the way out belongs.
+   */
+  ssh?: SshSeat | undefined
 }
 
 /** Full props of the session-header status chip. */
@@ -421,7 +476,7 @@ export type StatusChipProps = PropsRuntime<'conversation.session.header.actions'
 
 /** The session status chip: one line in the header, integrated status rows behind it. */
 export function StatusChip(props: StatusChipProps): ReactElement | null {
-  const { sessionId, pty, sessions, pipe, openConversation, modes, t } = props
+  const { sessionId, pty, sessions, pipe, openConversation, modes, ssh, t } = props
   const theme = useDshellTheme()
   // Subscribed before anything else: hooks cannot be conditional, and the state
   // they carry is what decides what the chip says at all.
@@ -457,6 +512,8 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
   const activity = status?.activity
   const [open, setOpen] = useState(false)
   const [openRow, setOpenRow] = useState<string | undefined>(undefined)
+  // Why the way out could not be opened, when it could not be.
+  const [unlockHint, setUnlockHint] = useState<string | undefined>(undefined)
   const root = useRef<HTMLDivElement | null>(null)
   useDismissOnOutsidePointer(root, open, setOpen)
 
@@ -541,7 +598,43 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
   // and a status line that keeps claiming work is worse than no status line.
   const running = sessionId !== undefined && byId[sessionId as SessionId]?.running === true
   const linkHere = sessionId !== undefined && link.sessionId === sessionId
-  const linkBroken = linkHere && (link.status === 'closed' || link.status === 'error')
+  // The link's presentation, in one place.
+  //
+  // The host's own state is not enough: a session that owns no shell yet and
+  // a shell that died both report a closed link, and a locked credential
+  // reports the same one as an unreachable device. The three need opposite
+  // things — nothing, a token, a retry — so the host marks the first two
+  // structurally and this reads the marks.
+  const linkState = linkHere
+    ? linkView({
+      status: link.status,
+      ready: link.ready,
+      noShell: link.noShell,
+      lockedGroup: link.lockedGroup,
+    })
+    : 'none'
+  const linkConnecting = linkState === 'connecting'
+  const linkLocked = linkState === 'locked'
+  const linkBroken = linkState === 'broken'
+  // 'waiting' — a session that owns no shell yet — is deliberately not a
+  // branch below: there is nothing to say about it and nothing to offer, so it
+  // falls through to the idle line like any other quiet session.
+  //
+  // The group that is holding this session's credential, named from the
+  // session's own binding.
+  //
+  // The token is not typed here. The SSH card owns that box, and the seat's
+  // own job is to land the reader IN it — on the group that is actually
+  // stopping this session — so the chip's job is to point at the door rather
+  // than to build a second one beside it.
+  const lockedGroup = linkLocked && sessionId !== undefined
+    ? ssh?.lockedGroupForSession(sessionId)
+    : undefined
+  const openUnlock = (): void => {
+    if (ssh === undefined || sessionId === undefined) return
+    setUnlockHint(undefined)
+    if (ssh.revealSettings(sessionId) !== true) setUnlockHint(t('status.unlockUnavailable'))
+  }
   const children = sessionId === undefined
     ? []
     : Object.values(byId).filter(row => row.parentId === sessionId && row.origin === 'subagent')
@@ -616,10 +709,11 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
                   : liveJobs.length > 0 ? `⟳ ${t('status.jobsRunning', { count: liveJobs.length })}`
                   : pendingTodo !== undefined ? `○ ${pendingTodo.content}`
                     : dead ? t('status.terminalEnded')
-                      : linkBroken ? t('status.linkBroken')
-                        : linksHere.length > 0
-                          ? `${t('status.idle')} · ${t('status.chip.links', { count: linksHere.length })}`
-                          : t('status.idle')
+                      : linkLocked ? t('status.linkLocked')
+                        : linkBroken ? t('status.linkBroken')
+                          : linksHere.length > 0
+                            ? `${t('status.idle')} · ${t('status.chip.links', { count: linksHere.length })}`
+                            : t('status.idle')
   // The two figures the header carries. CPU is a share of all cores and memory
   // a share of physical memory — same denominator idea, so the two bars can be
   // read against each other rather than each against its own unit.
@@ -629,7 +723,8 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
     ? undefined
     : Math.min(1, reading.memory.used / reading.memory.total)
   const idle = !running && activeTodo === undefined && !live && runningChildren === 0
-    && pendingTodo === undefined && !dead && !linkBroken && waiting.length === 0 && owed.length === 0
+    && pendingTodo === undefined && !dead && !linkBroken && !linkLocked
+    && waiting.length === 0 && owed.length === 0
     && liveJobs.length === 0 && liveTransfers.length === 0
 
   const rows: StatusRow[] = []
@@ -839,17 +934,39 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
       ),
     })
   }
-  if (linkBroken || (linkHere && link.status === 'connecting')) {
+  if (linkBroken || linkLocked || linkConnecting) {
     rows.push({
       id: 'link', glyph: '⚡', label: t('status.link'), active: false,
-      value: linkBroken ? t('status.disconnected') : t('status.connecting'),
+      value: linkLocked
+        ? t('status.linkLocked')
+        : linkBroken ? t('status.disconnected') : t('status.connecting'),
       detail: createElement('div', { style: { display: 'grid', gap: '3px' } },
         line(link.reason ?? '', theme),
         link.detail === undefined ? null : line(link.detail, theme),
-        createElement('div', {
-          onClick: () => { pty.reconnect() },
-          style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5 },
-        }, t('status.reconnect')),
+        lockedGroup === undefined ? null : line(t('status.lockedGroup', { name: lockedGroup.name }), theme),
+        // The way out, and the only one: a retry brings back the same refusal.
+        // The token box lives in the SSH card, and the seat lands the reader in
+        // it — on the group that is actually stopping this session.
+        // The locked branch offers BOTH ways out. The token is typed in the
+        // SSH card, so unlocking is a step the reader takes THERE — and when
+        // they come back, the only thing this chip can offer is the retry that
+        // uses the key they just entered. A chip that offers only the door
+        // leaves a reader who unlocked standing in front of a locked chip.
+        linkLocked
+          ? createElement('div', { style: { display: 'flex', gap: '12px' } },
+            createElement('div', {
+              onClick: openUnlock,
+              style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5 },
+            }, t('status.unlock')),
+            createElement('div', {
+              onClick: () => { pty.reconnect() },
+              style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5 },
+            }, t('status.reconnect')))
+          : createElement('div', {
+            onClick: () => { pty.reconnect() },
+            style: { color: theme.accentText, textDecoration: 'underline', cursor: 'pointer', fontSize: 11.5 },
+          }, t('status.reconnect')),
+        unlockHint === undefined ? null : line(unlockHint, theme),
       ),
     })
   }

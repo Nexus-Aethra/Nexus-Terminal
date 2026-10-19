@@ -47,6 +47,15 @@ export interface DeviceOutcome {
   readonly exitCode: number | null
   /** The signal that ended it, when it did. */
   readonly signal: string | null
+  /**
+   * The channel was closed without an exit status: the far side tore it down.
+   *
+   * Not a signal and not a cancellation — the command's fate is unknown, and
+   * the only honest reading is that the connection is gone. A caller that can
+   * repeat its command (see {@link DeviceTransport.exec}) says so; a caller
+   * that cannot reports it as the loss it is.
+   */
+  readonly connectionLost?: boolean
 }
 
 /** One running remote command, before its output has been read. */
@@ -154,6 +163,8 @@ class Window {
 /** One open channel, as a {@link DeviceCommand}. */
 class ChannelCommand implements DeviceCommand {
   readonly done: Promise<DeviceOutcome>
+  /** The signal this channel was stopped with, when WE stopped it. */
+  private stoppedWith: string | undefined
 
   constructor(private readonly channel: ClientChannel) {
     // A channel whose stream errors after the far side is gone has already been
@@ -175,7 +186,15 @@ class ChannelCommand implements DeviceCommand {
       })
       // A channel that closes without an exit status leaves the outcome unknown:
       // the far side is gone, and guessing zero would report a success we never saw.
-      channel.on('close', () => { settle({ exitCode: null, signal: null }) })
+      // The `connectionLost` flag says which unknown this is, because "the far side
+      // dropped the channel" and "we stopped it" call for different answers — and
+      // reporting the first as the second is how a lost connection came to be
+      // described as a signal that never arrived.
+      channel.on('close', () => {
+        settle(this.stoppedWith === undefined
+          ? { exitCode: null, signal: null, connectionLost: true }
+          : { exitCode: null, signal: this.stoppedWith })
+      })
     })
   }
 
@@ -188,6 +207,7 @@ class ChannelCommand implements DeviceCommand {
   }
 
   terminate(signal = 'SIGTERM'): void {
+    this.stoppedWith = signal
     try { this.channel.signal(signal) } catch { /* the channel is already gone */ }
     // Closing is what the far side reads as the session going away: sshd hangs
     // up the command's process group, which is how the old `kill ssh` worked.
@@ -226,27 +246,49 @@ interface Pooled {
  */
 export class DeviceTransport {
   private readonly pool = new Map<string, Pooled>()
+  /**
+   * The dial in flight per device, so concurrent callers share ONE connection.
+   *
+   * Without it the pool had a race: two callers arriving together both found
+   * it empty, both dialled, and the pool kept only the last client — so the
+   * first caller's connection was orphaned, and the pool held one that nobody
+   * was using.
+   */
+  private readonly dialing = new Map<string, Promise<Pooled>>()
 
   /** @param factory - how a client is made; the default is `ssh2`'s own. */
   constructor(private readonly factory: SshClientFactory = ssh2Client) {}
 
   /** Run one command and collect its output, bounded. */
   async exec(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceExecResult> {
-    const run = await this.open(device, command, options)
-    const stdout = new Window(STDOUT_MAX_BYTES)
-    const stderr = new Window(STDERR_MAX_BYTES)
-    // Both windows are filled by the streams' own data events, so the reads are
-    // already in flight when `done` settles and nothing has to be re-requested.
-    run.stream.on('data', (chunk: Buffer) => { stdout.push(chunk) })
-    run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk) })
-    const outcome = await this.bounded(run, options)
-    return {
-      stdout: stdout.text(),
-      stderr: stderr.text(),
-      exitCode: outcome.exitCode,
-      signal: outcome.signal,
-      truncated: stdout.truncated,
+    const attempt = async (): Promise<{ outcome: DeviceOutcome; stdout: string; stderr: string; truncated: boolean }> => {
+      const run = await this.open(device, command, options)
+      const stdout = new Window(STDOUT_MAX_BYTES)
+      const stderr = new Window(STDERR_MAX_BYTES)
+      // Both windows are filled by the streams' own data events, so the reads are
+      // already in flight when `done` settles and nothing has to be re-requested.
+      run.stream.on('data', (chunk: Buffer) => { stdout.push(chunk) })
+      run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk) })
+      const outcome = await this.bounded(run, options)
+      return { outcome, stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated }
     }
+    const first = await attempt()
+    // A channel torn down without an exit status means the far side dropped
+    // that channel, not that the command failed. Every command this package
+    // runs through `exec` is idempotent — a read, a probe, a `mkdir -p`, a
+    // staged rename — so one repeat is safe.
+    //
+    // The repeat opens a NEW CHANNEL on the SAME connection. It does not end
+    // the connection, because the connection is probably fine: a channel can be
+    // torn down on its own, and ending the connection to retry one command
+    // would kill every other operation running on it. A connection that is
+    // genuinely dead fails the next `exec` instead, and the dial path below
+    // replaces it.
+    if (first.outcome.connectionLost === true) {
+      const second = await attempt()
+      return { ...second.outcome, stdout: second.stdout, stderr: second.stderr, truncated: second.truncated }
+    }
+    return { ...first.outcome, stdout: first.stdout, stderr: first.stderr, truncated: first.truncated }
   }
 
   /** Run one command, leaving its output on the returned streams. */
@@ -260,6 +302,17 @@ export class DeviceTransport {
       if (options.signal.aborted) abort()
       else options.signal.addEventListener('abort', abort, { once: true })
       void run.done.then(() => { options.signal?.removeEventListener('abort', abort) })
+    }
+    // The bound belongs HERE, where every path passes through: `exec` collects
+    // its output and `open` hands back a live stream, and a bound that only the
+    // collecting path honoured left a device read, a device stream and a device
+    // subprocess able to hang for as long as the SSH keepalive tolerated —
+    // three times the bound the caller asked for, and no bound at all on a
+    // command that never answered.
+    if (options.graceMs !== undefined) {
+      const timer = setTimeout(() => { run.terminate() }, options.graceMs)
+      timer.unref()
+      void run.done.then(() => { clearTimeout(timer) })
     }
     return run
   }
@@ -420,9 +473,34 @@ export class DeviceTransport {
     const existing = this.pool.get(device.id)
     if (existing !== undefined && existing.fingerprint === fingerprint) return existing.client
     if (existing !== undefined) this.release(device.id)
-    const client = await this.dial(device, config)
-    this.pool.set(device.id, { client, fingerprint })
-    return client
+    // ONE dial per device, shared by whoever asks at the same time.
+    //
+    // The prompt assembly reads several files at once, and every one of those
+    // reads is a device operation. Without this, each of them found the pool
+    // empty, dialled its own connection, and left every connection but the last
+    // one orphaned — six connections for one turn, none of them pooled, and a
+    // pool that then held a connection none of the readers was using. The
+    // check and the claim happen together, with nothing awaited in between, so
+    // two callers cannot both decide to dial.
+    let pending = this.dialing.get(device.id)
+    if (pending === undefined) {
+      pending = this.dial(device, config).then(client => {
+        this.dialing.delete(device.id)
+        const pooled: Pooled = { client, fingerprint }
+        this.pool.set(device.id, pooled)
+        return pooled
+      }, (error: unknown) => {
+        this.dialing.delete(device.id)
+        throw error
+      })
+      this.dialing.set(device.id, pending)
+    }
+    const pooled = await pending
+    // The credentials were rotated while this dial was in flight: the client
+    // it opened was authenticated with the old ones, so it is not the one this
+    // caller may use.
+    if (pooled.fingerprint !== fingerprint) return await this.dial(device, config)
+    return pooled.client
   }
 
   /**

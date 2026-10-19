@@ -85,8 +85,7 @@ export async function probeHostKey(host: string, port: number): Promise<TrustedH
     user: 'probe',
     remoteRoot: '~',
     auth: 'key',
-    secretFile: undefined,
-    passphraseFile: undefined,
+    secret: undefined,
   } satisfies DeviceConnection)
   return probed === undefined
     ? undefined

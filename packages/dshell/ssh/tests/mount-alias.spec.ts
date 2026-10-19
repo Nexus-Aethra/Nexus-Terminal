@@ -15,6 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 import { mappingFor, toMountPath, toRemotePath } from '../src/mount.js'
 
 const MOUNT = '/home/reader/.dsh/dshell/mnt/dev-a/root'
@@ -74,7 +75,9 @@ describe('toRemotePath with an alias', () => {
   it('leaves the inverse untouched: the mount is the one local stand-in', () => {
     // A remote path is shown as the mount path, never as the alias — the alias
     // is a spelling the harness owns, not a second directory to display.
-    expect(toMountPath(mapping, '/root/app')).toBe(`${MOUNT}/app`)
+    // The mount is a path on THIS machine, so it is spelled with this
+    // machine's rules: the same directory is `\\host\\...` on Windows.
+    expect(toMountPath(mapping, '/root/app')).toBe(join(MOUNT, 'app'))
     expect(toMountPath(mapping, '/root')).toBe(MOUNT)
   })
 })

@@ -175,9 +175,8 @@ describe('a group whose policy moves', () => {
     expect(SecretVault.isSealed(after)).toBe(true)
     expect(after).not.toContain('b3BlbnNzaC1rZXk')
 
-    // And the usable path is plaintext again, opened through the group.
-    const path = await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
-    expect(await readFile(path ?? '', 'utf8')).toBe(KEY_BODY)
+    // And the secret comes back through the group, byte for byte.
+    expect(await credentials.open(credential?.id ?? '', 'secret')).toBe(KEY_BODY)
   })
 
   it('re-wraps back to plain when the group loses its token', async () => {
@@ -208,48 +207,44 @@ describe('a group whose policy moves', () => {
   })
 })
 
-describe('materializing plaintext for ssh', () => {
-  it('writes it under run/, at 0600 in a 0700 directory', async () => {
+// The promise a sealed group makes: its plaintext exists in memory and on no
+// disk. The old design had to write it down, because the external `ssh` could
+// only be handed a path to read; the transport is a library now, so it is
+// handed the bytes.
+describe('a sealed secret on the disk', () => {
+  it('is written to no file, not even a temporary one', async () => {
     const id = await openGroup()
     await credentials.save({ group: id, name: '部署密钥', kind: 'key', secret: KEY_BODY })
     const [credential] = await credentials.list()
-    const path = await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
-    expect(path?.startsWith(join(dir, 'run'))).toBe(true)
-    const names = await readdir(join(dir, 'run'))
-    expect(names).toContain('web.secret')
+
+    // Opening it produces the plaintext, and the plaintext comes back as
+    // bytes: there is no file for it to live in.
+    expect(await credentials.open(credential?.id ?? '', 'secret')).toBe(KEY_BODY)
+
+    // The only things on the disk are the sealed body and the two documents.
+    expect((await readdir(dir)).sort()).toEqual(['credentials', 'credentials.json', 'vault.json'])
+    const stored = await readFile(join(dir, 'credentials', `${credential?.id}.key`), 'utf8')
+    expect(SecretVault.isSealed(stored)).toBe(true)
+    expect(stored).not.toContain('b3BlbnNzaC1rZXk')
   })
 
-  it('is swept when the group is locked', async () => {
+  it('leaves no run/ directory, even for an installation that had one', async () => {
+    // The upgrade path: the old design kept the plaintext there, and a host
+    // upgraded from it still has the directory. Swept at start-up, because no
+    // later moment would know those files were there.
+    await mkdir(join(dir, 'run'), { recursive: true })
+    await writeFile(join(dir, 'run', 'web.secret'), 'p@ss\n', { mode: 0o600 })
+    await vault.sweepLegacyRunDir()
+    expect(await readdir(dir)).not.toContain('run')
+  })
+
+  it('sweeps nothing else on the way', async () => {
+    // The sweep is aimed at one directory. A credential that is still stored
+    // is not collateral.
     const id = await openGroup()
     await credentials.save({ group: id, name: '部署密钥', kind: 'key', secret: KEY_BODY })
-    const [credential] = await credentials.list()
-    await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
-    await vault.lock(id)
-    credentials.forgetMaterialized()
-    expect(await readdir(join(dir, 'run'))).toEqual([])
-  })
-
-  it('does not leave a plain credential sitting in run/ at all', async () => {
-    const group = await vault.createGroup('临时', null)
-    await credentials.save({ group: group.id, name: '口令', kind: 'password', secret: 'p@ss' })
-    const [credential] = await credentials.list()
-    const path = await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
-    // Handing back its own stored file is the whole point: no second copy.
-    expect(path).toBe(join(dir, 'credentials', `${credential?.id}.password`))
-    await expect(readdir(join(dir, 'run'))).rejects.toThrow()
-  })
-
-  it('is swept when the credential it came from is removed', async () => {
-    // The file is named after the device that asked for it, so a delete cannot
-    // tell which copies were this credential's. A secret the reader just
-    // removed has no business sitting under run/ until the next restart.
-    const id = await openGroup()
-    await credentials.save({ group: id, name: '部署密钥', kind: 'key', secret: KEY_BODY })
-    const [credential] = await credentials.list()
-    const path = await credentials.usablePath(credential?.id ?? '', 'secret', 'web')
-    await credentials.remove(credential?.id ?? '')
-    expect(await readdir(join(dir, 'run'))).toEqual([])
-    expect(path?.startsWith(join(dir, 'run'))).toBe(true)
+    await vault.sweepLegacyRunDir()
+    expect((await readdir(dir)).sort()).toEqual(['credentials', 'credentials.json', 'vault.json'])
   })
 })
 

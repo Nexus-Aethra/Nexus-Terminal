@@ -321,15 +321,6 @@ export const remoteFsStat = z.object({
  * change without notice. The message still travels — it names the path and the
  * errno, which is what a log wants — but nothing decides anything from it.
  */
-export const remoteFsCode = z.enum([
-  'FS_NOT_FOUND',
-  'FS_NOT_DIRECTORY',
-  'FS_NOT_REGULAR_FILE',
-  'FS_PERMISSION_DENIED',
-  'FS_TOO_LARGE',
-  'FS_IO_ERROR',
-])
-
 /** Address one device path. Always absolute: the caller translates, the device does not guess. */
 export const fsPathRequest = z.object({ path: remoteAbsolutePath }).strict()
 

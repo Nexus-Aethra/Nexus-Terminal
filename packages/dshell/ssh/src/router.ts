@@ -68,6 +68,15 @@ declare module '@deepseek-ai/cordis' {
  */
 interface ShellExecutorShape {
   resolve(this: unknown, request: ShellExecRequest): ShellExecSpec
+  /**
+   * The argv this executor would run a resolved spec with.
+   *
+   * Optional on purpose: only the executors that build their argv FROM the
+   * spec have one (`bash-local` hardcodes `['bash', '-c', command]`, which is
+   * already the shape a device wants). Absent means there is nothing here to
+   * replace — the executor's own argv is already the device's.
+   */
+  argv?(this: unknown, spec: ShellExecSpec): string[]
 }
 
 /** Where one session runs: the device, the directory on it, and its local mount. */
@@ -786,16 +795,14 @@ export class SshRouter {
   /**
    * Lock one group, or every group, and forget what their keys opened.
    *
-   * Three steps that are one operation: the vault drops the key, the credential
-   * store drops the plaintext it handed out (its files go with the vault's
-   * sweep), and the connection map is rebuilt so nothing points at a file that
-   * no longer exists. A caller that did only the first would leave a session
-   * bound to a device in this group holding a credential that no longer
-   * materializes — which fails as a refused login rather than as a locked group.
+   * Two steps that are one operation: the vault drops the key, and the connection
+   * map is rebuilt so nothing points at a secret the group can no longer open. A
+   * caller that did only the first would leave a session bound to a device in this
+   * group holding a connection that resolves to nothing — which fails as a refused
+   * login rather than as a locked group.
    */
   async lockGroups(groupId?: string): Promise<void> {
     await this.vault.lock(groupId)
-    this.credentials.forgetMaterialized()
     await this.refreshDevices()
   }
 
@@ -846,6 +853,13 @@ export class SshRouter {
   }
 
   private async reload(): Promise<void> {
+    // The old design kept a sealed secret on disk, because the external `ssh`
+    // could only be handed a path to read. Nothing writes there any more, but an
+    // installation upgraded from that design still has the directory — and a host
+    // killed rather than stopped may have left plaintext in it. Swept once, here:
+    // no later moment would know those files were there, and they are not this
+    // process's to keep.
+    await this.vault.sweepLegacyRunDir()
     await this.bindings.load()
     await this.refreshDevices()
     await this.adoptMounts()
@@ -1032,5 +1046,55 @@ export function installShellRouting(ctx: Context, router: SshRouter, t: DshellSs
         : { sandboxPolicy: { ...spec.sandboxPolicy, mode: 'danger-full-access' } },
     }
   }
-  return () => { target.resolve = original }
+  // The argv seam, on the same terms as `resolve` above: the PROTOTYPE that
+  // owns the method, so every path that reaches the executor reaches this.
+  //
+  // The command is the caller's and the DEVICE's shell runs it, but the argv
+  // that leaves the host is built by the HOST's shell — and those are not the
+  // same program. On a Windows host the executor builds
+  // `[C:\…\powershell.exe, -NoLogo, …, -Command, <command>]`, and a device
+  // cannot execute that: the path names a file on the host's disk, and the
+  // flags are the host shell's. Every device-side command then died on the
+  // device with an ENOENT that named a directory the device had never heard
+  // of, which is a far worse report than the one the reader gets here.
+  //
+  // `argv` is the executor's own argv-level seam — the one a confining
+  // subclass wraps through `ctx.sandbox.confine` — so replacing it is the
+  // documented way to change WHICH shell runs a command, and it keeps the
+  // executor's own lifecycle, deadline, environment and output handling
+  // around the new argv.
+  const argvOwner = findMethodOwner(shell, 'argv')
+  if (argvOwner === null) return () => { target.resolve = original }
+  const argvTarget = argvOwner as unknown as { argv: (spec: ShellExecSpec) => string[] }
+  const originalArgv = argvTarget.argv
+  argvTarget.argv = function argv(this: unknown, spec: ShellExecSpec): string[] {
+    const agent = ctx.agents.currentInitiator()
+    const assignment = agent === undefined ? undefined : router.targetForSession(String(agent.id))
+    // No device for this session: the host's own argv is the right one, and
+    // this is the whole of the stock behaviour.
+    if (assignment === undefined) return originalArgv.call(this, spec)
+    // The device's shell runs the caller's command. `bash -c` is the same
+    // shape `bash-local` builds, so a POSIX host is unaffected by this and a
+    // Windows host stops sending the device a path it cannot execute.
+    return ['bash', '-c', spec.command]
+  }
+  return () => {
+    target.resolve = original
+    argvTarget.argv = originalArgv
+  }
+}
+
+/**
+ * The prototype that owns a method, or null when the object has none.
+ *
+ * @param service - the service object the method was reached through.
+ * @param name - the method's name.
+ * @returns the prototype holding it as an own property.
+ */
+function findMethodOwner(service: object, name: string): Record<string, unknown> | null {
+  let owner = Object.getPrototypeOf(service) as Record<string, unknown> | null
+  while (owner !== null && !Object.prototype.hasOwnProperty.call(owner, name)) {
+    owner = Object.getPrototypeOf(owner) as Record<string, unknown> | null
+  }
+  return owner
 }

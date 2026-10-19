@@ -24,6 +24,7 @@ export const zh = {
   'error.groupNotEmpty': '这个分组里还有凭据，先把它们移走或删掉。',
   'error.credentialInUse': '这些设备还在用这条凭据：{names}。先给它们换一条。',
   'error.remoteSignal': '远端命令被信号中断（{signal}）',
+  'error.remoteLost': '与设备的连接中断了：通道没有返回退出状态，命令的结果未知。',
   'error.remoteFailed': '远端命令失败（退出码 {code}）',
   'mount.createFailed': '无法在设备上创建 {root}',
   'mount.unbound': '该会话没有绑定设备，但它的目录是设备挂载目录（{cwd}）：'
@@ -61,6 +62,7 @@ export const en = {
   'error.groupNotEmpty': 'This group still holds credentials. Move or delete them first.',
   'error.credentialInUse': 'These devices still use this credential: {names}. Point them at another one first.',
   'error.remoteSignal': 'Remote command interrupted by signal ({signal})',
+  'error.remoteLost': 'The connection to the device was lost: the channel closed without an exit status, so the command’s outcome is unknown.',
   'error.remoteFailed': 'Remote command failed (exit code {code})',
   'mount.createFailed': 'Could not create {root} on the device',
   'mount.unbound': 'This session is not bound to a device, but its directory is a device mount directory ({cwd}): '

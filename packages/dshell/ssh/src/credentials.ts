@@ -10,6 +10,12 @@
  * Every credential belongs to exactly one vault group, which decides whether its
  * bytes are sealed. See `vault.ts` for what that does and does not buy.
  *
+ * The stored body is sealed on disk and the plaintext is produced when a live
+ * connection asks for it — as bytes, handed straight to the transport that needs
+ * them. A sealed group's plaintext is never written to a file, not even a
+ * temporary one, so there is nothing on the disk to sweep when the group is
+ * locked and nothing left behind when the process dies.
+ *
  * Records hold PATHS, never contents, and the view handed to the API reports
  * only whether a secret exists — the same rule the device store has always
  * followed, so a settings document that leaks carries no credential in it.
@@ -57,8 +63,6 @@ function newId(): string {
 export class CredentialStore {
   private loaded = false
   private records: CredentialRecord[] = []
-  /** `credential:part:digest` → the plaintext file currently materialized for it. */
-  private readonly materialized = new Map<string, string>()
 
   /**
    * @param root - resolves the ssh data directory, read when needed rather than
@@ -177,25 +181,6 @@ export class CredentialStore {
     await this.removeFiles(record)
     this.records = this.records.filter(candidate => candidate.id !== id)
     await this.persist()
-    // The plaintext a live connection was handed out is named after the DEVICE
-    // that asked for it, so a delete cannot tell which files were this one's.
-    // A secret the reader just removed has no business sitting under `run/`
-    // until the next restart sweeps it, so everything goes and whatever is
-    // still in use materializes again on its next connection.
-    await this.sweepPlaintext()
-  }
-
-  /**
-   * Drop every plaintext this process handed out, the cached paths and the
-   * files under `run/` alike.
-   *
-   * The counterpart of {@link forgetMaterialized} for a caller that cannot say
-   * WHICH materialized secret is now stale — a deletion, where the file's name
-   * says which device asked for it rather than which credential it holds.
-   */
-  async sweepPlaintext(): Promise<void> {
-    this.materialized.clear()
-    await this.vault.clearRunDir()
   }
 
   private async writeBody(id: string, kind: CredentialKind, secret: string, group: string): Promise<string> {
@@ -245,7 +230,19 @@ export class CredentialStore {
     return this.records.find(candidate => candidate.id === id)?.group
   }
 
-  /** The group a stored body must be opened against, by credential id. */
+  /**
+   * The plaintext of one credential's secret, opened against its group.
+   *
+   * This is the read path a live connection uses, and deliberately the only one.
+   * The plaintext comes back as bytes and goes no further than the transport that
+   * needs it: nothing here writes it down, so a sealed group's secret has no
+   * copy on the disk for a lock to have to sweep.
+   *
+   * @param id - the credential to open.
+   * @param which - which of its two parts.
+   * @returns the plaintext, or undefined when the credential has no such part.
+   * @throws VaultLockedError when the group is sealed and not unlocked.
+   */
   async open(id: string, which: 'secret' | 'passphrase'): Promise<string | undefined> {
     const body = await this.bodyOf(id, which)
     const group = await this.groupOf(id)
@@ -279,62 +276,5 @@ export class CredentialStore {
       }
     }
   }
-
-  /**
-   * A file `ssh` can open for one credential's secret.
-   *
-   * This is where sealed storage meets the one thing it cannot avoid: `ssh` is an
-   * external binary that reads its key and its passphrase from a path, so
-   * whatever was sealed has to be unsealed into a readable file to be used at
-   * all. Plain credentials skip the step and hand back their own path — a
-   * group's policy is read from the file's marker, not applied on top of it.
-   *
-   * Cached per credential AND per stored body, so the many invocations that share
-   * one control socket do not each rewrite the same file, while a rotated
-   * credential cannot read back the previous plaintext.
-   *
-   * @param credentialId - the credential to resolve.
-   * @param which - which of its two parts.
-   * @param hint - a stable name for the reader, used for the temporary file.
-   * @returns the path, or undefined when the credential has no such part.
-   * @throws VaultLockedError when it is sealed and its group is not unlocked.
-   */
-  async usablePath(
-    credentialId: string,
-    which: 'secret' | 'passphrase',
-    hint: string,
-  ): Promise<string | undefined> {
-    const body = await this.bodyOf(credentialId, which)
-    if (body === undefined) return undefined
-    const path = which === 'secret'
-      ? this.records.find(record => record.id === credentialId)?.file
-      : this.records.find(record => record.id === credentialId)?.passphraseFile
-    if (!SecretVault.isSealed(body)) return path
-    const cacheKey = `${credentialId}:${which}:${hash(body)}`
-    const cached = this.materialized.get(cacheKey)
-    if (cached !== undefined) return cached
-    const plaintext = await this.open(credentialId, which)
-    if (plaintext === undefined) return undefined
-    const made = await this.vault.materialize(`${hint}.${which}`, plaintext)
-    this.materialized.set(cacheKey, made)
-    return made
-  }
-
-  /**
-   * Forget every materialized path.
-   *
-   * Called on lock, together with the vault's own sweep of the `run/` directory:
-   * a cached path pointing at a file that has just been deleted would otherwise
-   * be handed to `ssh` as a missing key file.
-   */
-  forgetMaterialized(): void {
-    this.materialized.clear()
-  }
 }
 
-/** A short digest, so a cache key changes when a secret's bytes change. */
-function hash(text: string): string {
-  let h = 5381
-  for (let i = 0; i < text.length; i += 1) h = ((h << 5) + h + text.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
