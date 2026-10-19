@@ -11,6 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { createSshRoute, type SshRouteDeps } from '../src/route.js'
+import { VaultLockedError } from '../src/vault.js'
 import type { AssignmentView } from '../src/router.js'
 import type { DshellSshTranslate } from '../src/host-locales.js'
 
@@ -87,5 +88,77 @@ describe('the bind route respawns a session shell whose plan changed', () => {
       router, ctx: { get: () => undefined }, t: translate,
     } as unknown as SshRouteDeps
     await expect(bind(deps, { action: 'bind', sessionId: 's-1', deviceId: 'dev-a' })).resolves.toBeUndefined()
+  })
+})
+
+describe('the list route answers with the vault face', () => {
+  it('carrying the groups and credentials a fresh page load needs', async () => {
+    // The client's snapshot starts empty and a reply without the face would
+    // leave the panel reading as an empty vault until a mutation carried one.
+    const router = {
+      ...fakeRouter(undefined),
+      vault: { list: async () => [{ id: 'g-1', name: '默认', sealed: true, locked: true, hasToken: true }] },
+      credentials: {
+        list: async () => [{ id: 'c-1', group: 'g-1', name: 'deploy', kind: 'key', hasPassphrase: false }],
+      },
+    }
+    const deps = {
+      router, ctx: fakeContext(async () => {}), t: translate,
+    } as unknown as SshRouteDeps
+    const route = createSshRoute(deps)
+    const response = await route.fetch(new Request('http://host/api/dshell/ssh'))
+    const body = await response.json() as { groups?: unknown[]; credentials?: unknown[] }
+    expect(body.groups).toHaveLength(1)
+    expect(body.credentials).toHaveLength(1)
+  })
+})
+
+describe('a refusal that is a locked group', () => {
+  /** Drive one POST through the route and read the answer back. */
+  async function post(deps: SshRouteDeps, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const route = createSshRoute(deps)
+    const response = await route.fetch(new Request('http://host/api/dshell/ssh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }))
+    return { status: response.status, ...await response.json() as Record<string, unknown> }
+  }
+
+  it('carries the group, so the panel can open its unlock box', async () => {
+    // The error names the group in words for whoever reads it; this is the same
+    // name in a shape the vault panel can act on. Without it a device test that
+    // lands on a locked credential leaves the reader hunting for the group.
+    const router = {
+      ...fakeRouter(undefined),
+      test: async (): Promise<string> => {
+        throw new VaultLockedError('分组「远程验收」已锁定，先解锁才能读取或写入它的凭据', 'g-1')
+      },
+      vault: { list: async () => [{ id: 'g-1', name: '远程验收', sealed: true, locked: true, hasToken: true }] },
+      credentials: { list: async () => [] },
+    }
+    const deps = { router, ctx: fakeContext(async () => {}), t: translate } as unknown as SshRouteDeps
+
+    const body = await post(deps, { action: 'test', deviceId: 'dev-a' })
+    expect(body.status).toBe(400)
+    expect(body.error).toContain('远程验收')
+    expect(body.lockedGroup).toEqual({ id: 'g-1', name: '远程验收' })
+  })
+
+  it('carries nothing when the refusal is not about a group', async () => {
+    // A transport failure is not a door to open, and dressing it as one would
+    // send the reader to a vault that was never the problem.
+    const router = {
+      ...fakeRouter(undefined),
+      test: async (): Promise<string> => { throw new Error('ssh: connect to host dev-a port 22: Connection refused') },
+      vault: { list: async () => [] },
+      credentials: { list: async () => [] },
+    }
+    const deps = { router, ctx: fakeContext(async () => {}), t: translate } as unknown as SshRouteDeps
+
+    const body = await post(deps, { action: 'test', deviceId: 'dev-a' })
+    expect(body.status).toBe(400)
+    expect(body.error).toContain('Connection refused')
+    expect(body.lockedGroup).toBeUndefined()
   })
 })

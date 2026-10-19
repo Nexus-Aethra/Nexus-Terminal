@@ -242,22 +242,34 @@ export class RemoteProcesses {
   }> {
     const entry = this.require(id)
     await entry.closed
-    if (entry.spawnError !== undefined) throw entry.spawnError
-    const outcome = entry.outcome ?? { exitCode: null, signal: null }
-    // The entry is released here: its window is the last thing a caller needs,
-    // and holding it would keep a finished command's output alive for the life
-    // of the connection.
-    this.entries.delete(id)
     const spills: { stdout?: string; stderr?: string } = {}
-    if (entry.stdout.spillPath !== undefined) spills.stdout = entry.stdout.spillPath
-    if (entry.stderr.spillPath !== undefined) spills.stderr = entry.stderr.spillPath
-    return {
-      outcome,
-      collected: {
-        stdout: { tail: entry.stdout.window.tail(), totalBytes: entry.stdout.window.totalBytes },
-        stderr: { tail: entry.stderr.window.tail(), totalBytes: entry.stderr.window.totalBytes },
-      },
-      spills,
+    try {
+      if (entry.spawnError !== undefined) throw entry.spawnError
+      const outcome = entry.outcome ?? { exitCode: null, signal: null }
+      if (entry.stdout.spillPath !== undefined) spills.stdout = entry.stdout.spillPath
+      if (entry.stderr.spillPath !== undefined) spills.stderr = entry.stderr.spillPath
+      return {
+        outcome,
+        collected: {
+          stdout: { tail: entry.stdout.window.tail(), totalBytes: entry.stdout.window.totalBytes },
+          stderr: { tail: entry.stderr.window.tail(), totalBytes: entry.stderr.window.totalBytes },
+        },
+        spills,
+      }
+    } finally {
+      // The entry is released here: its window is the last thing a caller
+      // needs, and holding it would keep a finished command's output alive for
+      // the life of the connection.
+      //
+      // Released on EVERY path out of this method, and the throwing one is
+      // exactly the path that used to leak: a child that could not be started
+      // was charged a slot it will never use, so one failed spawn per attempt
+      // filled the table and the helper began refusing EVERY process on that
+      // device. The table is per connection, and the terminal, the agent's tool
+      // calls and the metric probe all draw from this one table — a leak here
+      // takes down all three at once, and it only shows up as a refusal long
+      // after the failure that caused it.
+      this.entries.delete(id)
     }
   }
 

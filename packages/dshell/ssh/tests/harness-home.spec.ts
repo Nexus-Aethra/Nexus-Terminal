@@ -19,14 +19,25 @@
  * front of the call, and is asserted on its own.
  */
 
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
 import { dshellDataRoot, harnessHome } from '../src/paths.js'
 
 const ambientDshellHome = process.env[DSHELL_HOME_ENV]
 const ambientDshHome = process.env.DSH_HOME
+
+/**
+ * A root, named the way THIS machine names directories.
+ *
+ * The roots are directories on the host, so they are resolved with the host's
+ * rules: a fixture written in POSIX would come back Windows-spelled, and the
+ * assertion would be about the spelling rather than about the precedence.
+ */
+function root(name: string): string {
+  return join(tmpdir(), name)
+}
 
 afterEach(() => {
   if (ambientDshellHome === undefined) delete process.env[DSHELL_HOME_ENV]
@@ -45,14 +56,14 @@ function settle(dshellRoot: string | undefined, harnessRoot: string | undefined)
 
 describe('the dshell data root guard', () => {
   it('passes a real root through', () => {
-    settle('/tmp/dshell-root-a', undefined)
-    expect(dshellDataRoot()).toBe('/tmp/dshell-root-a')
+    settle(root('dshell-root-a'), undefined)
+    expect(dshellDataRoot()).toBe(root('dshell-root-a'))
   })
 
   it('treats a blank or whitespace root as unset', () => {
-    settle('', '/tmp/dsh-root-b')
+    settle('', root('dsh-root-b'))
     expect(dshellDataRoot()).toBeUndefined()
-    settle('   ', '/tmp/dsh-root-b')
+    settle('   ', root('dsh-root-b'))
     expect(dshellDataRoot()).toBeUndefined()
   })
 
@@ -64,18 +75,18 @@ describe('the dshell data root guard', () => {
 
 describe('harness home resolution', () => {
   it('gives the dshell data root the top of the precedence', () => {
-    settle('/tmp/dshell-root-c', '/tmp/dsh-root-c')
-    expect(harnessHome()).toBe('/tmp/dshell-root-c')
+    settle(root('dshell-root-c'), root('dsh-root-c'))
+    expect(harnessHome()).toBe(root('dshell-root-c'))
   })
 
   it('falls through to the harness home when the data root is blank', () => {
-    settle('', '/tmp/dsh-root-d')
-    expect(harnessHome()).toBe('/tmp/dsh-root-d')
+    settle('', root('dsh-root-d'))
+    expect(harnessHome()).toBe(root('dsh-root-d'))
   })
 
   it('falls back to the harness home when dshell names no root', () => {
-    settle(undefined, '/tmp/dsh-root-e')
-    expect(harnessHome()).toBe('/tmp/dsh-root-e')
+    settle(undefined, root('dsh-root-e'))
+    expect(harnessHome()).toBe(root('dsh-root-e'))
   })
 
   it('falls back to the home harness directory when both are unset', () => {
@@ -92,9 +103,9 @@ describe('harness home resolution', () => {
 
   it('always answers with a normalized absolute root', () => {
     for (const [dshellRoot, harnessRoot] of [
-      ['/tmp/./dshell-root-f/', '/tmp/../tmp/dsh-root-f'],
-      ['/tmp/dshell-root-g', undefined],
-      [undefined, '/tmp/dsh-root-h'],
+      [`${join(tmpdir(), 'dshell-root-f')}${sep}`, join(tmpdir(), '..', 'tmp', 'dsh-root-f')],
+      [join(tmpdir(), 'dshell-root-g'), undefined],
+      [undefined, join(tmpdir(), 'dsh-root-h')],
       [undefined, undefined],
     ] as [string | undefined, string | undefined][]) {
       settle(dshellRoot, harnessRoot)

@@ -30,7 +30,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { MessageImageLoader } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
-  DATA_DIR_FIELD, DSHELL_ENTRY_ID, THEME_FIELD, readDataSettings, type DshellSettings,
+  DATA_DIR_FIELD, DEVICE_POLL_FIELD, DSHELL_ENTRY_ID, THEME_FIELD, readDataSettings, type DshellSettings,
 } from '../settings.js'
 import { type SshSeat } from './block-view.js'
 import { createElement, type ReactElement } from 'react'
@@ -38,7 +38,7 @@ import { DshellTerminalView, type TerminalViewSeat } from './terminal-view.js'
 import { injectTuiCss } from './tui-css.js'
 import { applyTabLock } from './terminal-mode-lock.js'
 import { toggledChoice, type TuiChoice } from './tui.js'
-import { StatusChip, type PipeSeat, type PipeTicket, type StatusChipInjected } from './status-card.js'
+import { StatusCardBoundary, StatusChip, type PipeSeat, type PipeTicket, type StatusChipInjected, type StatusChipProps } from './status-card.js'
 import { DshellLeftControls } from './controls.js'
 import { createShellCompletion, ShellCompletionList } from './completion.js'
 import { createCommandHints, ShellCommandHint } from './command-hint.js'
@@ -46,6 +46,7 @@ import { DshellModeConfigPage } from './config-page.js'
 import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import { adoptTheme, connectThemeSettings } from './theme.js'
 import { adoptShellHelperSettings, connectShellHelperSettings } from './shell-settings.js'
+import { adoptDevicePollSettings, connectDevicePollSettings } from './device-poll.js'
 import { adoptDataDir, connectDataDirSettings } from './data-dir.js'
 import { TerminalModeClient } from './terminal-mode.js'
 import { useTerminalModeOn, type DeviceChoiceSeat } from './terminal-mode-switch.js'
@@ -74,7 +75,7 @@ const EMPTY_PIPE_STATE = { links: [], tickets: [], open: false } as const
  * every terminal is local. One shared value because a store's `getSnapshot`
  * must return the same object until something actually changed.
  */
-const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
+const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [], lockedGroup: undefined }
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
@@ -105,6 +106,19 @@ const MODE_ALIASES = new Map<string, SessionMode>([
   ['agent', 'agent'],
   ['terminal', 'shell'],
 ])
+
+/**
+ * The status chip, behind the boundary that keeps a fault in the card off the
+ * terminal it floats over.
+ *
+ * The card projects state owned by four different services; a fault in any of
+ * those projections must cost the reader the card and never the terminal. The
+ * boundary was written for exactly that and then never wired in — so a thrown
+ * render in the card took the whole panel with it.
+ */
+function BoundedStatusChip(props: StatusChipProps): ReactElement | null {
+  return createElement(StatusCardBoundary, null, createElement(StatusChip, props))
+}
 
 /**
  * Hide one composer surface from stock sessions.
@@ -302,13 +316,32 @@ export function apply(ctx: Context): void {
   // bundle: only the runtime service key, which is what the cast pins down.
   const sshHost = ctx as unknown as {
     inject(keys: readonly string[], callback: (scope: {
-      /** The SSH client service, reduced to what the block view asks of it. */
-      dshellSsh: SshSeat & {
+      /**
+       * The SSH client service, reduced to what the block view asks of it.
+       *
+       * Declared with the host-key members returning RECORDS, because that is
+       * what the SSH plugin's service really returns — the seat the block view
+       * sees is built below, and the reduction to plain fingerprints happens
+       * there, once.
+       */
+      dshellSsh: {
         getSnapshot(): {
           devices: readonly { id: string; name: string }[]
           bindings: readonly { sessionId: string; deviceId: string }[]
+          /** The group a locked refusal was about, published for the surfaces. */
+          lockedGroup: { readonly id: string; readonly name: string } | undefined
         }
         bind(sessionId: string, deviceId: string | null): Promise<void>
+        revealInSettings(): boolean
+        revealUnlockForSession(sessionId: string): boolean
+        requestUnlock(group: { readonly id: string; readonly name: string }): void
+        lockedGroupForSession(sessionId: string): { readonly id: string; readonly name: string } | undefined
+        unlock(groupId: string, token: string): Promise<void>
+        bindingOf(sessionId: string): { deviceId: string } | undefined
+        hostKeys(deviceId: string): Promise<readonly { fingerprint: string }[]>
+        probeHostKey(deviceId: string): Promise<{ fingerprint: string } | undefined>
+        revokeHostKey(deviceId: string): Promise<unknown>
+        subscribe(listener: () => void): () => void
       }
     }) => void): unknown
   }
@@ -330,6 +363,14 @@ export function apply(ctx: Context): void {
     openConversation = (target) => { scope.uiWorkspace.openSession(target) }
   })
   let sshSeat: SshSeat | undefined
+  /**
+   * Subscribers the SSH forwarder below took before the seat arrived.
+   *
+   * Same story as `deviceListeners`, one service over: `dshellSsh` is reached
+   * through `inject`, which answers once the service is up — possibly after a
+   * surface that reads it has already been built.
+   */
+  const sshListeners = new Set<() => void>()
   // The device seat is built ONCE: `useSyncExternalStore` demands a stable
   // `snapshot` identity AND a cached return value, so the projection of the
   // ssh service's own snapshot is memoized by that snapshot's identity.
@@ -348,6 +389,7 @@ export function apply(ctx: Context): void {
   const deviceForward: DeviceChoiceSeat = {
     snapshot: () => deviceSeat?.snapshot() ?? NO_DEVICES,
     bind: async (sessionId, deviceId) => { await deviceSeat?.bind(sessionId, deviceId) },
+    revealUnlock: group => deviceSeat?.revealUnlock(group) ?? false,
     subscribe: (listener) => {
       deviceListeners.add(listener)
       return () => { deviceListeners.delete(listener) }
@@ -356,7 +398,9 @@ export function apply(ctx: Context): void {
   sshHost.inject(['dshellSsh'], (scope) => {
     const ssh = scope.dshellSsh
     let cachedRaw: unknown
-    let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [] }
+    let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = {
+      devices: [], bindings: [], lockedGroup: undefined,
+    }
     deviceSeat = {
       snapshot: () => {
         const raw = ssh.getSnapshot()
@@ -365,6 +409,7 @@ export function apply(ctx: Context): void {
           cachedProjection = {
             devices: raw.devices.map(row => ({ id: row.id, name: row.name })),
             bindings: raw.bindings.map(row => ({ sessionId: row.sessionId, deviceId: row.deviceId })),
+            lockedGroup: raw.lockedGroup,
           }
         }
         return cachedProjection
@@ -372,6 +417,13 @@ export function apply(ctx: Context): void {
       // The refusal travels to the caller: the creation page reports it, and
       // the session row's own button only needs the republish.
       bind: (sessionId: string, deviceId: string | null) => ssh.bind(sessionId, deviceId),
+      // Same two steps as the session row: name the group, then open the panel
+      // it lives in. The panel is what mounts the unlock box, so it has to be
+      // open before the request means anything.
+      revealUnlock: group => {
+        ssh.requestUnlock(group)
+        return ssh.revealInSettings()
+      },
       subscribe: listener => ssh.subscribe(listener),
     }
     // Relay to whoever subscribed before the seat existed (see `deviceForward`).
@@ -379,10 +431,50 @@ export function apply(ctx: Context): void {
     sshSeat = {
       bindingOf: sessionId => ssh.bindingOf(sessionId),
       devices: () => ssh.getSnapshot().devices.map(device => ({ id: device.id, name: device.name })),
-      revealSettings: () => ssh.revealSettings(),
+      revealSettings: sessionId => ssh.revealUnlockForSession(sessionId),
+      // The locked group and its token box: the failure screen reads the first
+      // and takes the second, so a session whose group is locked can be opened
+      // from where the reader is already looking.
+      lockedGroupForSession: sessionId => ssh.lockedGroupForSession(sessionId),
+      unlock: async (groupId, token) => { await ssh.unlock(groupId, token) },
+      // Fingerprints only: the panel draws two strings, and reducing here means
+      // the view never learns a host-key record exists.
+      hostKeys: async deviceId => (await ssh.hostKeys(deviceId)).map(key => key.fingerprint),
+      probeHostKey: async deviceId => (await ssh.probeHostKey(deviceId))?.fingerprint,
+      revokeHostKey: async deviceId => { await ssh.revokeHostKey(deviceId) },
       subscribe: listener => ssh.subscribe(listener),
     }
+    // Relay to whoever subscribed before the seat existed (see `sshForward`).
+    ssh.subscribe(() => { for (const listener of [...sshListeners]) listener() })
   })
+  /**
+   * The SSH seat, forwarded.
+   *
+   * `sshSeat` is built inside the `inject` callback above, and that callback
+   * answers once the SSH plugin's service is up — possibly after a surface
+   * that reads it has already been built. A surface handed the variable
+   * itself would keep the `undefined` it was given: the status chip would
+   * have no way to the vault group that is holding a session's credential, and
+   * the terminal view would subscribe to nothing.
+   *
+   * So the seat is handed over as a forwarder instead: built once, reading
+   * through at call time, and relaying the subscriptions it collected early.
+   * The same shape as `deviceForward` above, for the same reason.
+   */
+  const sshForward: SshSeat = {
+    bindingOf: sessionId => sshSeat?.bindingOf(sessionId),
+    devices: () => sshSeat?.devices() ?? [],
+    revealSettings: sessionId => sshSeat?.revealSettings(sessionId) ?? false,
+    lockedGroupForSession: sessionId => sshSeat?.lockedGroupForSession(sessionId),
+    unlock: async (groupId, token) => { await sshSeat?.unlock(groupId, token) },
+    hostKeys: async deviceId => await sshSeat?.hostKeys(deviceId) ?? [],
+    probeHostKey: async deviceId => await sshSeat?.probeHostKey(deviceId),
+    revokeHostKey: async deviceId => { await sshSeat?.revokeHostKey(deviceId) },
+    subscribe: listener => {
+      sshListeners.add(listener)
+      return () => { sshListeners.delete(listener) }
+    },
+  }
   // The cross-session pipe is the same story one package over: reached by
   // service key, reduced to the reads the status card's pipe rows need. A
   // composition without `dshell-buffer` simply leaves those rows absent.
@@ -537,11 +629,16 @@ export function apply(ctx: Context): void {
     if (!dshellSettings.getSnapshot().writable) return
     void dshellSettings.set(field, next).catch(() => { /* the form republishes on failure */ })
   })
+  connectDevicePollSettings((next) => {
+    if (!dshellSettings.getSnapshot().writable) return
+    void dshellSettings.set(DEVICE_POLL_FIELD, next).catch(() => { /* the form republishes on failure */ })
+  })
   const syncSettings = (): void => {
     const snapshot = dshellSettings.getSnapshot()
     if (snapshot.status !== 'ready') return
     adoptTheme(snapshot.value?.theme)
     adoptShellHelperSettings(snapshot.value)
+    adoptDevicePollSettings(snapshot.value)
     adoptDataDir(readDataSettings(snapshot.value))
   }
   ctx.effect(() => dshellSettings.subscribe(syncSettings), 'dshell-mode: dshell settings mirror')
@@ -651,9 +748,13 @@ export function apply(ctx: Context): void {
           pipe: pipeSeat,
           openConversation,
           modes,
+          // The vault group that is holding this session's credential, and the
+          // way out of it. The chip is where the reader is when the terminal
+          // says it cannot start, so this is where the way out belongs.
+          ssh: sshForward,
         }),
       },
-      gated(StatusChip),
+      gated(BoundedStatusChip),
     ),
   )
   /**
@@ -837,7 +938,7 @@ export function apply(ctx: Context): void {
             sessionId,
             pty,
             sessions,
-            ssh: sshSeat,
+            ssh: sshForward,
             pipe: pipeSeat,
             // Attachments arrive as opaque refs; the conversation service owns the
             // only sanctioned way to turn one into a URL.
@@ -846,8 +947,9 @@ export function apply(ctx: Context): void {
               : (attachment) => uiConversation.imageUrl(sessionId, attachment),
             openConversation,
             device: {
-              snapshot: () => deviceSeat?.snapshot() ?? { devices: [], bindings: [] },
+              snapshot: () => deviceSeat?.snapshot() ?? NO_DEVICES,
               bind: (id: string, deviceId: string | null) => deviceSeat?.bind(id, deviceId) ?? Promise.reject(new Error('dshell-ssh is not composed')),
+              revealUnlock: group => deviceSeat?.revealUnlock(group) ?? false,
               subscribe: (listener: () => void) => deviceSeat?.subscribe(listener) ?? (() => {}),
             },
             presets,

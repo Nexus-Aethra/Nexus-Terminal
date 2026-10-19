@@ -667,7 +667,9 @@ Five things make that safe and usable rather than clever:
 - **The functions are code on that machine.** That is the point — it is the user's
   own Tab — and it happens in a separate, short-lived process with a read-only
   policy (honest for a local session; for a device the command runs under the
-  device's own policy, because the only process here is `ssh`).
+  device's own policy, because the only thing that reaches the device is a
+  channel on dshell's own connection — § 19 — and the device applies its own
+  rules to whatever it is asked to run).
 - **The answer is asked for AFTER the fast one.** Two phases: the host answers
   from what it already knows — memory, not a fresh round trip, when the line is
   one the shell will answer (see below) — and says `pending` when the shell might
@@ -690,7 +692,7 @@ terminal: the reader is typing a spelling there, not asking about the world.
 
 A device Tab used to be **1.2–1.6 s** where the same Tab on this machine was
 6 ms, and the network was not the reason. Measured against the SSH device this
-project tests with:
+project tests with, on the build that still ran a host `ssh` per command:
 
 | what | cost |
 | --- | --- |
@@ -703,8 +705,16 @@ project tests with:
 The 0.39 s is not the wire: every command dsh runs locally is wrapped as
 `systemd-run --user --scope … node --import tsx …/subprocess-local/src/bin.ts --
 ssh …`, so each call pays a transient systemd scope, a Node process and tsx
-transpiling dsh's runner. That price belongs to the harness, not to dshell, and
-the only thing this side controls is **how many calls a keystroke makes**.
+transpiling dsh's runner. That price belonged to the harness, not to dshell, and
+the only thing this side controlled was **how many calls a keystroke makes**.
+
+> Those two rows are now history, and the reason is § 19: the device transport
+> is an in-process `ssh2` client, so a device reading no longer pays a process
+> spawn at all — it is a channel on a socket that is already open. The rules
+> below are unchanged and still load-bearing, because the network round trips
+> they save are the part the transport cannot remove. A device reading is now
+> one round trip rather than one round trip plus 0.39 s of someone else's
+> process.
 
 So, four rules:
 
@@ -894,9 +904,9 @@ on purpose:
 
 | what | where it goes |
 | --- | --- |
-| `dshell/ssh` (minus `ctl/` and the regenerated `askpass.sh`), `dshell/buffer`, `dshell/tags.json`, `terminal-mode.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
+| `dshell/ssh`, `dshell/buffer`, `dshell/tags.json`, `terminal-mode.json`, `dshell-pty` | moves — dshell's own records, which mean the same thing under either root |
 | `dshell/mnt/**` | **stays** — each directory is a session's working directory, and dsh recorded that as an absolute path when the session was created; moving them would break every existing device session |
-| `dshell/ssh/ctl/**` | stays — Unix sockets belonging to the process that is running right now, recreated on demand |
+| `dshell/ssh/keys/**` | moves with the rest of `dshell/ssh` — a private key is a record, and its 0600 mode travels with it |
 
 Nothing at the destination is ever replaced. A file that is already there is
 reported and left alone, on both sides, so a reader whose new directory happens
@@ -973,6 +983,9 @@ parent's listing, since the directory they want is already in front of them.
 - No new session events. PTY bytes never reach `ctx.sessionPersistence`.
 - No cross-process PTY. Session restart loses PTY scrollback.
 - No multi-tab browser surface.
+- No dependency on a host `ssh` binary, on `~/.ssh/config`, or on the user's
+  `~/.ssh/known_hosts` — the transport is a library (§ 19) with its own host-key
+  file. What that excludes is listed there too.
 
 These mirror `dshell-design.md` § 2 and are normative.
 
@@ -1034,11 +1047,11 @@ Three rules the spec pins, each because getting it wrong is visible:
   positive that clearing exists to prevent. `pendingTail` keeps the longest
   suffix that is a proper prefix of a watched sequence, and nothing else.
 
-A device session's local child is `ssh`, which holds the local terminal's
-foreground for the session's whole life, so the foreground signal is not watched
-there (§ 4.11's rule, applied to a reading rather than a tool). The bytes still
-carry the alternate screen, so that half keeps working on a device; the manual
-toggle covers the rest.
+A device session's shell is an `ssh2` channel inside this process — the local
+terminal's foreground signal has no child to read there, because there is no
+child: the remote shell is a channel on a socket, and the process that owns the
+local terminal is the harness itself. The bytes still carry the alternate screen,
+so that half keeps working on a device; the manual toggle covers the rest.
 
 ### 18.2 The wire
 
@@ -1096,3 +1109,60 @@ misses.
 - The mode is per browser and does not survive a reload — the reading does,
   because the bind snapshot carries it; only the reader's own decision is
   forgotten, exactly as § 7 treats the mode store.
+
+## 19. The device transport is a library, not a child process
+
+Every remote action — a test, a helper deploy, a directory listing, a command
+run on a bound session's behalf, and the device's own terminal — goes through
+`ssh/src/transport/transport.ts`, which speaks the SSH protocol itself through
+the `ssh2` package. There is no `ssh` binary, no `ControlMaster`, no askpass
+helper and no per-device Unix socket anywhere in the stack.
+
+**Why.** The host `ssh` was the one dependency dshell could not supply. It is
+absent on a stock Windows install until the user adds the OpenSSH Client
+optional feature, it reads `~/.ssh/config` and `~/.ssh/known_hosts` — files the
+user owns and dshell must not write to — and every call paid a process spawn
+that the harness then wrapped in a systemd scope of its own (§ 13 measured that
+at 0.39 s per command). An in-process client removes all four at once, and it is
+what lets a device session's terminal be a session rather than a wrapper around
+someone else's.
+
+**What it is.** One `DeviceTransport` holding a pool of `ssh2.Client` per device,
+rebuilt whenever the credential fingerprint changes. Three doors:
+
+| door | shape | used by |
+| --- | --- | --- |
+| `exec` | one channel, bounded collect, closed when the command ends | test, helper deploy, `remote-fs-shell` |
+| `open` | one channel kept alive, fed through dsh's `SubprocessHandle` seam | the legacy command lane for a bound session |
+| `shell` | a pty channel | the device terminal (§ 4) |
+
+`open` is the seam that matters: dsh hands a plugin a `SubprocessHandle`, and
+`ssh/src/channel-process.ts` is one — a `PassThrough` for each of stdin, stdout
+and stderr over a channel, with the same collect-and-spill contract dsh's own
+runner implements. So the harness's caller sees the object it already knows,
+while the bytes never leave this process.
+
+**Host keys are dshell's own.** `ssh/src/transport/known-hosts.ts` keeps a
+`known_hosts` under dshell's data root, in OpenSSH's hashed format
+(`|1|<salt>|<hmac>`), read and written by this package alone — never the user's
+`~/.ssh/known_hosts`. The first contact with a host is trust-on-first-use and
+says so; a later disagreement is refused with both fingerprints rather than
+silently accepted. `probeHostKey` can ask a host for its key without
+authenticating, which is what the device card's key-change flow reads.
+
+**What this costs, and is not covered.** These are real gaps, not TODOs:
+
+- **No hardware keys.** A `sk-*` (FIDO/U2F) or PKCS#11 key cannot be used: the
+  signature has to happen in a device or a daemon that holds it, and `ssh2` has
+  neither. Ordinary PEM keys, with or without a passphrase, work.
+- **No `~/.ssh/config`.** `ProxyJump`, `ProxyCommand`, `Include`, `Match` and
+  per-host options are not read. A device behind a bastion needs the bastion to
+  be the device dshell connects to.
+- **No agent forwarding**, and no `ssh-add`. The agent is the host's; dshell
+  authenticates only with the credential the vault holds.
+- **The remote command line is unchanged, deliberately.** `LC_ALL=C` still
+  prefixes every remote command, and a command's text still travels verbatim.
+  The transport quotes once and never re-spells what it was given.
+- **Security cadence follows `ssh2`.** The CVE surface of the SSH implementation
+  is now a dependency's release schedule rather than the operating system's. It
+  is pinned exactly, and a rebuild is how it is updated.

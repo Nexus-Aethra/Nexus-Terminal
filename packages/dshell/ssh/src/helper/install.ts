@@ -18,8 +18,8 @@
  * on first use anyway — better to find out here, where the action is named.
  *
  * Why a script and not a `tar | ssh | tar` pipe: the helper bundle is one
- * file. `base64 -d` is on every POSIX system ssh reaches, and base64 over the
- * stdin that ssh's own `-T` provides is the same channel the route uses for
+ * file. `base64 -d` is on every POSIX system the transport reaches, and base64
+ * over the command's own stdin is the same channel the route uses for
  * interactive sessions, so no new plumbing is needed.
  *
  * The whole payload is base64 of the bundle, written to stdin. The destination
@@ -30,9 +30,9 @@
  * script readable.
  */
 import { readFileSync } from 'node:fs'
-import type { Context } from '@deepseek-ai/cordis'
 import type { DeviceConnection } from '../devices.js'
-import { localCwd, sshArgv, sshEnv } from '../runner.js'
+import { quote } from '../shell-quote.js'
+import { deviceTransport } from '../transport/transport.js'
 
 /** Device subdirectory the helper is installed under, relative to home. */
 const HELPER_DIRECTORY = '.dshell/helper'
@@ -67,12 +67,11 @@ export function helperPathFor(home: string, expectedHash: string): string {
 /**
  * Run the deployment for one device.
  *
- * One ssh invocation. Returns the digest the device just wrote, which the
- * caller compares against `artifact.hash`; a mismatch is a failed deployment
- * even when the ssh exit was 0 (corrupted transport, partial write, the
- * device's `base64` is older and lacks `-d`, etc.).
+ * One command. Returns the digest the device just wrote, which the caller
+ * compares against `artifact.hash`; a mismatch is a failed deployment even when
+ * the exit was 0 (corrupted transport, partial write, the device's `base64` is
+ * older and lacks `-d`, etc.).
  *
- * @param ctx - host context holding the subprocess seam.
  * @param device - device to deploy to.
  * @param artifactPath - absolute path of the local helper bundle.
  * @param artifactHash - digest of the bundle; the device's path is named after it.
@@ -81,7 +80,6 @@ export function helperPathFor(home: string, expectedHash: string): string {
  * @returns the digest the device reported, plus the verbatim message.
  */
 export async function deployHelper(
-  ctx: Context,
   device: DeviceConnection,
   artifactPath: string,
   artifactHash: string,
@@ -102,25 +100,15 @@ export async function deployHelper(
     `mv -f -- "$t" "${path.replace(/'/gu, "'\\''")}" || { echo mv-failed >&2; exit 24; }`,
     `sha256sum -- "${path.replace(/'/gu, "'\\''")}" | awk '{print $1}'`,
   ].join('\n')
-  const body = encodeHelperBody(artifactPath)
-  const argv = sshArgv(device, `sh -c '${script.replace(/'/gu, "'\\''")}'`)
-  const env = sshEnv(device)
-  const handle = ctx.subprocess.spawn({
-    argv,
-    cwd: localCwd(),
-    ...Object.keys(env).length === 0 ? {} : { env },
-    stdio: {
-      stdin: { data: body },
-      stdout: { maxBytes: 4 * 1024 },
-      stderr: { maxBytes: 4 * 1024 },
-    },
-    graceMs: 60_000,
-  })
-  const outcome = await handle.done
-  const stdout = handle.collected.stdout?.readFrom(0).text.trim() ?? ''
-  const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
-  if (outcome.exitCode !== 0) {
-    throw new Error(stderr === '' ? `helper deploy exited ${String(outcome.exitCode ?? 'on a signal')}` : stderr)
+  const result = await deviceTransport().exec(
+    device,
+    `sh -c ${quote(script)}`,
+    { stdin: encodeHelperBody(artifactPath), graceMs: 60_000 },
+  )
+  const stdout = result.stdout.trim()
+  const stderr = result.stderr.trim()
+  if (result.exitCode !== 0) {
+    throw new Error(stderr === '' ? `helper deploy exited ${String(result.exitCode ?? 'on a signal')}` : stderr)
   }
   // The last line of stdout is the digest; the row before it is the device's
   // own sha256 of the staging file (a copy we wrote for forensics, but the

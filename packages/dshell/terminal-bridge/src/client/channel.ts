@@ -35,6 +35,38 @@ export interface WireFrame {
   ready?: boolean
   /** `agent-info` frames: whether the agent shell exists at all. */
   live?: boolean
+  /**
+   * `error` frames: the host machine has no shell this terminal could run, so
+   * the failure is the platform and not the session. The client picks a whole
+   * screen from this rather than reading the message text for a hint of it.
+   */
+  localUnsupported?: boolean
+  /**
+   * `error` frames: the spawn was refused because the session's device draws
+   * its credential from a locked vault group. The one failure with a way out
+   * the reader can take without leaving the terminal, and the one an automatic
+   * retry cannot fix — so the client keeps its retry budget for the attempt
+   * that follows the unlock.
+   */
+  lockedGroup?: boolean
+  /**
+   * `error` frames: the host never attempted a shell for this session, because
+   * the session has no live agent to run one.
+   *
+   * A session in agent mode owns no shell until it is asked to do something,
+   * and the bridge reports that exactly as it reports a shell that failed to
+   * start. The two need opposite presentations — one is a session waiting, the
+   * other is a session in trouble — so the client is told which it got instead
+   * of reading it out of the message.
+   */
+  noShell?: boolean
+  /**
+   * `closed`/`error` frames: a failure the reader can act on, when the message
+   * alone does not say which action. A refused secret and a changed host key
+   * both arrive as one sentence, and only one of them is fixable by re-entering
+   * a secret.
+   */
+  failure?: 'passphrase' | 'hostKey'
   /** `info` frames: OS identity the dock uses to build bash prompts. */
   user?: string
   host?: string

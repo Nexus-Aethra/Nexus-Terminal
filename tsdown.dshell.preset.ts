@@ -13,6 +13,12 @@
 //
 // The config is a plain object: importing tsdown from this repo-root file
 // would fail because tsdown is a per-package devDependency, not a root one.
+//
+// The output name reserves `src/client.ts` (and, for a package that also builds
+// a device bundle, `src/helper.ts`): tsc emits either as `lib/client.js` /
+// `lib/helper.js`, which these bundles then overwrite — silently, because the
+// build still succeeds. A host module that needs one of those names must be
+// named something else.
 
 interface DshellClientBundleConfig {
   entry: Record<string, string>

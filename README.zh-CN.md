@@ -63,7 +63,7 @@ npm 上 `0.2.1-rc.2` 是 `next` 标签，`latest` 是 `0.2.0-rc.2`。
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.2` | **`0.1.14-alpha.1`**——npm 的 `alpha` 标签；预发布版，所以 `@latest` 不会解析到它 |
+| `0.2.1-rc.2` | **`0.1.14-alpha.7`**——npm 的 `alpha` 标签；预发布版，所以 `@latest` 不会解析到它 |
 | `0.2.0-rc.2`、`0.2.0-rc.1`、`0.1.7-rc.2`、`0.1.6-alpha.2`、`0.1.5-rc.2` | **`0.1.13`**——npm 的 `latest` 标签 |
 
 dsh 会拿插件声明的每个 `@deepseek-ai/dsh-*` peer 去校验自己的版本，只要有一个不匹配就**整个
@@ -74,7 +74,7 @@ bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 ds
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，
 # dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.1
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.7
 
 dsh web
 ```
@@ -82,7 +82,7 @@ dsh web
 dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
 
 **桌面版**里同样的事情有一个窗口入口：`设置 → 插件`，填
-`@nexus-aethra/dshell-bundle@0.1.14-alpha.1`（它从 npmjs 安装，并精确锁定版本）。
+`@nexus-aethra/dshell-bundle@0.1.14-alpha.7`（它从 npmjs 安装，并精确锁定版本）。
 
 > 跳过第 2 步不会致命——dsh 照样启动，只是那两行报 `did not activate`，其余功能都在。之所以
 > 列出来，是因为 SSH 设备会话与 AI 的终端工具都要从 profile 里解析这两个包名。
@@ -348,14 +348,18 @@ flowchart LR
 真实的 ssh 往返先验证连通性，验证不过不会把会话建出来。
 
 设备本身在**插件面板**上登记：侧边栏 `插件` → `@nexus-aethra/dshell-bundle` → `dshell-ssh` 那一行的
-`配置`（名称、host、端口、用户名、远端工作目录；登录方式可选 `密钥`（OpenSSH 私钥，留空则用你本机
-ssh agent / `~/.ssh/config`）或 `密码`）。
+`配置`（名称、host、端口、用户名、远端工作目录；登录方式可选 `密钥`（OpenSSH 私钥）或 `密码`，
+两者都存在保险箱的分组里）。
 
-- 连接用 `IdentitiesOnly=yes`，只带这台设备自己的钥匙；
-- 密码通过 OpenSSH 的 askpass 传递，不出现在命令行里；
+- 连接用内置的 SSH 客户端（`ssh2`），只带这台设备自己的钥匙——不依赖宿主 `ssh` 程序、
+  不读 `~/.ssh/config`、不走 ssh agent；
+- 密码直接交给这个客户端，不出现在命令行里；
 - 密钥与密码写在 `$DSH_HOME/dshell/ssh/keys/`，权限 `0600`；
 - 主机密钥记到 dshell 自己的 `known_hosts`，不动你个人的那份。`测试` 成功时会显示
   `已连接 user@host（系统）· N ms` 和 `主机密钥 SHA256:…（首次信任，请与服务器管理员核对 | 已信任）`。
+
+暂不支持：硬件密钥（`sk-*` / FIDO / PKCS#11）、`~/.ssh/config` 里的 `ProxyJump` / `ProxyCommand`
+等指令、以及 agent 转发。跳板机后面的设备，需要把跳板机本身作为设备登记。
 
 绑定设备后，这个会话的**命令、文件和终端都在设备上**：
 
@@ -428,6 +432,11 @@ dshell 的设置都在 dsh 的**插件面板**上，挂在各自所属的那一�
 | `中断点` | 你这一轮把活交给了别人、正在等回信（`⏸ 等待 <对方> 回信`），可 `撤回` |
 | `管道任务` | 别的会话派活给你，列出了待处理工单 |
 | `连接` | 与主机的 ws 断了，可 `重新连接` |
+Windows 上集成终端跑不起来：它需要一台 POSIX shell，宿主上没有。所以终端视图会直接说明这件事，并给出出路 —— 绑一台设备，终端就跑在那台机器上。已绑定设备的会话不受影响，而且在 Windows 上不需要装任何东西：连接用的是 dshell 自己的 SSH 客户端，不是操作系统的。
+
+点开状态卡时，最上面是这个会话跑在哪台机器：CPU 与内存各带一条进度条，条上画满绿→黄→橙→红的整条渐变，再按占用裁出已填充那段，所以条边缘的颜色就是这个负载该有的颜色。下面是核数、负载和内存的确切数值。绑到设备的会话报的是**那台设备**的数并标出设备名，设备不可达时直接说不可达，不会拿本机的数顶上。会话接过第一次输入之前不显示——在那之前设备还是你说了算。
+
+多久读一次由你定，在**设置 → 插件 → dshell → 资源读数**：2 秒 / 5 秒 / 10 秒 / 30 秒 / 1 分钟。本机上一次轮询只是一次文件读取；绑到设备时每一次都是一趟 ssh。
 
 ---
 

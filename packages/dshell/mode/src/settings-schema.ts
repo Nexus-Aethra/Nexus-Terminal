@@ -15,7 +15,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import {
-  COMMAND_HINT_FIELD, DATA_DIR_DEFAULT, DATA_DIR_FIELD, DEFAULT_THEME_ID,
+  COMMAND_HINT_FIELD, DATA_DIR_DEFAULT, DATA_DIR_FIELD, DEFAULT_THEME_ID, DEVICE_POLL_CHOICES, DEVICE_POLL_DEFAULT, DEVICE_POLL_FIELD,
   HISTORY_LIST_FIELD, SHELL_HELPER_DEFAULT, SHELL_ORACLE_FIELD, TAB_COMPLETION_FIELD, THEME_FIELD, THEME_IDS,
   type DshellSettings,
 } from './settings.js'
@@ -41,4 +41,8 @@ export const Config = z.object({
   // process cannot move its own data root out from under files it is writing,
   // so the card labels it as next-start and says so in its own copy.
   [DATA_DIR_FIELD]: z.string().default(DATA_DIR_DEFAULT),
+  // The poll interval for the session header's machine readout. Declared as the
+  // ladder rather than a natural number so a document cannot name an interval
+  // the card offers no way back from.
+  [DEVICE_POLL_FIELD]: z.union([...DEVICE_POLL_CHOICES]).default(DEVICE_POLL_DEFAULT),
 }) as unknown as z<DshellSettings>

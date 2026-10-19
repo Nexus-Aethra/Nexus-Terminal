@@ -101,6 +101,30 @@ describe('ReadingCache', () => {
     expect(next).toEqual(listing('/w', ['v2.txt']))
   })
 
+  it('swallows a failed background refresh, which dsh would otherwise treat as fatal', async () => {
+    // The refresh behind a stale answer is fire-and-forget, and dsh exits the
+    // whole host on an unhandled rejection — so a world that stopped answering
+    // (a device whose credential group is locked, say) must not be able to take
+    // the process down from a path nobody is waiting on.
+    const clock = clockFrom(1_000)
+    const cache = new ReadingCache(3_000, clock.now)
+    await cache.read('k', async () => listing('/w', ['old.txt']))
+    clock.advance(10_000)
+    let attempts = 0
+    const served = await cache.read('k', async (): Promise<DirectoryReading> => {
+      attempts += 1
+      throw new Error('分组已锁定')
+    })
+    // The reader is still answered from what this side holds.
+    expect(served).toEqual(listing('/w', ['old.txt']))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(attempts).toBe(1)
+    // And the failure is not remembered, so the next ask tries again.
+    clock.advance(60_001)
+    await expect(cache.read('k', async () => listing('/w', ['new.txt']))).resolves.toEqual(listing('/w', ['new.txt']))
+  })
+
   it('stops answering once a reading is old enough to be a claim nobody checked', async () => {
     const clock = clockFrom(1_000)
     const cache = new ReadingCache(3_000, clock.now, 60_000)

@@ -46,6 +46,7 @@ import { Config } from './settings-schema.js'
 import { applyDataRoot, dataRootReady, harnessHome, hostHome } from './data-root.js'
 import { createTerminalModeRoute, TerminalModeRegistry } from './terminal-mode.js'
 import { DSHELL_TERMINAL_MODE_SERVICE } from './terminal-mode-protocol.js'
+import { createDeviceMetricsRoute, type SshRoutingSeat } from './device-metrics.js'
 
 export const name = '@nexus-aethra/dshell-mode/host'
 
@@ -382,6 +383,25 @@ export function apply(ctx: Context, config: Partial<DshellSettings> = {}): void 
         },
       })),
       'dshell-mode: terminal-mode route',
+    )
+  })
+  // The device readout. The router is read structurally through a getter, so
+  // a composition without dshell-ssh has no seat at all and every session
+  // reads as this machine — which is exactly right, and is why the route can
+  // ship without taking a dependency on that bundle.
+  //
+  // The agent and the session controller are the other way round: the route
+  // resolves the session's agent and asks the shell seam AS that session, so
+  // its inject names them — the same set dshell-files declares for the same
+  // job. Service property access is gated by the inject declaration, and
+  // reaching past it throws "without inject" on exactly the device path,
+  // which is the one path that needs them.
+  ctx.inject(['connection', 'agents', 'sessionController'], (routeCtx) => {
+    routeCtx.effect(
+      () => routeCtx.connection.fetch.register(createDeviceMetricsRoute(routeCtx, {
+        routing: () => routeCtx.get('dshellSshRouting') as unknown as SshRoutingSeat | undefined,
+      })),
+      'dshell-mode: device-metrics route',
     )
   })
   ctx.inject(['dshellTerminalBridge'], (bridgeCtx) => {

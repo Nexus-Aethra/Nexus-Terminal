@@ -23,7 +23,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
-import { basename, dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, posix } from 'node:path'
 import type { z } from 'zod'
 import type { remoteFsKind } from './protocol.js'
 
@@ -168,10 +168,14 @@ export class DeviceFileSystem {
    * @returns the canonical path.
    */
   async resolve(path: string): Promise<string> {
-    const parts = resolve(path).split(sep).filter(part => part !== '')
-    let current: string = sep
+    // POSIX rules, always: every path in here is a DEVICE path, and the device
+    // is a POSIX machine whatever the host is. The host's own `node:path` would
+    // spell this differently on Windows — and a path the device cannot read is
+    // not a path at all.
+    const parts = posix.resolve(path).split('/').filter(part => part !== '')
+    let current = '/'
     for (const part of parts) {
-      const candidate = join(current, part)
+      const candidate = posix.join(current, part)
       try {
         current = await realpath(candidate)
       } catch (error) {
@@ -223,7 +227,7 @@ export class DeviceFileSystem {
     // can change what a listing looks like.
     const listed: DeviceListEntry[] = []
     for (const entry of entries) {
-      const info = await this.stat(join(path, entry.name), true)
+      const info = await this.stat(posix.join(path, entry.name), true)
       listed.push({
         name: entry.name,
         kind: info?.kind ?? 'other',
@@ -282,7 +286,7 @@ export class DeviceFileSystem {
     await attempt(() => mkdir(directory, { recursive: true }))
     const existing = await this.stat(path, true)
     const mode = existing === null ? 0o600 : existing.mode
-    const staging = join(directory, `.dshell-${String(process.pid)}-${randomBytes(6).toString('hex')}.tmp`)
+    const staging = posix.join(directory, `.dshell-${String(process.pid)}-${randomBytes(6).toString('hex')}.tmp`)
     let staged = false
     try {
       const handle = await attempt(() => open(staging, 'wx', 0o600))

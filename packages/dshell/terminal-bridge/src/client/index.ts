@@ -120,6 +120,48 @@ export interface PtyStreamState {
   exhausted: boolean
   /** When the current connection attempt started, for the view's elapsed count. */
   since: number
+  /**
+   * Host-reported: this machine cannot host a local shell at all.
+   *
+   * A separate fact from `reason` because the view has to CHOOSE a
+   * presentation from it. A local session that merely failed gets a marker
+   * appended to output the user was reading; one that failed because the
+   * platform has no shell for it has no output to append to, and gets a screen
+   * that names the way out (bind a device).
+   */
+  localUnsupported: boolean
+  /**
+   * Host-reported: the spawn was refused because the session's device draws its
+   * credential from a locked vault group.
+   *
+   * Separate from `reason` for the same reason `localUnsupported` is: the view
+   * has to CHOOSE a presentation. This is the one failure whose remedy is a
+   * token the reader can type on the failure screen itself, and the one an
+   * automatic retry cannot fix — the same refusal comes back until the group is
+   * unlocked — so the retry budget is kept for the attempt after that.
+   */
+  lockedGroup: boolean
+  /**
+   * Host-reported: no shell was ever attempted for this session, because the
+   * session has no live agent to run one.
+   *
+   * Separate from `status` for the same reason `lockedGroup` is: the view has
+   * to CHOOSE a presentation. A session nobody has sent anything to is WAITING
+   * — it is not a broken connection and it is not a failure the reader has to
+   * act on — and a chip that read it as a failure announced a fault that had
+   * not happened, then lost the fact that the session was simply waiting for
+   * its first command.
+   */
+  noShell: boolean
+  /**
+   * Host-reported: this failure is one the user can act on.
+   *
+   * Separate from `reason` for the same reason `localUnsupported` is: the view
+   * has to CHOOSE a presentation, and the message text alone does not say which
+   * one. A wrong passphrase and a refused password are both "Permission denied"
+   * to the reader, and they need opposite things.
+   */
+  failure: 'passphrase' | 'hostKey' | undefined
 }
 
 /** Browser render-buffer cap per session: the canvas replays from this store. */
@@ -211,6 +253,10 @@ export class PtyStreamService extends Service {
     maxAttempts: MAX_AUTO_ATTEMPTS,
     exhausted: false,
     since: Date.now(),
+    localUnsupported: false,
+    lockedGroup: false,
+    noShell: false,
+    failure: undefined,
   })
 
   /** OS identity from the server's `info` frame (bash prompt material). */
@@ -350,7 +396,11 @@ export class PtyStreamService extends Service {
     if (id === undefined) return
     this.clearRetryTimer()
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false })
+    // A reconnect is a FRESH attempt: whatever the last one was refused for
+    // may have been fixed since — a group the reader has just unlocked, most
+    // of all. Leaving the old refusal in place would keep the chip saying
+    // "locked" after the lock is gone.
+    this.patch({ attempt: 0, exhausted: false, lockedGroup: false })
     this.performReconnect(id)
   }
 
@@ -490,7 +540,7 @@ export class PtyStreamService extends Service {
     if (this.attempt === 0 && !this.state.getSnapshot().exhausted
       && this.state.getSnapshot().reason === undefined) return
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined })
+    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined, lockedGroup: false, noShell: false })
   }
 
   private clearRetryTimer(): void {
@@ -714,6 +764,11 @@ export class PtyStreamService extends Service {
         maxAttempts: MAX_AUTO_ATTEMPTS,
         exhausted: false,
         since: Date.now(),
+        // A new session has not failed yet, whatever the last one did.
+        localUnsupported: false,
+        lockedGroup: false,
+        noShell: false,
+        failure: undefined,
       })
     } else {
       this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now() })
@@ -831,18 +886,26 @@ export class PtyStreamService extends Service {
         status: 'closed',
         reason: typeof frame.reason === 'string' ? frame.reason : undefined,
         detail: typeof frame.detail === 'string' ? frame.detail : undefined,
+        failure: frame.failure,
         ...typeof frame.ready === 'boolean' ? { ready: frame.ready } : {},
       })
       this.scheduleRetry()
       return
     }
     if (frame.kind === 'error') {
+      if (frame.localUnsupported === true) this.patch({ localUnsupported: true })
       this.patch({
         status: 'error',
         reason: typeof frame.message === 'string' ? frame.message : undefined,
         detail: undefined,
+        lockedGroup: frame.lockedGroup === true,
+        noShell: frame.noShell === true,
+        failure: frame.failure,
       })
-      this.scheduleRetry()
+      // A locked group is not a transport failure: the identical refusal comes
+      // back until the reader unlocks it, so the budget is kept for the retry
+      // that follows the unlock rather than spent on repetitions of it.
+      if (frame.lockedGroup !== true) this.scheduleRetry()
     }
   }
 

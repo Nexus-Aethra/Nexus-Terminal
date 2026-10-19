@@ -65,7 +65,7 @@ Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.2` | **`0.1.14-alpha.1`** — the npm `alpha` dist-tag; prerelease, so it is not what `@latest` resolves to |
+| `0.2.1-rc.2` | **`0.1.14-alpha.7`** — the npm `alpha` dist-tag; prerelease, so it is not what `@latest` resolves to |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** — the npm `latest` dist-tag |
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
@@ -77,7 +77,7 @@ To run one anyway: `dsh plugin --profile <name> allow-version <package@version> 
 # One package: the bundle is the patch layer, it depends on the other ten dshell
 # packages, and dshell-ssh carries the one dsh package a stock profile does not
 # ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.1
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.7
 
 dsh web
 ```
@@ -85,7 +85,7 @@ dsh web
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
 
 In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
-`@nexus-aethra/dshell-bundle@0.1.14-alpha.1` (it installs from npmjs and pins the version exactly).
+`@nexus-aethra/dshell-bundle@0.1.14-alpha.7` (it installs from npmjs and pins the version exactly).
 
 > Skipping step 2 is not fatal — dsh boots and reports the two rows as `did not activate`, and the
 > rest of dshell works. It is listed because the SSH device sessions and the agent's terminal tool
@@ -375,15 +375,19 @@ is created.
 
 Devices themselves are registered on the **Plugins** panel — `插件` in the sidebar →
  `@nexus-aethra/dshell-bundle` → the `dshell-ssh` row's `配置` — with a name, host, port, user, remote
- working directory, and either `密钥` (an OpenSSH private key; leave it empty to use your local ssh
- agent / `~/.ssh/config`) or `密码`.
+ working directory, and either `密钥` (an OpenSSH private key) or `密码`, both held in a vault group.
 
-- Connections use `IdentitiesOnly=yes`, carrying only that device's own key;
-- Passwords go through OpenSSH's askpass hook, never onto a command line;
+- Connections use an embedded SSH client (`ssh2`), carrying only that device's own key — no host
+  `ssh` binary, no `~/.ssh/config`, no ssh agent;
+- Passwords are handed to that client directly, never onto a command line;
 - Keys and passwords live in `$DSH_HOME/dshell/ssh/keys/`, mode `0600`;
 - Host keys are trusted into dshell's own `known_hosts`, leaving your personal file alone. A successful
   `测试` reports `已连接 user@host（system）· N ms` and, when a host key is trusted,
   `主机密钥 SHA256:…（首次信任，请与服务器管理员核对 | 已信任）`.
+
+Not supported: hardware keys (`sk-*` / FIDO / PKCS#11), `~/.ssh/config` directives such as
+`ProxyJump` and `ProxyCommand`, and agent forwarding. A device behind a bastion needs the bastion
+itself registered as the device.
 
 Once bound to a device, that session's **commands, files and terminal all live on the device**:
 
@@ -463,6 +467,11 @@ have something to say:
 | `中断点` | You handed this turn to someone else and are waiting (`⏸ 等待 <peer> 回信`); reversible with `撤回` |
 | `管道任务` | Another session delegated work to you; lists the pending tickets |
 | `连接` | The host websocket dropped; offers `重新连接` |
+On Windows the integrated terminal cannot run: it needs a POSIX shell and there is none on the host, so the terminal view says so and offers the way out — bind a device and the session's terminal runs on that machine instead. A device-bound session is unaffected, and needs nothing installed on Windows: the connection is dshell's own SSH client, not the operating system's.
+
+Opening the card heads it with the machine this session runs on: CPU and memory, each with a bar carrying the whole green→yellow→orange→red ramp and clipped to the share in use, so the colour at the bar's edge is the colour for that load. Below them are its cores, load average and exact memory. A session bound to a device reports the **device's** figures and names it, and an unreachable one says so rather than falling back to this machine. Nothing is shown until the session has taken its first input — until then the device is still yours to pick.
+
+How often that is re-read is yours to choose, under **设置 → 插件 → dshell → 资源读数**: 2s / 5s / 10s / 30s / 1m. On this machine a tick is one file read; on a device every tick is a round trip over ssh.
 
 ---
 

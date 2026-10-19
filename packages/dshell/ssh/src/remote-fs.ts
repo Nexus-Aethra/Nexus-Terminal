@@ -30,7 +30,7 @@
  * this class, which is what makes the read-check-write sequences here — the
  * write guard, the edit guard — count for anything within this host.
  */
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, posix } from 'node:path'
 import { FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
 import type {
   FsDirEntry, FsEditOutcome, FsEditRequest, FsInfo, FsPathInfo,
@@ -170,7 +170,13 @@ export class RemoteFileSystem {
       .map(entry => ({
         name: entry.name,
         type: entry.kind === 'symlink' ? 'other' : entry.kind,
-        target: { targetKey: FsTargetKey(join(remote, entry.name)), displayPath: join(target.displayPath, entry.name) },
+        target: {
+          // The parent is a DEVICE path, so the child is spelled in the
+          // device's grammar — the host's `join` would write `\root\app` on
+          // Windows, which no POSIX program on the device can open.
+          targetKey: FsTargetKey(posix.join(remote, entry.name)),
+          displayPath: posix.join(target.displayPath, entry.name),
+        },
         ...entry.version === undefined ? {} : { version: entry.version },
         ...entry.size === undefined ? {} : { size: entry.size },
       }))

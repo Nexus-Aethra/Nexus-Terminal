@@ -6,13 +6,50 @@
  * symlink is reported as, which errno becomes which code, whether a write
  * leaves a partial file behind. What needs the rig is the transport, not the
  * rules, and those rules are the part a refactor would break silently.
+ *
+ * **A POSIX filesystem, and therefore a POSIX machine.** This is the DEVICE's
+ * half of the seam — the code that runs on the device, where every path is a
+ * POSIX path and the file system has mode bits, ownership and a rename that
+ * refuses to replace a directory. Asked the same questions on Windows, the
+ * answers would be about a machine this code never runs on: `chmod` does not
+ * restrict anything there, a directory has no 0600, and a rename over a
+ * directory says EPERM rather than ENOTDIR. So the whole suite is skipped
+ * there rather than answered wrongly; it runs in full wherever the helper
+ * actually runs.
  */
 import { createHash, randomBytes } from 'node:crypto'
+import { rmSync, symlinkSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat as statPath, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe as vitestDescribe, expect, it } from 'vitest'
 import { DeviceFileSystem, DeviceFsError } from '../src/helper/fs.js'
+
+/** The describe blocks below, skipped where the device's own rules do not hold. */
+const describe = vitestDescribe.skipIf(process.platform === 'win32')
+
+/**
+ * Whether this machine lets an unprivileged process create a symbolic link.
+ *
+ * Windows decides that with a privilege ("Create symbolic links") or with
+ * Developer Mode, so a machine with neither cannot pose the cases that need a
+ * link. They are skipped there rather than failed: the rule they pin — what a
+ * symlink is reported as — is decidable only where a symlink can be made, and a
+ * machine that cannot make one has no answer to give.
+ */
+const SYMLINKS = ((): boolean => {
+  const probe = join(tmpdir(), `dshell-device-fs-probe-${String(process.pid)}`)
+  try {
+    // A link to a target that does not exist: the same shape the cases below
+    // need, and the one Windows refuses without the privilege.
+    symlinkSync(join(tmpdir(), 'dshell-device-fs-target'), probe)
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { force: true })
+  }
+})()
 
 let root = ''
 let files: DeviceFileSystem
@@ -23,6 +60,7 @@ beforeAll(async () => {
   await mkdir(join(root, 'sub', 'deep'), { recursive: true })
   await writeFile(join(root, 'hello.txt'), 'hello\n')
   await writeFile(join(root, 'sub', 'nested.txt'), 'nested\n')
+  if (!SYMLINKS) return
   await symlink('hello.txt', join(root, 'link'))
   await symlink('nothing.txt', join(root, 'dangling'))
   await symlink(join(root, 'sub'), join(root, 'link-to-dir'))
@@ -37,7 +75,7 @@ describe('resolve', () => {
     expect(await files.resolve(join(root, 'not', 'there', 'yet.txt'))).toBe(join(root, 'not', 'there', 'yet.txt'))
   })
 
-  it('resolves what the device\'s own symlinks say, including inside a missing tail', async () => {
+  it.skipIf(!SYMLINKS)('resolves what the device\'s own symlinks say, including inside a missing tail', async () => {
     expect(await files.resolve(join(root, 'link'))).toBe(join(root, 'hello.txt'))
     expect(await files.resolve(join(root, 'link-to-dir', 'nested.txt'))).toBe(join(root, 'sub', 'nested.txt'))
     // The prefix resolves through the link; the part that does not exist rides
@@ -49,7 +87,7 @@ describe('resolve', () => {
     expect(await files.resolve(join(root, 'sub', '..', 'hello.txt'))).toBe(join(root, 'hello.txt'))
   })
 
-  it('refuses to guess when a symlink cannot be followed', async () => {
+  it.skipIf(!SYMLINKS)('refuses to guess when a symlink cannot be followed', async () => {
     // A loop has no canonical form, and saying so is the only honest answer.
     await symlink('loop-b', join(root, 'loop-a'))
     await symlink('loop-a', join(root, 'loop-b'))
@@ -73,7 +111,7 @@ describe('stat', () => {
     expect(await files.stat(join(root, 'hello.txt', 'x'), true)).toBeNull()
   })
 
-  it('reports a symlink as a symlink only when it is not followed', async () => {
+  it.skipIf(!SYMLINKS)('reports a symlink as a symlink only when it is not followed', async () => {
     expect(await files.stat(join(root, 'link'), false)).toMatchObject({ kind: 'symlink' })
     expect(await files.stat(join(root, 'link'), true)).toMatchObject({ kind: 'file' })
   })
@@ -102,7 +140,7 @@ describe('list', () => {
     expect(names).not.toContain('nested.txt')
   })
 
-  it('reports a child through a followed probe, and a dangling link as other', async () => {
+  it.skipIf(!SYMLINKS)('reports a child through a followed probe, and a dangling link as other', async () => {
     const byName = new Map((await files.list(root)).map(entry => [entry.name, entry]))
     // What the local backend reports: a symlink to a file is a file.
     expect(byName.get('link')).toMatchObject({ kind: 'file', size: 6 })

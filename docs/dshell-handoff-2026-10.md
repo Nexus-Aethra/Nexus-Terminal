@@ -1,235 +1,265 @@
-# dshell 交接文档（2026-10-16）
+# dshell 交接文档（2026-10-19）
 
 给接手的人。这份只写**当下现场状态**与**为什么**——架构/协议/包职责看
 [`dshell-architecture.md`](./dshell-architecture.md)、[`dshell-packages.md`](./dshell-packages.md)，
 上手顺序看 [`README.md`](./README.md)。
 
-本文里的每条读数都是 2026-10-16 在本机（Linux，`/home/wpp/nexus/Nexus-Shell`）复跑或复扫得到的，
+本文里的每条读数都是 2026-10-19 在本机（Linux，`/home/wpp/nexus/Nexus-Shell`）复跑或复扫得到的，
 命令一起写出来了，可以直接推翻我。
+
+> 2026-10-20 在 Windows 上复跑并修正过一轮：§0 的状态、§1 的版本/测试/工作区/npm 三行、
+> §5 补了一条只在 Windows 上炸的（§5 末），§7 的期望数字同步。桌面版的实测路径见 §5 末。
 
 ## 0. 三句话状态
 
-1. **0.1.13 已经发完并收尾**：11 个包在 npm 上、tag `dshell-v0.1.13` 在 origin、桌面版 profile 已升级。
-2. **有一批改动没提交**：分支 `fix/compaction-block-order` 与 `main` 同一个 commit（`bb59132`），
-   全部工作在**工作区**里（14 个源码文件改动 + 5 个新源码/测试文件），门禁与浏览器回放验收都过了，只差提交/合 main/发版。
-3. **两件事卡在环境上没做完**：真实 `/compact` 回路（缺模型 key）、dshbox 容器验收（GitHub 克隆被挡）。
+1. **宿主 `ssh` 依赖已经整个拆掉**：设备连接改走内置的 `ssh2` 客户端，Windows 上不再需要装
+   OpenSSH Client，也不再读写用户的 `~/.ssh`。改动已提交（`7728876`）并推到
+   `origin/feat/dshell-device-metrics`，领先 main **18 个提交**。
+2. **门禁全绿、真机验收通过**：564 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
+   `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
+   文件列举/写入/回读/搜索。
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.7`（npm `alpha` dist-tag），
+   `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `fix/compaction-block-order`，**0 个 commit 领先 main** | `git status -sb`、`git rev-list --count main..HEAD` |
-| main / origin/main / HEAD | 都是 `bb59132`（`docs(dshell): the install recipe's example names 0.1.13`） | `git rev-parse --short HEAD main origin/main` |
-| 工作区改动 | 15 files changed, 169 insertions(+), 191 deletions(-)（14 个源码/文档 + `docs/README.md` 索引） | `git diff --stat` |
-| 未跟踪文件 | 5 个新源码/测试（`packages/dshell/mode/src/client/images.d.ts`、`running-whale@2x.png`、`mode/tests/block-model.spec.ts`、`mode/tests/agent-block.spec.ts`、`terminal-bridge/tests/blocks.spec.ts`）、`scripts/dshell-ui-order-acceptance.mjs`、本文件、`assets/*.mp4`（8 个成片） | `git status --short` |
-| 测试 | 40 files / **418 tests passed**，1.85s | `pnpm run test` |
-| 类型 | 干净（`tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`，exit 0） | `pnpm run typecheck` |
-| 客户端构建 | `pnpm --filter @nexus-aethra/dshell-mode run build` → `lib/client.js` 1.09 MB（1 089 869 B，199 ms） | — |
-| 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本）——版本是钉死的，理由见 [`dshell-setup.md`](./dshell-setup.md) | `node -v`、`pnpm -v` |
-| npm 上 | `@nexus-aethra/dshell-bundle` → `0.1.13` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle version --registry=https://registry.npmjs.org/` |
-| tag | `dshell-v0.1.13` → `bb59132`，**已在 origin** | `git ls-remote --tags origin refs/tags/dshell-v0.1.13` |
-| 桌面版 | `~/.dsh/profiles/desktop/package.json` 第 16 行 pin `0.1.13`，头像已验收 | `grep -n dshell-bundle ~/.dsh/profiles/desktop/package.json` |
-| 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2` = `639ed01539`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
-| README 前置条件 | `README.md:60` 写 **dsh `0.2.0-rc.2`** | — |
+| 当前分支 | `feat/dshell-device-metrics`，**已推 origin 并设了上游**，领先 main 19 个提交 | `git status -sb`、`git rev-list --count main..HEAD` |
+| HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
+| main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
+| 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
+| 版本 | 11 个包全部 `0.1.14-alpha.7` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 58 files / **567 tests passed / 44 skipped**，约 3 s | `pnpm run test` |
+| 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.7` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
+| 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
+| 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
+| 容器 | `dshell-metrics-run` 与 `normal-usage` 都在跑，dsh `v0.2.1-rc.2` | `dshbox ps` |
 
-## 2. 在途改动（未提交）：三件事
+## 2. 这一批改动是什么，为什么
 
-### ① 压缩后块顺序回归（分支名的由来）
+**一句话**：把 dshell 对宿主 `ssh` 的依赖整个换成内置的 `ssh2` 客户端。
 
-**症状**：终端会话里只要触发过一次 `/compact`，之后再提问，时间线的块就错位。
+**为什么值得做**。宿主 `ssh` 是 dshell 唯一供不上的依赖，它有四个问题同时成立：
+Windows  stock 安装没有它（要用户自己去加 OpenSSH Client 可选功能）；它读
+`~/.ssh/config` 和 `~/.ssh/known_hosts`——用户自己的文件，dshell 不该往里写；
+每条命令都要付一次进程创建，而 harness 又把本地进程包一层 systemd scope
+（架构文档 §13 实测单次 0.39 s）；还有一个只有 Windows 上才炸的 spawn ENOENT。
 
-**根因**：斜杠命令**没有 turn 号**。旧判据写的是 `block.turn === host.turn`，
-于是"两边都没有 turn 号"被当成了身份匹配——压缩产生的承载块抢到第一个无 turn 的位置，
-把它后面所有无 turn 的历史一起拖过去。
+换成进程内客户端，四个问题一起消失，而且设备终端从此是**一个会话**而不是
+包在别人外面的壳。
 
-**修法**：承载块带上 `commandId`；无 turn 号时按 `commandId` 匹配，只有 commandId 也缺失时
-才回退到时间戳。锚点：
+### 落地形状
 
-- [`packages/dshell/mode/src/client/block-model.ts:102`](../packages/dshell/mode/src/client/block-model.ts#L102) — 匹配判据
-- [`packages/dshell/mode/src/client/blocks.ts:56`](../packages/dshell/mode/src/client/blocks.ts#L56)、[:373](../packages/dshell/mode/src/client/blocks.ts#L373) — 折叠侧带上 `commandId`
-- [`packages/dshell/terminal-bridge/src/blocks.ts:119`](../packages/dshell/terminal-bridge/src/blocks.ts#L119)、[:143](../packages/dshell/terminal-bridge/src/blocks.ts#L143)、[:194](../packages/dshell/terminal-bridge/src/blocks.ts#L194) — host 块记录/恢复 `commandId`
-- [`packages/dshell/terminal-bridge/src/index.ts:387`](../packages/dshell/terminal-bridge/src/index.ts#L387)、[:401](../packages/dshell/terminal-bridge/src/index.ts#L401) — `command/run` 事件开一个带 commandId、无 turn 的块
-- 回归测试：`packages/dshell/mode/tests/block-model.spec.ts`、`packages/dshell/terminal-bridge/tests/blocks.spec.ts`
-- 规范已写进 [`dshell-architecture.md` §12](./dshell-architecture.md)（"Slash commands such as `/compact` have no turn number…"）
+| 文件 | 是什么 |
+|---|---|
+| `ssh/src/transport/transport.ts` | `DeviceTransport`：按设备 + 凭据指纹池化连接，三扇门——`exec`（收集后关）、`open`（保活）、`shell`（pty） |
+| `ssh/src/transport/known-hosts.ts` | dshell 自己的 known_hosts，OpenSSH hashed 格式，只读写数据目录，绝不动用户那份 |
+| `ssh/src/transport/auth.ts` | 凭据装配：私钥原文、密码去一个尾换行、keepalive 15s×3、readyTimeout 10s |
+| `ssh/src/transport/errors.ts` | `classifyDeviceError`：读 ssh2 的 `.level` 分成 auth / hostKey / unreachable / transport |
+| `ssh/src/channel-process.ts` | **关键接缝**：实现 dsh 的 `SubprocessHandle`，harness 那边看到的是它熟悉的对象，字节始终没出进程 |
+| `ssh/src/shell-quote.ts` | 只做引用，不重写命令文本 |
+| `terminal-bridge/src/pty.ts` | 新增 `DeviceShellSession`；`RawSessionBase` 抽出本地与设备共用的 settle/回放/读取/信号 |
 
-### ② 工具调用按原生会话的顺序交叉
+删除：`ssh/src/runner.ts`（ssh 命令行拼装 + ControlMaster）、askpass helper、
+`ssh-client.ts`（Windows 上的 ssh 解析）。随之 `dshell/ssh/ctl/`  sockets 也没了，
+数据根迁移不再需要为它开 skip 名单。
 
-**症状**：卡片把一次回合里的工具调用**全聚到一起**，和会话文本失去先后。
+### 远端命令行一字未改
 
-**修法**（对齐原生 dsh 会话的分组规则）：
+`LC_ALL=C` 照旧前缀，命令文本原样传递。settle 标记仍靠注入的 `PROMPT_COMMAND`
+打 OSC `133;D`——容器里从设备终端的回放里能直接读到那行 `printf "\033]133;D;%s\007" "$?"`。
 
-- [`packages/dshell/mode/src/client/session-rows.ts:212`](../packages/dshell/mode/src/client/session-rows.ts#L212) — 一条 `assistant/message` 按 `content` 原序切成多行（文本/推理/调用交替），每行带 `callId` 与 `callGroup`（[:37](../packages/dshell/mode/src/client/session-rows.ts#L37)）
-- `agent-block.ts` 的 `segmentsOf` / `buildSteps(rows, startedAt, t, resultRows)` / `groupRuns` — 保持流内顺序；**只有同一条消息 + 同类调用**才合并成计数组，答案与 steering 打断分组；结果按 `callId` 回到自己那次调用（哪怕中间插了 steering 消息）；结果有、调用在已加载历史之外的孤儿行**留在原位可见**，不丢
-- 折叠语义：折叠只藏过程行，答案始终按原位置显示
-- 文案：`locales.ts` 的 `agent.group.commands` → `agent.group.calls`（zh ` 次调用` / en ` calls`）
+### 验收读数（2026-10-19，容器 + 真机）
 
-### ③ 图标换成 dsh 官方鲸尾
+容器是 `dshell-metrics-run`，注入的是本地最终构建的 `lib/`（原因见 §3）。
 
-dsh 原生早已不在"思考中"用整只鲸鱼 logo，用的是**鲸尾**。
+| 项 | 读数 |
+|---|---|
+| 连接测试 | `已连接 root@VM-0-6-ubuntu（Linux 7.0.0-30-generic） · 1096ms`，`主机密钥 SHA256:ptAAuu4t…（已信任）` |
+| helper 部署 | `present`，摘要 `9b38e674…` 与设备上一致，319 ms |
+| 设备终端 | 远端提示符 `root@VM-0-6-ubuntu:~#`；OSC `133;D;0` + `3008;…exit=success` |
+| Ctrl+C | `sleep 30` → `exitCode: 130`（128+SIGINT） |
+| 文件列举 | `/root` 带类型与大小 |
+| 文件写入 | local→remote `done`，32 字节，设备上 `cat` 回读内容正确 |
+| 设备搜索 | `grep -rl` 在设备上命中 |
+| 无宿主 ssh | 容器内只有一条到 `:22` 的连接，来自 harness 进程自身（`ss -tnp \| grep <pid>`） |
 
-- [`packages/dshell/mode/src/client/dsh-icons.ts:12`](../packages/dshell/mode/src/client/dsh-icons.ts#L12) — `WHALE_TAIL_PATH`，逐字取自原生 `RunningWhaleTail.tsx`
-- [`packages/dshell/mode/src/client/agent-block.ts:380`](../packages/dshell/mode/src/client/agent-block.ts#L380) — `WhaleMark`：14px 图标盒里放 28×28 的原生 APNG 蒙版（`running-whale@2x.png`，与 `dsh/packages/client/ui-chat/src/client/chat/running-whale@2x.png` **字节相同**，测试里有断言）+ `TextShimmer` 文案微光
-- 动效门控与原生一致：`@supports (mask-mode:alpha)`、`prefers-reduced-motion: no-preference`、`forced-colors: none`，否则回落静态鲸尾
-- 构建：`packages/dshell/mode/tsdown.config.ts` 加了 `loader: { '.png': 'base64' }` 并把 png 复制进 `lib/client/`；`src/client/images.d.ts` 声明模块
-- 用过的地方：回合卡头、侧边栏终端区行（`terminal-section.ts`）、初始化页 hero（`creation-panel.ts`）——都是 `code` → `whaleTail`
-- 测试：`packages/dshell/mode/tests/agent-block.spec.ts`（11 项，含 `renderToStaticMarkup` 的 DOM 断言、蒙版与原生 APNG **字节相同** + `acTL` 块存在）
+**另做过一次容器外预检**：用纯 JS 版 ssh2（不编译原生绑定）直连真机，确认 TOFU 校验、
+密码认证、exec 都通——因为容器里 `ssh2` 的 `install.js` 会被 pnpm 放行但大概率编译失败，
+要先证明纯 JS 路径可用。
 
-### 浏览器回放验收读数（2026-10-16，:3080 宿主 + 最终构建）
+## 3. 没做完 / 要知道的事
 
-```json
-{ "order": ["answer","group","text","answer","tool","answer"],
-  "mask": { "image": [28,28], "box": [14,14], "animated": "block", "still": "none" },
-  "reduced": { "animated": "none", "still": "block" },
-  "collapsedAnswers": 4, "streamSettled": true, "pageErrors": [] }
+### ① 容器验收走的是「注入 lib」，不是 `dshbox build`
+
+`/usr/bin/dshbox`（0.1.8，9/22 构建）的 daemon 有个 bug：`LABEL dshbox.allow-build` 里
+`@` 开头的 key 会被写成**未加引号**的 YAML，而 YAML 把行首 `@` 当保留指示符，于是
+`allowBuilds:` 那张表直接解析失败：
+
+```yaml
+allowBuilds:
+  @deepseek-ai/dsh-subprocess-local@0.2.1-rc.2: true   # ← bad indentation of a mapping entry
 ```
 
-跑法（脚本已从 `/tmp` 收进仓库）：
+修复在 DSHBox 工作区里（`src-tauri/crates/dshboxd/src/sealed.rs` 的
+`add_pnpm_build_approval`，会把 key 加引号；那边分支 `fix/host-launch-and-resource-slots`，
+**未提交未发布**）。所以这次走的是技能 `dshell-container-acceptance` 里的
+「被顶掉了：注入本地 lib」路径：
 
 ```sh
-cd dsh && nohup node apps/cli/lib/bin.js web --no-open --port 3080 > /tmp/dsh-web.log 2>&1 &
-grep -oE 'http://127.0.0.1:3080/\?token=[A-Za-z0-9_-]+' /tmp/dsh-web.log   # 每次重启 token 都换
-node scripts/dshell-ui-order-acceptance.mjs 'http://127.0.0.1:3080/?token=<刚取的那个>'
+dshbox container stop <id>
+cp -a packages/dshell/<pkg>lib/. <instance>/profile/profiles/web/node_modules/@nexus-aethra/dshell-<pkg>/lib/
+# ssh2 是新增依赖，容器里没有，要把它的依赖闭包（ssh2/asn1/bcrypt-pbkdf/safer-buffer/tweetnacl）
+# 复制进 dshell-ssh/node_modules/；build/Release 下的原生绑定不要带，走纯 JS
+dshbox container start <id>
 ```
 
-脚本里两处是**本机路径**，换机器要改：第 2 行的 `playwright-core` 绝对路径、第 4 行的 chrome 可执行文件。
-它自己造合成事件（不依赖模型），跑完会把测试会话和两个探针会话归档。
+**接手时先确认 daemon 版本**：`strings /usr/lib/dshbox/server/linux-x64/dshboxd | grep 'reserved indicator'`
+有输出说明修复已装上，可以回到 `dshbox build` 路径；没有就继续注入。
 
-## 3. 没做完的两件事
+第 0 步（证明加载的是哪份代码）判据：`ls .../dshell-ssh/lib/transport/` 有四个文件、
+`.../dshell-mode/lib/data-root.js` 里 `skip` 出现 0 次。
 
-### #99 真实"压缩成功 → 再提问"的回路
+### ② 三类能力明确不支持，已写进文档
 
-合成事件与单测覆盖了判据，但**真机 `/compact` 没跑成**：dev 宿主报
-`MISSING_CREDENTIAL … provider route "minimax-cn"`。收尾需要一把能用的模型 key，然后：
-起 :3080 → 建一个会持续长输出的终端会话 → `/compact` → 再提一个问题 → 看时间线先后是否还乱。
-判据在 §12 文档与 `block-model.spec.ts` 里。
+架构文档 §19 与 README（中英）都写明了，不是待办：
 
-### #94 dshbox 容器（rc.2 + 0.1.13）验收
+- **硬件密钥**（`sk-*` / FIDO / PKCS#11）——签名必须发生在持有密钥的设备或守护进程里，`ssh2` 两者都没有。
+- **`~/.ssh/config`**——`ProxyJump`、`ProxyCommand`、`Include`、`Match`、per-host 选项都不读。跳板机后面的设备，得把跳板机本身作为设备登记。
+- **agent 转发 / `ssh-add`**——agent 是宿主的，dshell 只用保险箱里那份凭据认证。
 
-Boxfile 已经改到位（`~/nexus/DSHBox/examples/boxfile-dshell.dsh`，**DSHBox 工作区里未提交**，
-那边分支是 `fix/host-launch-and-resource-slots`）：`FROM …:dsh-v0.2.0-rc.2`、
-`allow-build=@nexus-aethra/dshell-bundle@0.1.13,node-pty@1.2.0-beta.15`、bundle + `dsh-ssh`
-+ 那 7 条上游行全部钉 `0.2.0-rc.2`。
+安全节奏也跟着变成跟随 `ssh2` 的发布计划，而不是操作系统的。版本钉死 `1.17.0`。
 
-**卡住的地方**：`dshbox pull template github.com/deepseek-ai/deepseek-harness:dsh-v0.2.0-rc.2`
-报 `Git clone failed: SSL error … github.com may be blocked`。要么配
-`dshbox config set mirror.github <可达镜像>`，要么换网络。另外这次 `dshbox ps` 20s 没返回，
-接手时先确认 `dshboxd` 状态再判断是不是网络问题。
+### ③ 一个已经犯过并且修掉的错，值得记住
 
-> 为什么必须补那 7 条上游行、以及"link 的开发 profile 能跑"为什么不能当依据：
-> 发布与验证两节在 [`dshell-packages.md`:581](./dshell-packages.md#L581)（The publishing environment）与
-> [:620](./dshell-packages.md#L620)（Verifying a published artifact）。
+这次重写 `passphrase.spec.ts` 时，把测试服务器的**真实 root 口令**当 fixture 写进了断言
+（`expect(config.password).toBe('20250406Ilove!')`）。HEAD 里从来没有这个值——原来的测试
+用的是 `/k/web.password` 这种假路径。提交前已全部换成 `'not a real password'`，7 个测试重跑通过。
 
-### 还有一件要你（和 wpplight）决定
+**口令本身已经进过本次会话记录，wpplight 需要改密。** 教训：往测试里写凭据 fixture 时，
+值必须是显然为假的，哪怕"只是本地跑跑"。
 
-这批改动**是否提交、是否合 main、是否发 0.1.14**。仓库里有两条并行的走法，问清楚再动：
+### ④ 真实 `/compact` 回路仍未验
 
-- 特性线（`dshell-setup.md` 的分支模型）：分支 → PR → **squash-merge** 进 main → 删分支。
-- 发布线（0.1.13 实际走的）：分支上提版本号 → 发布 → 分支上提 README pin → `git merge --ff-only` 进 main
-  → `git tag -a dshell-vX.Y.Z` → 推 main + tag。
+上一轮交接就卡在这：dev 宿主报 `MISSING_CREDENTIAL … provider route "minimax-cn"`。
+需要一把能用的模型 key，然后起宿主 → 建一个会持续长输出的终端会话 → `/compact` → 再提一个问题 →
+看时间线先后是否还乱。判据在架构文档 §12 与 `block-model.spec.ts`。
 
-合 main、发布、打 tag 都属于对外动作——**先问 wpplight**。
+## 4. 演示视频资产（未跟踪，勿 `git add -A`）
 
-## 4. 演示视频资产
-
-### 成片（`assets/`，未跟踪）
+8 个成片在 `assets/`。打码与复扫结论仍是 2026-10-16 那次的，**没有重新扫过**：
 
 | 文件 | 时长 | 内容 |
 |---|---|---|
-| `dshell-promo-1440p.mp4` / `-720p.mp4` | 357.0 s（595 拍 @100 BPM） | **交叉合成成片**：开屏 + 六张讲解卡分别插在六个分镜前 + 尾卡 |
+| `dshell-promo-1440p.mp4` / `-720p.mp4` | 357.0 s（595 拍 @100 BPM） | 交叉合成成片：开屏 + 六张讲解卡分别插在六个分镜前 + 尾卡 |
 | `dshell-promo-intro-1440p.mp4` / `-720p.mp4` | 52.8 s（88 拍） | 只有讲解卡的 reel |
 | `dshell-demo-1800p.mp4` | 325.8 s | 演示片（分镜合集） |
-| `logo-intro.mp4` | 3.25 s @60 | 设计好的开屏（合成时 tpad 补帧到正好 3.6 s = 6 拍） |
+| `logo-intro-methods-compare.mp4` / `logo-intro-with-demo.mp4` / `logo-intro.mp4` | — | 开屏设计稿 |
 
-### 时间轴换算（1 拍 = 0.6 s）
+时间轴换算（1 拍 = 0.6 s）与拍数表 `SEG`、录制环境（`Xvfb :99` + Chrome + x11grab）、
+以及 `/tmp/intro2/` 中间源已丢失这些背景，见上一版交接文档
+（`git show 73c426c:docs/dshell-handoff-2026-10.md`）。
 
-开屏 0–3.6 · ①卡 3.6–10.8 / 分镜1 10.8–25.8 · ②卡 25.8–33.0 / 分镜2 33.0–64.2 ·
-③卡 64.2–71.4 / 分镜3 71.4–99.6 · ④卡 99.6–106.8 / 分镜4 106.8–194.4 ·
-⑤卡 194.4–201.6 / 分镜5 201.6–310.2 · ⑥卡 310.2–317.4 / 分镜6 317.4–351.0 · 尾卡 351.0–357.0。
+**隐私打码**：设备公网 IP 已按马赛克遮挡，复扫判据是 tesseract 5.5.0、字符白名单 `0-9.`、
+每 4 s 抽一帧、2× 放大后 OCR、`grep '43\.138'` 计数。讲解卡 3 的文案里**故意**留着
+`43.138.••.•••`（只露前两段）。任何要对外发布的东西出现这个 IP，都要走同一套打码 + 复扫到 0 命中。
 
-拍数表就是 `~/nexus/dshell-demo/stage/music.mjs` 里的 `SEG`
-（`[6,12,25,12,52,12,47,12,146,12,181,12,56,10]`，`argv[4]` 可传别的表），配乐 `/tmp/score-c5.wav`、`/tmp/score-reel5.wav`。
+## 5. 跨平台结论（已因本次改动而改变）
 
-### 中间源丢了，这点要知道
+**以前**：SSH 设备会话依赖宿主 `ssh`，Windows stock 装直接不可用。
 
-`/tmp/intro2/` 随 `/tmp` 清理**已消失**：讲解卡页面 `intro5.html`、逐帧渲染 `render5.mjs`、
-合成 `assemble5.sh`、打码 `demo-mask.py`、扫描 `scan-ip.sh` 都没了。**成片是好的**，
-但要改卡片文案或重新合成，就得重建这套脚本。还在的：
+**现在**：设备侧（连接、认证、主机密钥、helper、终端）全部是进程内的 `ssh2`，
+不依赖宿主有没有 ssh、也不读 `~/.ssh`。这是本次改动在 Windows/macOS 上最大的收益。
 
-- `~/nexus/dshell-demo/stage/final/s1..s6.mp4` — 六个分镜的**原始录制**（未打码）
-- `~/nexus/dshell-demo/stage/music.mjs` — 卡点配乐生成器（含 `SEG`）
-- `~/nexus/dshell-demo/stage/` 其余：`run.mjs`（导演层：推镜/字幕/光标）、`prep-take*.mjs`（各分镜录制脚本）、`cards.mjs`、`stills.mjs`
-- 录制环境：`Xvfb :99` + Chrome `--ozone-platform=x11` + x11grab
+仍然只在 Linux 上成立的两处（都在 `catch` 后返回 `undefined`，且 `undefined` 与 `null`
+是刻意区分的——"无法判断" ≠ "没有前台程序"，所以不会误退全屏）：
 
-### 隐私打码（公网 IP）
+- 终端前台程序检测：`terminal-bridge/src/foreground.ts` 读 `/proc/<pid>/stat`
+- 会话 shell 的 cwd 解析：`terminal-bridge/src/index.ts` 的 `readlink /proc/<pid>/cwd`
 
-演示里出现的设备公网 IP（本文一律写成 `43.138.••.•••`）已按**马赛克**（不是全黑块）遮挡。复扫判据（2026-10-16）：
-tesseract 5.5.0、字符白名单 `0-9.`、每 4 s 抽一帧、2× 放大后 OCR，`grep '43\.138'` 计数。
+设备侧 helper 明确允许 `linux|darwin`（`ssh/src/helper/run.ts:90`）——那是**远端设备**的
+平台，与宿主 OS 无关；`sha256sum` 也只在设备上执行。
 
-做法（可复现）：OCR 定位矩形 → `crop=w:h:x:y,scale=iw/10:ih/10:flags=neighbor,scale=w:h:flags=neighbor`
-+ `overlay=x:y:enable='between(t,a,b)'`。**坑**：ffmpeg 滤镜图里 `split` 的输出要一次列全再写各条链，
-否则报 `No such filter: ''`。
+**前提仍要说清**：以上是读代码 + Linux 本机跑出来的推断，没有在真机 macOS 上验过；
+`node-pty@1.2.0-beta.15` 在 mac 上的原生编译、dsh 桌面版 mac 包本身都没验过。
 
-四支成片的复扫读数：
+**2026-10-20 在 Windows 桌面版上实测出的第三条**（§5 说的"只在 Linux 上成立"之外，
+还有一条**反过来只在 Windows 上炸**的）：Windows 上 `O_APPEND` 句柄**不能** `ftruncate`——
+`SetEndOfFile` 需要 `FILE_WRITE_DATA`，而追加句柄只有 `FILE_APPEND_DATA`，于是返回
+`ERROR_ACCESS_DENIED`，Node 报 `EPERM`。`terminal-bridge` 的 PTY 日志正是用追加句柄开的，
+spawn 重置时 `handle.truncate(0)` 直接抛 `EPERM`；而 dsh 宿主把**未捕获 rejection 当致命错误**
+（`dsh-app-boot` 的 `installFailLoud`），所以**整个桌面版被一条回滚日志带走**
+（`dsh: fatal load failure`，退出码 1）。
 
-| 文件 | 抽帧 | `43.138` 命中 | 判定 |
-|---|---|---|---|
-| `dshell-promo-1440p.mp4` | 90 | 1（t=68 s） | 命中点是卡片 3 的文案 `43.138.••.•••`，**非完整 IP** |
-| `dshell-promo-720p.mp4` | 90 | 1（t=68 s） | 同上 |
-| `dshell-promo-intro-1440p.mp4` | 13 | 2（t=20、24 s） | 同一段卡片文案（reel 里卡 3 落在 18–25.2 s） |
-| `dshell-demo-1800p.mp4` | 82 | 0 | 干净 |
-| 阳性对照 `stage/final/s4.mp4`（未打码源） | 44 | **36** | 检测器测得到 → 上面的 0 不是假阴性 |
+修法是**按路径截断**——自己开一个读写句柄，各平台都有那个权限，追加句柄之后照样写到
+（新）文件尾；不引平台分支，Linux/macOS 语义不变。
 
-**留给接手的判断**：讲解卡 3 的文案里**故意**写着 `43.138.••.•••`（只露前两段）。要连前两段都不出现，
-就在那 7.2 s 窗口再加一层马赛克 overlay（一行滤镜），然后复扫。
+**两条教训，比这个 bug 本身更值得记住**：
 
-> 任何要对外发布的东西里出现这个 IP，都要走同一套打码 + 复扫到 0 命中。
+1. **Linux 容器里绿的东西，在 Windows 上可能直接 EPERM**。跨平台约束里，
+   "句柄语义"这一类和"路径分隔符"是同一级别的坑。
+2. **本地容器副本上的临时补丁会掩盖源码缺陷**。这块 EPERM 当初在容器里是用手写补丁
+   （`DSHELL-WIN-EPERM-PATCH`）绕过去的，容器全程绿；而走 npm 包的**桌面版照崩不误**——
+   补丁只活在容器那一份 `lib/buffer.js` 里，源码从没改过。**绕过症状的补丁不是修复。**
 
-## 5. macOS 兼容性结论（带前提）
+**验收读数（2026-10-20，Windows 桌面版）**：把桌面 profile 的 `@nexus-aethra/dshell-bundle`
+换成新版（走 GUI 的「插件 → 添加插件」；中途**必须先卸载**——GUI 只认"这个插件装没装"，
+不认版本号，装之前还会拿上一次输入时的缓存结果挡你），重启宿主进程，再解锁分组 `test`、
+重连设备会话——**就是之前崩了两次的那一个**（终端会话 03:11 / tencent）：PTY 起来了，
+远端提示符 `root@VM-0-6-ubuntu:~#` 出来了，**没有新的崩溃日志**（日志目录里最新的一份仍是
+修复前的 `19-11-05` / `19-11-30`）。
 
-**结论**：能装能用；两处能力在 mac 上**静默降级**，不会崩。
+一条容易误判的事实：**桌面版的本机终端在 Windows 上根本起不来**，界面会明说
+"dshell 的集成终端需要一台 POSIX shell 来跑，而这台机器是 Windows"。这是设计，不是故障；
+所以 Windows 上唯一能跑通终端的路径是**绑设备**（ssh 过去，终端在那台机器上跑）。
 
-- 终端前台程序检测（TUI 全屏自动判定）：[`terminal-bridge/src/foreground.ts:137`](../packages/dshell/terminal-bridge/src/foreground.ts#L137) 读 `/proc/<pid>/stat`
-- 会话 shell 的 cwd 解析：[`terminal-bridge/src/index.ts:989`](../packages/dshell/terminal-bridge/src/index.ts#L989) `readlink /proc/<pid>/cwd`
-
-两处都 `catch` 后返回 `undefined`，而 `undefined` 与 `null` 是**刻意区分**的（"无法判断" ≠ "没有前台程序"），
-所以在没有 `/proc` 的平台上不会误退出全屏，只是不再自动进/出。其余（PTY、时间线、SSH 设备会话、
-文件/管道/用量）不依赖 Linux 专有接口。SSH 设备侧 helper 明确允许 `linux|darwin`
-（[`ssh/src/helper/run.ts:90`](../packages/dshell/ssh/src/helper/run.ts#L90)）；`sha256sum` 只在**远端设备**上执行，与宿主 OS 无关。
-
-**前提要说清**：这是读代码 + 本机（Linux）跑的**推断**，没有在真机 macOS 上跑过；
-`node-pty@1.2.0-beta.15` 在 mac 上的原生编译、dsh 桌面版 mac 包本身都没验过。要在 mac 上落地，
-先做这两项实测再下结论。
+**顺带修掉的第二个坑**（同一个类，不同的调用点）：设备 shell 的起始目录用 `quote(root)`
+拼出来，于是 `~` 被引号包住 → 设备读到的是"一个叫 `~` 的目录" → `cd` 失败 → 每起一次终端
+都打一行「dshell: 远端目录 ~ 不存在，已回到登录目录」。`quoteDevicePath` 早就在
+`shell-quote.ts` 里写好了（tilde 必须在引号外，理由写在那儿），只是 `deviceShellPlan`
+漏用了它。现在命令构造抽成了可测的 `deviceShellCd`，并补了断言：要 `cd ~`，不能是 `cd '~'`。
 
 ## 6. 交接纪律（先读这条再看代码）
 
-- **绝不 `git add -A`**。工作区的 `??` 有 8 个成片 mp4 和别人的东西，只按路径 add；未跟踪文件不删。
-- **不直接提交 main**；合 main、发版、打 tag、推分支以外共享动作——先问 wpplight。
-- **凭据**：npm 发布 token 在 `~/.npmrc.publish`（只有 `NPM_CONFIG_USERCONFIG=/home/wpp/.npmrc.publish` 时才生效；
-  默认 `~/.npmrc` 里那枚**已失效**，别被骗）。`~/.bashrc` 把 registry 导成 npmmirror，所以发布/查版本要显式
-  `--registry=https://registry.npmjs.org/`。**SSH 设备（`root@43.138.••.•••`）的口令不在仓库里、也不要打印内容**；
-  本机现有位置要问 wpplight（`profile/dshell/ssh/keys/` 这个路径在当前机器上已不存在，别照着找）。
-- **发布必须 `pnpm publish`**（`npm publish` 会把 `workspace:` 原样发出去，装的人 `EUNSUPPORTEDPROTOCOL`；
-  0.1.4 就是这么报废的）。加 `--no-git-checks --access public`，11 个包按依赖序、`dshell-bundle` 最后。
-  发完 packument 有 2–3 分钟读侧延迟，轮询到全部跟上再改 README 的 pin（中英两个 README 同 commit）。
+- **绝不 `git add -A`**。工作区的 `??` 有 8 个成片 mp4，只按路径 add；未跟踪文件不删。
+- **不直接提交 main**；合 main、发版、打 tag、推分支——先问 wpplight。本次已获授权推
+  `feat/dshell-device-metrics`，**仅此一次**，不代表以后可以自己推。
+- **凭据**：npm 发布 token 在 `~/.npmrc.publish`（只有 `NPM_CONFIG_USERCONFIG=/home/wpp/.npmrc.publish`
+  时才生效；默认 `~/.npmrc` 里那枚**已失效**，别被骗）。`~/.bashrc` 把 registry 导成 npmmirror，
+  所以发布/查版本要显式 `--registry=https://registry.npmjs.org/`。
+  **SSH 设备（`root@43.138.••.•••`）的口令不在仓库里、也不要打印内容**；要用来真机验收时
+  当场问 wpplight，用完即弃。别把真实口令写进任何测试 fixture（见 §3 ③）。
+- **发布必须 `pnpm publish`**（`npm publish` 会把 `workspace:` 原样发出去，装的人
+  `EUNSUPPORTEDPROTOCOL`；0.1.4 就是这么报废的）。加 `--no-git-checks --access public`，
+  11 个包按依赖序、`dshell-bundle` 最后。发完 packument 有 2–3 分钟读侧延迟，
+  轮询到全部跟上再改 README 的 pin（中英两个 README 同 commit）。
   坏版本撤不掉（token 是 bypass-2FA granular，`npm unpublish` 403），只能 `npm deprecate` + 改版本号。
-- **调试宿主只留一个实例**。:3080 是 wpplight 自己的常驻实例，重启已被当作调试流程的一部分，但临时起的要当场收尾。
+- **调试宿主只留一个实例**，临时起的当场收尾。
 - 改完就测并把读数读回来（文本/几何/控制台），别拿"门禁绿"当"功能对"。
+  **门禁绿也会漏**：本次那个 `channelOf` flaky 就是门禁绿着、十次里挂一次——
+  判据是"连续跑十次全绿"，不是"跑一次绿"。
 
 ## 7. 接手第一步
 
 ```sh
 cd /home/wpp/nexus/Nexus-Shell
-pnpm i                      # dsh 包 link 到 ./dsh 检出（未跟踪，当前在 dsh-v0.2.0-rc.2）
-pnpm run test && pnpm run typecheck     # 期望 418/40 + 干净
+git status -sb                 # 应显示与 origin/feat/dshell-device-metrics 同步
+pnpm i
+pnpm run test && pnpm run typecheck     # 期望 564/564 + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
-git status --short          # 14 个修改 + 5 个新源码/测试文件（另有一批未跟踪的成片 mp4 与本文件），就是你要接手的东西
+git status --short             # 只剩 assets/*.mp4 八个未跟踪，就是干净现场
 ```
 
-然后按 §2 末尾跑一次浏览器回放验收，确认现场与你一致，再决定提交与发布。
+想复现设备验收，按 §2 的表逐项跑；起容器用 `dshell-container-acceptance` 技能，
+先读 §3 ① 判断该走 build 还是注入。
 
 **分支模型**（`dshell-setup.md` 写死了这条）：`main` 只放已发布的线，**不直接提交**；
-一个开发方向一条分支，走 PR **squash-merge** 进 main，合完删分支。所以判断"某分支的活是否已进 main"
-要**比树**（`git diff --stat origin/main <branch>` 为空即已进），不要看祖先关系——squash 之后祖先关系必然骗人。
-发布那一次的例外（0.1.13 走的 `merge --ff-only` + tag）见 §3。
-文档索引在 [`docs/README.md`](./README.md)；本次三项改动的规范都并进了
-[`dshell-architecture.md` §12](./dshell-architecture.md)。
+一个开发方向一条分支，走 PR **squash-merge** 进 main，合完删分支。判断"某分支的活是否已进 main"
+要**比树**（`git diff --stat origin/main <branch>` 为空即已进），不要看祖先关系——squash 之后
+祖先关系必然骗人。
+
+文档索引在 [`docs/README.md`](./README.md)；本次改动的规范在
+[`dshell-architecture.md` §19](./dshell-architecture.md)（设备传输层）与 §15（数据根）。

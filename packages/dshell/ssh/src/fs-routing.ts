@@ -33,7 +33,7 @@ import type { HostCopy } from '@nexus-aethra/dshell-std'
 import type {} from '@deepseek-ai/dsh-agent'
 // Type-only: pulls the sandbox-policy service merge (ctx.sandboxPolicy).
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import { isUnder, mappingFor, toMountPath, type MountMapping } from './mount.js'
+import { isUnderRemote, mappingFor, toMountPath, type MountMapping } from './mount.js'
 import { hostCopy, type DshellSshTranslate } from './host-locales.js'
 import { RemoteFileSystem } from './remote-fs.js'
 import { SSH_ROUTING_SERVICE, type SshRouter } from './router.js'
@@ -157,7 +157,8 @@ export class DshellFileSystem extends SandboxedFileSystem {
     if (mode === 'read-only') {
       throw new FsError(`cannot write "${remotePath}": file access denied under read-only mode`, 'FS_SANDBOX_DENIED')
     }
-    const allowed = [mapping.remoteRoot, ...REMOTE_TEMP_ROOTS].some(root => isUnder(root, remotePath))
+    // Both sides are DEVICE paths, so the containment check is the device's.
+    const allowed = [mapping.remoteRoot, ...REMOTE_TEMP_ROOTS].some(root => isUnderRemote(root, remotePath))
     if (!allowed) {
       throw new FsError(`cannot write "${remotePath}": file access denied under workspace-write mode`, 'FS_SANDBOX_DENIED')
     }

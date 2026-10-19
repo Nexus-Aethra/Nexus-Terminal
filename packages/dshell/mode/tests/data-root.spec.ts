@@ -15,8 +15,8 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { dirname, join, sep } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DSHELL_HOME_ENV } from '@nexus-aethra/dshell-std'
 import {
@@ -46,7 +46,7 @@ function file(path: string, body = 'x\n'): void {
 
 /**
  * A root that looks like a used harness home: the five records dshell keeps,
- * plus the two things that must stay behind.
+ * plus the one thing that must stay behind.
  */
 function usedRoot(name: string): string {
   const root = scratch(name)
@@ -58,27 +58,31 @@ function usedRoot(name: string): string {
   file(join(root, 'terminal-mode.json'), '{"version":2,"records":[]}\n')
   file(join(root, 'dshell-pty/session-abc.log'), 'log\n')
   // Stays: a session's working directory, which dsh recorded as an absolute
-  // path, and a control socket belonging to a process.
+  // path. Everything under the ssh tree travels, because there is nothing there
+  // that belongs to a running process rather than to the record.
   mkdirSync(join(root, 'dshell/mnt/tencent/root'), { recursive: true })
   file(join(root, 'dshell/mnt/tencent/root/README.md'), 'in the way\n')
-  mkdirSync(join(root, 'dshell/ssh/ctl'), { recursive: true })
-  file(join(root, 'dshell/ssh/ctl/tencent.sock'))
   return root
 }
 
 describe('resolving the data root', () => {
-  const facts = { harnessHome: '/home/u/.dsh', home: '/home/u' }
+  // The roots are named the way THIS machine spells them: a data root is a
+  // directory on the host, so it is resolved with the host's rules, and a
+  // fixture written in POSIX would come back Windows-spelled.
+  const facts = { harnessHome: join(homedir(), '.dsh'), home: homedir() }
+  const setting = join(homedir(), 'data', 'dshell')
+  const environment = join(homedir(), 'env', 'dshell')
 
   it('prefers the configured setting over everything else', () => {
-    expect(resolveDataRoot({ ...facts, setting: '/data/dshell', environment: '/env/dshell' }))
-      .toEqual({ root: '/data/dshell', source: 'setting' })
+    expect(resolveDataRoot({ ...facts, setting, environment }))
+      .toEqual({ root: setting, source: 'setting' })
   })
 
   it('falls back to the environment, then to the harness home', () => {
-    expect(resolveDataRoot({ ...facts, setting: '', environment: '/env/dshell' }))
-      .toEqual({ root: '/env/dshell', source: 'environment' })
+    expect(resolveDataRoot({ ...facts, setting: '', environment }))
+      .toEqual({ root: environment, source: 'environment' })
     expect(resolveDataRoot({ ...facts, setting: undefined, environment: undefined }))
-      .toEqual({ root: '/home/u/.dsh', source: 'harness' })
+      .toEqual({ root: facts.harnessHome, source: 'harness' })
   })
 
   it('treats a blank setting as "not configured" rather than as a directory', () => {
@@ -88,16 +92,20 @@ describe('resolving the data root', () => {
   })
 
   it('expands ~ and refuses to depend on the process cwd', () => {
-    expect(resolveDataRootPath('~', '/home/u')).toBe('/home/u')
-    expect(resolveDataRootPath('~/dshell-data', '/home/u')).toBe('/home/u/dshell-data')
-    expect(resolveDataRootPath('dshell-data', '/home/u')).toBe('/home/u/dshell-data')
-    expect(resolveDataRootPath('/data/dshell/', '/home/u')).toBe('/data/dshell')
-    expect(resolveDataRootPath('', '/home/u')).toBeUndefined()
+    const home = homedir()
+    expect(resolveDataRootPath('~', home)).toBe(home)
+    expect(resolveDataRootPath('~/dshell-data', home)).toBe(join(home, 'dshell-data'))
+    expect(resolveDataRootPath('dshell-data', home)).toBe(join(home, 'dshell-data'))
+    // An absolute path is taken as it is, and comes back canonical: the same
+    // directory written two ways has to be one value, or a move from a root to
+    // itself would look like a move.
+    expect(resolveDataRootPath(`${join(home, 'data', 'dshell')}${sep}`, home)).toBe(join(home, 'data', 'dshell'))
+    expect(resolveDataRootPath('', home)).toBeUndefined()
   })
 })
 
 describe('moving a data root', () => {
-  it('moves the records, leaves the mount points and the sockets, and marks the destination', () => {
+  it('moves the records, leaves the mount points, and marks the destination', () => {
     const from = usedRoot('from')
     const to = scratch('to')
     const migration = migrateDataRoot(from, to)
@@ -116,9 +124,10 @@ describe('moving a data root', () => {
     // A session's working directory stays: dsh holds that absolute path.
     expect(existsSync(join(from, 'dshell/mnt/tencent/root/README.md'))).toBe(true)
     expect(existsSync(join(to, 'dshell/mnt'))).toBe(false)
-    // The control socket stays too; it belongs to a running process.
-    expect(existsSync(join(from, 'dshell/ssh/ctl/tencent.sock'))).toBe(true)
-    expect(existsSync(join(to, 'dshell/ssh/ctl'))).toBe(false)
+    // The device's own known_hosts travels with it: the trust a root recorded
+    // is part of what that root means.
+    expect(existsSync(join(to, 'dshell/ssh/known_hosts'))).toBe(true)
+    expect(existsSync(join(from, 'dshell/ssh/known_hosts'))).toBe(false)
 
     expect(existsSync(join(to, 'dshell', DATA_ROOT_MARKER))).toBe(true)
   })
@@ -150,15 +159,15 @@ describe('moving a data root', () => {
     const to = scratch('to')
     file(join(to, 'dshell/ssh/devices.json'), '{"devices":[{"name":"newer"}]}\n')
     const migration = migrateDataRoot(from, to)
-    // The registry that was already at the destination is the ONLY thing left
-    // behind; the rest of the ssh tree moved around it.
-    expect(migration?.kept).toEqual([join('dshell/ssh', 'devices.json')])
-    expect(migration?.moved).toContain('dshell/ssh')
+    // The whole ssh tree is one entry, so a registry already sitting at the
+    // destination keeps the whole tree behind: moving the keys around it would
+    // leave a root whose credentials outnumber its devices. The reader is told,
+    // and the source keeps its copy to diff by hand.
+    expect(migration?.kept).toEqual(['dshell/ssh'])
+    expect(migration?.moved).not.toContain('dshell/ssh')
     expect(migration?.failed).toEqual([])
     expect(readFileSync(join(to, 'dshell/ssh/devices.json'), 'utf8')).toBe('{"devices":[{"name":"newer"}]}\n')
-    expect(existsSync(join(to, 'dshell/ssh/keys/tencent.pem'))).toBe(true)
-    // The source's registry is still there, to be diffed by hand rather than
-    // silently dropped.
+    expect(existsSync(join(to, 'dshell/ssh/keys/tencent.pem'))).toBe(false)
     expect(existsSync(join(from, 'dshell/ssh/devices.json'))).toBe(true)
     // The trees with no conflict moved.
     expect(existsSync(join(to, 'dshell-pty/session-abc.log'))).toBe(true)

@@ -21,16 +21,18 @@ import type { ShellExecRequest, ShellExecSpec } from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
+import { CredentialStore } from './credentials.js'
+import { SecretVault, VaultLockedError } from './vault.js'
 import type { DshellSshTranslate } from './host-locales.js'
 import { trustedHostKey } from './host-key.js'
 import { localHelperArtifact } from './connection.js'
 import { deployHelper, helperPathFor } from './helper/install.js'
 import { PROBE, installProbe } from './helper/target.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
-import { sshDeviceRoot } from './paths.js'
 import { absoluteRemoteRoot, isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
-import { interactiveShellArgv, localCwd, quote, sshArgv, sshEnv } from './runner.js'
+import { quote, quoteDevicePath } from './shell-quote.js'
+import { deviceTransport, type DeviceShell } from './transport/transport.js'
 
 /**
  * Service name under which the router is published.
@@ -66,6 +68,15 @@ declare module '@deepseek-ai/cordis' {
  */
 interface ShellExecutorShape {
   resolve(this: unknown, request: ShellExecRequest): ShellExecSpec
+  /**
+   * The argv this executor would run a resolved spec with.
+   *
+   * Optional on purpose: only the executors that build their argv FROM the
+   * spec have one (`bash-local` hardcodes `['bash', '-c', command]`, which is
+   * already the shape a device wants). Absent means there is nothing here to
+   * replace — the executor's own argv is already the device's.
+   */
+  argv?(this: unknown, spec: ShellExecSpec): string[]
 }
 
 /** Where one session runs: the device, the directory on it, and its local mount. */
@@ -216,8 +227,22 @@ class BindingStore {
 /** Devices, their assignments, and the per-call decision they drive. */
 export class SshRouter {
   private readonly devices: DeviceStore
+  /** The group registry and the unlock state, shared with every reader. */
+  readonly vault: SecretVault
+  /** The credential library devices point at. */
+  readonly credentials: CredentialStore
   private readonly bindings: BindingStore
   private connections = new Map<string, DeviceConnection>()
+  /**
+   * Why a device has no connection right now, by device id.
+   *
+   * Written by {@link refreshDevices} when it skips one — a credential whose
+   * group is locked, usually — and read by the seams that refuse a session
+   * bound to it. Remembered rather than recomputed because those seams are
+   * synchronous, and a refusal that names the group is the whole difference
+   * between "this machine is unreachable" and "unlock this group".
+   */
+  private unservable = new Map<string, { reason: string; groupId: string | undefined }>()
   private ready: Promise<void>
   /**
    * This package's host copy, bound to the language service once it is
@@ -256,7 +281,11 @@ export class SshRouter {
    * the path is actually used.
    */
   constructor(root: () => string) {
-    this.devices = new DeviceStore(root)
+    // One vault instance for the process: the whole point of an unlock is that
+    // the device store, the credential store and the card all see the same one.
+    this.vault = new SecretVault(root)
+    this.credentials = new CredentialStore(root, this.vault)
+    this.devices = new DeviceStore(root, this.credentials)
     this.bindings = new BindingStore(() => join(root(), 'bindings.json'))
     // Eagerly, and deliberately: `targetForSession` below is synchronous
     // because `spawn`/`resolve` cannot await, so this cache has to be filled
@@ -298,10 +327,44 @@ export class SshRouter {
     return await this.devices.list()
   }
 
+  /**
+   * One device's host and port, for a question about its trust rather than
+   * about its configuration.
+   *
+   * @param deviceId - device to look up.
+   * @returns the destination, or undefined when the device is unknown.
+   */
+  async destinationOf(deviceId: string): Promise<{ host: string; port: number } | undefined> {
+    const views = await this.list()
+    const view = views.find(candidate => candidate.id === deviceId)
+    return view === undefined ? undefined : { host: view.host, port: view.port }
+  }
+
   /** Every session→device assignment. */
   async assignments(): Promise<readonly AssignmentView[]> {
     await this.bindings.refresh()
     return this.bindings.all()
+  }
+
+  /**
+   * The connection for one device, refreshing once before refusing.
+   *
+   * Every seam that needs a live connection comes through here so they all
+   * refuse the same way: a device whose credential sits in a locked group is
+   * refused with a {@link VaultLockedError} carrying that group, because it is
+   * the one refusal with a way out — the route turns the group into a pointer at
+   * its unlock box. Anything else is refused with the reason the last refresh
+   * recorded.
+   */
+  private async connectionFor(deviceId: string): Promise<DeviceConnection> {
+    const cached = this.connections.get(deviceId)
+    if (cached !== undefined) return cached
+    await this.refreshDevices()
+    const fresh = this.connections.get(deviceId)
+    if (fresh !== undefined) return fresh
+    const stuck = this.unservable.get(deviceId)
+    if (stuck?.groupId !== undefined) throw new VaultLockedError(stuck.reason, stuck.groupId)
+    throw new Error(stuck?.reason ?? this.t('error.unknownDevice', { id: deviceId }))
   }
 
   /**
@@ -313,27 +376,23 @@ export class SshRouter {
    * @param mount - local directory standing in for that tree; null takes the
    *   tree's own ({@link mountPath}), because a binding without one routes only
    *   the shell and leaves every file operation on this machine.
-   * @param ctx - host context used to create the remote directory; when given,
-   *   the directory is made to exist BEFORE the assignment becomes visible, so
-   *   a terminal that spawns the instant the binding lands has somewhere to
-   *   `cd` into. Without this the binding is briefly routable while the remote
-   *   directory is still missing, and the shell silently falls back to the
-   *   login directory.
+   * @param createRemoteRoot - whether to make the session's directory exist on
+   *   the device BEFORE the assignment becomes visible. Without this the binding
+   *   is briefly routable while the remote directory is still missing, and the
+   *   shell silently falls back to the login directory — which is exactly what a
+   *   terminal that spawns the instant the binding lands must not do.
    */
   async bind(
     sessionId: string,
     deviceId: string | null,
     remoteRoot: string | null = null,
     mount: string | null = null,
-    ctx?: Context,
+    createRemoteRoot = false,
   ): Promise<void> {
     let assigned = mount
     if (deviceId !== null) {
-      if (this.connections.get(deviceId) === undefined) {
-        await this.refreshDevices()
-        if (this.connections.get(deviceId) === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
-      }
-      if (ctx !== undefined) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
+      await this.connectionFor(deviceId)
+      if (createRemoteRoot) await this.ensureRemoteRoot(deviceId, remoteRoot)
       const tree = assigned === null || assigned.trim().length === 0
         ? await this.mountPath(deviceId, remoteRoot)
         : assigned
@@ -387,14 +446,11 @@ export class SshRouter {
    * the same, deliberately.
    *
    * @param deviceId - device to deploy to.
-   * @param ctx - host context with the subprocess seam.
    */
-  async installHelper(deviceId: string, ctx: Context): Promise<DeviceHelperStatus> {
-    await this.refreshDevices()
-    const device = this.connections.get(deviceId)
-    if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
+  async installHelper(deviceId: string): Promise<DeviceHelperStatus> {
+    const device = await this.connectionFor(deviceId)
     const artifact = localHelperArtifact()
-    const probe = await this.probeDevice(ctx, device)
+    const probe = await this.probeDevice(device)
     let status: DeviceHelperStatus
     if (probe.node === undefined) {
       status = {
@@ -403,7 +459,7 @@ export class SshRouter {
         message: this.t('install.noNode'),
       }
     } else {
-      const outcome = await deployHelper(ctx, device, artifact.path, artifact.hash, probe.home)
+      const outcome = await deployHelper(device, artifact.path, artifact.hash, probe.home)
       status = outcome.onDevice === artifact.hash
         ? {
             state: 'present',
@@ -438,20 +494,14 @@ export class SshRouter {
    * per-device cache is hit. Used by {@link installHelper} when the answer
    * might have changed since the cache was populated.
    */
-  private async probeDevice(ctx: Context, device: DeviceConnection): Promise<{ home: string; node: string | undefined }> {
-    const handle = ctx.subprocess.spawn({
-      argv: sshArgv(device, PROBE),
-      cwd: localCwd(),
-      ...Object.keys(sshEnv(device)).length === 0 ? {} : { env: sshEnv(device) },
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 }, stderr: { maxBytes: 8 * 1024 } },
-      graceMs: 10_000,
-    })
-    const outcome = await handle.done
-    if (outcome.exitCode !== 0) {
-      const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
-      throw new Error(stderr === '' ? this.t('install.probeFailed', { code: String(outcome.exitCode ?? 'on a signal') }) : stderr)
+  private async probeDevice(device: DeviceConnection): Promise<{ home: string; node: string | undefined }> {
+    const result = await deviceTransport().exec(device, PROBE, { graceMs: 10_000 })
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() === ''
+        ? this.t('install.probeFailed', { code: String(result.exitCode ?? 'on a signal') })
+        : result.stderr.trim())
     }
-    const [home = '', node = ''] = (handle.collected.stdout?.readFrom(0).text ?? '').trimEnd().split('\n')
+    const [home = '', node = ''] = result.stdout.trimEnd().split('\n')
     return {
       home: home.trim(),
       node: node.trim() === '' || !node.trim().startsWith('/') ? undefined : node.trim(),
@@ -517,7 +567,10 @@ export class SshRouter {
    * @returns the refusal text, in the reader's language.
    */
   unservableMessage(deviceId: string): string {
-    return this.t('route.noDevice', { id: deviceId })
+    // What the last refresh recorded, when it skipped this device: a locked
+    // group names itself, which is the refusal a reader can act on. Anything
+    // else — a device that no longer exists — falls back to the plain answer.
+    return this.unservable.get(deviceId)?.reason ?? this.t('route.noDevice', { id: deviceId })
   }
 
   /**
@@ -532,8 +585,11 @@ export class SshRouter {
    *
    * `sessionCwd` is unused for the decision and kept only so the signature
    * mirrors the shell/fs seams; a plan rather than a bare device, because the
-   * ssh knowledge — which options, which auth arguments, which environment the
-   * askpass hook needs — lives in this package and is not copied to the bridge.
+   * ssh knowledge — which authentication, which trust decision, which remote
+   * line — lives in this package and is not copied to the bridge. The plan is
+   * an OPENER rather than a command line for the same reason: the bridge runs
+   * the shell over the device transport's own channel, and nothing about that
+   * is something it should have to spell.
    *
    * A session whose directory is a mount but which has no assignment is
    * REFUSED rather than given a local shell: the mount is an empty local
@@ -544,12 +600,12 @@ export class SshRouter {
    * @param sessionId - session-backed agent id, the key bindings are written under.
    * @param sessionCwd - the session's own directory, consulted only to tell a
    *   mid-bind session (and a broken one) from a local one.
-   * @returns argv and environment for the local `ssh` process, or undefined.
+   * @returns the device shell opener, or undefined when the session is local.
    */
   async interactiveShellPlan(
     sessionId: string,
     sessionCwd?: string,
-  ): Promise<{ argv: readonly string[]; env: Record<string, string> } | undefined> {
+  ): Promise<DeviceShellPlan | undefined> {
     await this.bindings.refresh()
     let assignment = this.bindings.get(sessionId)
     // Creating a device session and recording its assignment are two round
@@ -574,9 +630,13 @@ export class SshRouter {
     // above exists to prevent.
     await this.ensureReady()
     const device = this.connections.get(assignment.deviceId)
-    if (device === undefined) throw new Error(this.unservableMessage(assignment.deviceId))
+    if (device === undefined) {
+      const stuck = this.unservable.get(assignment.deviceId)
+      if (stuck?.groupId !== undefined) throw new VaultLockedError(stuck.reason, stuck.groupId)
+      throw new Error(this.unservableMessage(assignment.deviceId))
+    }
     const remoteRoot = assignment.remoteRoot ?? device.remoteRoot
-    return { argv: interactiveShellArgv(device, remoteRoot, this.t), env: sshEnv(device) }
+    return deviceShellPlan(device, remoteRoot, this.t)
   }
 
   /**
@@ -587,12 +647,8 @@ export class SshRouter {
    *   creation already creates its working directory).
    */
   async mountPath(deviceId: string, remoteRoot: string | null): Promise<string> {
-    if (this.connections.get(deviceId) === undefined) {
-      await this.refreshDevices()
-      if (this.connections.get(deviceId) === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
-    }
-    const device = this.connections.get(deviceId)
-    const root = remoteRoot === null || remoteRoot.trim() === '' ? device?.remoteRoot ?? '~' : remoteRoot.trim()
+    const device = await this.connectionFor(deviceId)
+    const root = remoteRoot === null || remoteRoot.trim() === '' ? device.remoteRoot : remoteRoot.trim()
     return mountFor(deviceId, root)
   }
 
@@ -613,51 +669,44 @@ export class SshRouter {
    * reported as first contact rather than as an established one.
    *
    * @param deviceId - device to connect to.
-   * @param ctx - host context holding the subprocess seam.
    * @param remoteRoot - session directory to also create; null checks nothing.
    * @returns the ready-to-show result line.
    */
-  async test(deviceId: string, ctx: Context, remoteRoot: string | null = null): Promise<string> {
+  async test(deviceId: string, remoteRoot: string | null = null): Promise<string> {
+    // Refreshed first so the answer reflects what is stored NOW, then resolved
+    // through the seam every other connection goes through: a device whose
+    // credential sits in a locked group is refused with that group's name —
+    // the one refusal with a way out. Reading the map directly would answer
+    // "unknown device" for a machine the reader can see in the panel.
     await this.refreshDevices()
-    const device = this.connections.get(deviceId)
-    if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
-    const trustedBefore = await trustedHostKey(device.host, device.port)
+    const device = await this.connectionFor(deviceId)
+    const trustedBefore = trustedHostKey(device.host, device.port)
     const started = Date.now()
-    const argv = sshArgv(device, 'printf "%s|%s|%s" "$(hostname)" "$(id -un)" "$(uname -sr)"')
-    const env = sshEnv(device)
-    const spec = {
-      argv,
-      cwd: localCwd(),
-      ...Object.keys(env).length === 0 ? {} : { env },
-      stdio: {
-        stdin: 'ignore' as const,
-        stdout: { maxBytes: 8 * 1024 },
-        stderr: { maxBytes: 8 * 1024 },
-      },
-      graceMs: 5_000,
+    const result = await deviceTransport().exec(
+      device,
+      'printf "%s|%s|%s" "$(hostname)" "$(id -un)" "$(uname -sr)"',
+      { graceMs: 5_000 },
+    )
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() !== ''
+        ? result.stderr.trim()
+        : this.t('test.exitCode', { code: String(result.exitCode ?? 'signal') }))
     }
-    const handle = ctx.subprocess.spawn(spec)
-    const outcome = await handle.done
-    const stdout = handle.collected.stdout?.readFrom(0).text.trim() ?? ''
-    const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
-    if (outcome.exitCode !== 0) {
-      throw new Error(stderr !== '' ? stderr : this.t('test.exitCode', { code: String(outcome.exitCode ?? 'signal') }))
-    }
-    const [host, user, system] = stdout.split('|')
+    const [host, user, system] = result.stdout.trim().split('|')
     const line = this.t('test.connected', {
       user: user ?? '',
       host: host ?? device.host,
       system: system ?? this.t('test.unknownSystem'),
       ms: Date.now() - started,
     })
-    const trusted = await trustedHostKey(device.host, device.port)
+    const trusted = trustedHostKey(device.host, device.port)
     // Same order the session's own start uses: connect, then make the
-    // directory. A refusal here throws with ssh's own words.
-    if (remoteRoot !== null) await this.ensureRemoteRoot(ctx, deviceId, remoteRoot)
+    // directory. A refusal here throws with the device's own words.
+    if (remoteRoot !== null) await this.ensureRemoteRoot(deviceId, remoteRoot)
     // Third stage: where the device stands on the helper. Deploying is its own
     // action, so this only reports — and records the answer, which is what
     // puts the state on the card without a deployment having been run.
-    await this.surveyHelper(deviceId, ctx, device)
+    await this.surveyHelper(deviceId, device)
     return trusted === undefined
       ? line
       : `${line}\n${this.t(trustedBefore === undefined ? 'test.hostKeyFirst' : 'test.hostKeyTrusted', { fingerprint: trusted })}`
@@ -672,25 +721,16 @@ export class SshRouter {
    * this build's artifact rather than against a version string.
    *
    * A failed exec records nothing. The connection check above has already
-   * reported the transport failure in ssh's own words, and clearing a status
+   * reported the transport failure in its own words, and clearing a status
    * we could not re-read would turn "unknown" into "absent".
    * @param deviceId - device to survey.
-   * @param ctx - host context with the subprocess seam.
    * @param device - the resolved connection.
    */
-  private async surveyHelper(deviceId: string, ctx: Context, device: DeviceConnection): Promise<void> {
+  private async surveyHelper(deviceId: string, device: DeviceConnection): Promise<void> {
     const artifact = localHelperArtifact()
-    const env = sshEnv(device)
-    const handle = ctx.subprocess.spawn({
-      argv: sshArgv(device, installProbe(artifact.hash)),
-      cwd: localCwd(),
-      ...Object.keys(env).length === 0 ? {} : { env },
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 8 * 1024 }, stderr: { maxBytes: 8 * 1024 } },
-      graceMs: 10_000,
-    })
-    const outcome = await handle.done
-    if (outcome.exitCode !== 0) return
-    const [home = '', node = '', onDevice = ''] = (handle.collected.stdout?.readFrom(0).text ?? '').trimEnd().split('\n')
+    const result = await deviceTransport().exec(device, installProbe(artifact.hash), { graceMs: 10_000 })
+    if (result.exitCode !== 0) return
+    const [home = '', node = '', onDevice = ''] = result.stdout.trimEnd().split('\n')
     const homeDir = home.trim()
     if (!homeDir.startsWith('/') || node.trim() === '') {
       await this.devices.setHelper(deviceId, {
@@ -738,44 +778,88 @@ export class SshRouter {
    * directory and says so — but a permissions problem still surfaces in the
    * route's error field when it happens here.
    *
-   * @param ctx - context holding the subprocess seam.
    * @param deviceId - device to create the directory on.
    * @param remoteRoot - directory to create; null uses the device's own.
    */
-  async ensureRemoteRoot(ctx: Context, deviceId: string, remoteRoot: string | null): Promise<void> {
+  async ensureRemoteRoot(deviceId: string, remoteRoot: string | null): Promise<void> {
     const device = this.connections.get(deviceId) ?? (await this.refreshDevices(), this.connections.get(deviceId))
     if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
     const root = remoteRoot === null || remoteRoot.trim() === '' ? device.remoteRoot : remoteRoot.trim()
     if (root.trim() === '' || root.trim() === '~') return
-    const handle = ctx.subprocess.spawn({
-      argv: sshArgv(device, `mkdir -p -- ${quote(root)}`),
-      cwd: localCwd(),
-      stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } },
-      graceMs: 5_000,
-      env: sshEnv(device),
-    })
-    const outcome = await handle.done
-    if (outcome.exitCode !== 0) {
-      const stderr = handle.collected.stderr?.readFrom(0).text.trim() ?? ''
-      throw new Error(stderr === '' ? this.t('mount.createFailed', { root }) : stderr)
+    const result = await deviceTransport().exec(device, `mkdir -p -- ${quote(root)}`, { graceMs: 5_000 })
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() === '' ? this.t('mount.createFailed', { root }) : result.stderr.trim())
     }
   }
 
-  /** Reload the device cache from disk. */
-  private async refreshDevices(): Promise<void> {
+  /**
+   * Lock one group, or every group, and forget what their keys opened.
+   *
+   * Two steps that are one operation: the vault drops the key, and the connection
+   * map is rebuilt so nothing points at a secret the group can no longer open. A
+   * caller that did only the first would leave a session bound to a device in this
+   * group holding a connection that resolves to nothing — which fails as a refused
+   * login rather than as a locked group.
+   */
+  async lockGroups(groupId?: string): Promise<void> {
+    await this.vault.lock(groupId)
+    await this.refreshDevices()
+  }
+
+  /**
+   * Unlock one group and rebuild what its key can now open.
+   *
+   * The refresh is the point: a device in this group was skipped while it was
+   * locked, and a session bound to it would keep being refused with the reason
+   * recorded then — a refusal that outlived its own cause.
+   */
+  async unlockGroup(groupId: string, token: string): Promise<void> {
+    await this.vault.unlock(groupId, token)
+    await this.refreshDevices()
+  }
+
+  /**
+   * Rebuild the connection map from what is stored.
+   *
+   * Tolerant by design. A device whose credential sits in a locked group has no
+   * connection to build, and failing the whole refresh for it would let ONE
+   * locked group block every device edit in the panel — the reader who locked a
+   * group would find they can no longer add a machine — and, at start-up, take
+   * the whole router down with it. Such a device is skipped instead, and the
+   * reason is remembered: the seams that refuse a session bound to it are
+   * synchronous, so they cannot ask again.
+   */
+  async refreshDevices(): Promise<void> {
     const views = await this.devices.list()
-    const next = new Map<string, DeviceConnection>()
+    const connections = new Map<string, DeviceConnection>()
+    const unservable = new Map<string, { reason: string; groupId: string | undefined }>()
     for (const view of views) {
-      const connection = await this.devices.connection(view.id)
-      if (connection !== undefined) next.set(view.id, connection)
+      try {
+        const connection = await this.devices.connection(view.id)
+        if (connection === undefined) {
+          unservable.set(view.id, { reason: this.t('route.noDevice', { id: view.id }), groupId: undefined })
+          continue
+        }
+        connections.set(view.id, connection)
+      } catch (error) {
+        unservable.set(view.id, {
+          reason: error instanceof Error ? error.message : String(error),
+          groupId: error instanceof VaultLockedError ? error.groupId : undefined,
+        })
+      }
     }
-    this.connections = next
+    this.connections = connections
+    this.unservable = unservable
   }
 
   private async reload(): Promise<void> {
-    // The connection-sharing socket lives here; ssh creates the socket, not
-    // the directory, so it has to exist first.
-    await mkdir(join(sshDeviceRoot(), 'ctl'), { recursive: true, mode: 0o700 })
+    // The old design kept a sealed secret on disk, because the external `ssh`
+    // could only be handed a path to read. Nothing writes there any more, but an
+    // installation upgraded from that design still has the directory — and a host
+    // killed rather than stopped may have left plaintext in it. Swept once, here:
+    // no later moment would know those files were there, and they are not this
+    // process's to keep.
+    await this.vault.sweepLegacyRunDir()
     await this.bindings.load()
     await this.refreshDevices()
     await this.adoptMounts()
@@ -808,6 +892,78 @@ export class SshRouter {
       mounts.set(entry.sessionId, mount)
     }
     await this.bindings.adoptMounts(mounts)
+  }
+}
+
+/** What a device shell needs before it can be opened. */
+export interface DeviceShellWindow {
+  readonly rows: number
+  readonly cols: number
+  /** `$TERM` on the device; the bridge names the terminal it is rendering. */
+  readonly terminalType: string
+}
+
+/**
+ * How the bridge opens one session's VISIBLE terminal on its device.
+ *
+ * An opener rather than a command line, because the bridge has no business
+ * knowing how a device is reached — the connection, its credentials and its
+ * trust decision are all this package's. It calls `open` with the window it
+ * wants and gets a shell back; the shape it consumes is structural, so this
+ * package never has to be a dependency of the bridge.
+ */
+export interface DeviceShellPlan {
+  readonly kind: 'device'
+  readonly open: (window: DeviceShellWindow) => Promise<DeviceShell>
+}
+
+/**
+ * The command that puts the far shell into one directory.
+ *
+ * The root is a DEVICE path, so a `~` in it is the device's own spelling of
+ * home — and the far shell is the only one that knows where home is. So the
+ * tilde stays OUTSIDE the quotes: quoting the whole word asks for a
+ * directory literally named `~`, which no machine has, and the shell lands
+ * in the login directory claiming the configured root is missing (see
+ * `quoteDevicePath`).
+ *
+ * A missing directory must not cost the user their terminal. Chaining with
+ * `&&` would short-circuit `exec bash` and end the session on a typo, with
+ * nothing on screen to explain it; the shell lands in the login directory
+ * instead and says why.
+ *
+ * @param root - the device path to start in; empty means the login dir.
+ * @param missing - the line to print when that directory is not there.
+ * @returns the command to run before the shell takes over.
+ */
+export function deviceShellCd(root: string, missing: string): string {
+  if (root === '') return ''
+  return `cd ${quoteDevicePath(root)} 2>/dev/null || echo ${quote(missing)} >&2; `
+}
+
+/**
+ * The plan that opens a device shell in one remote directory.
+ *
+ * `bash -l` (not `--norc`) on purpose: the user's real login shell is what they
+ * expect to land in. The bridge overwrites PS1 and PROMPT_COMMAND right after
+ * startup for its own settle marker, so the prompt looks the same on every
+ * device regardless of the remote profile.
+ *
+ * @param device - device the session is bound to.
+ * @param remoteCwd - directory the shell starts in; empty means the login dir.
+ * @param t - this package's bound host copy, for the missing-directory line.
+ * @returns the opener the bridge calls with its window.
+ */
+function deviceShellPlan(device: DeviceConnection, remoteCwd: string, t: DshellSshTranslate): DeviceShellPlan {
+  const root = remoteCwd.trim()
+  const cd = deviceShellCd(root, t('shell.missingRemoteDir', { root }))
+  return {
+    kind: 'device',
+    open: async window => await deviceTransport().shell(
+      device,
+      `${cd}exec bash -l`,
+      { rows: window.rows, cols: window.cols, term: window.terminalType },
+    ),
   }
 }
 
@@ -907,5 +1063,55 @@ export function installShellRouting(ctx: Context, router: SshRouter, t: DshellSs
         : { sandboxPolicy: { ...spec.sandboxPolicy, mode: 'danger-full-access' } },
     }
   }
-  return () => { target.resolve = original }
+  // The argv seam, on the same terms as `resolve` above: the PROTOTYPE that
+  // owns the method, so every path that reaches the executor reaches this.
+  //
+  // The command is the caller's and the DEVICE's shell runs it, but the argv
+  // that leaves the host is built by the HOST's shell — and those are not the
+  // same program. On a Windows host the executor builds
+  // `[C:\…\powershell.exe, -NoLogo, …, -Command, <command>]`, and a device
+  // cannot execute that: the path names a file on the host's disk, and the
+  // flags are the host shell's. Every device-side command then died on the
+  // device with an ENOENT that named a directory the device had never heard
+  // of, which is a far worse report than the one the reader gets here.
+  //
+  // `argv` is the executor's own argv-level seam — the one a confining
+  // subclass wraps through `ctx.sandbox.confine` — so replacing it is the
+  // documented way to change WHICH shell runs a command, and it keeps the
+  // executor's own lifecycle, deadline, environment and output handling
+  // around the new argv.
+  const argvOwner = findMethodOwner(shell, 'argv')
+  if (argvOwner === null) return () => { target.resolve = original }
+  const argvTarget = argvOwner as unknown as { argv: (spec: ShellExecSpec) => string[] }
+  const originalArgv = argvTarget.argv
+  argvTarget.argv = function argv(this: unknown, spec: ShellExecSpec): string[] {
+    const agent = ctx.agents.currentInitiator()
+    const assignment = agent === undefined ? undefined : router.targetForSession(String(agent.id))
+    // No device for this session: the host's own argv is the right one, and
+    // this is the whole of the stock behaviour.
+    if (assignment === undefined) return originalArgv.call(this, spec)
+    // The device's shell runs the caller's command. `bash -c` is the same
+    // shape `bash-local` builds, so a POSIX host is unaffected by this and a
+    // Windows host stops sending the device a path it cannot execute.
+    return ['bash', '-c', spec.command]
+  }
+  return () => {
+    target.resolve = original
+    argvTarget.argv = originalArgv
+  }
+}
+
+/**
+ * The prototype that owns a method, or null when the object has none.
+ *
+ * @param service - the service object the method was reached through.
+ * @param name - the method's name.
+ * @returns the prototype holding it as an own property.
+ */
+function findMethodOwner(service: object, name: string): Record<string, unknown> | null {
+  let owner = Object.getPrototypeOf(service) as Record<string, unknown> | null
+  while (owner !== null && !Object.prototype.hasOwnProperty.call(owner, name)) {
+    owner = Object.getPrototypeOf(owner) as Record<string, unknown> | null
+  }
+  return owner
 }

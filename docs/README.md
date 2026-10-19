@@ -29,7 +29,7 @@ making a targeted change.
   version is the one `main` runs.
 - `dshell-handoff-2026-10.md` is *one handover*, not a standing document: it
   records the live state (what is released, what sits uncommitted, what is
-  blocked and why) with the readings that were true on 2026-10-16. It goes
+  blocked and why) with the readings that were true on 2026-10-19. It goes
   stale as soon as the branch is committed or released — rewrite it at the next
   handover rather than maintaining it.
 

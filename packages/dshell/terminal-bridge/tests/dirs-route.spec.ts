@@ -13,8 +13,8 @@
  */
 
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { join, normalize } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DshellDirsResponse } from '@nexus-aethra/dshell-std'
 import { createDirsRoute, listDirectories, resolveBrowsePath, resolveNewDirectoryPath } from '../src/dirs-route.js'
@@ -29,50 +29,89 @@ function scratch(name: string): string {
   return path
 }
 
+/**
+ * Whether this machine lets an unprivileged process create a symbolic link.
+ *
+ * Windows decides that with a privilege ("Create symbolic links") or with
+ * Developer Mode, so a machine with neither cannot make the link a symlink
+ * points at — and the case that needs one cannot be posed there.
+ */
+const SYMLINKS = ((): boolean => {
+  const probe = join(tmpdir(), `dshell-dirs-symlink-probe-${String(process.pid)}`)
+  try {
+    symlinkSync(join(tmpdir(), 'dshell-dirs-symlink-target'), probe)
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { force: true })
+  }
+})()
+
 afterEach(() => {
   for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 
 describe('resolving a typed path', () => {
-  const home = '/home/u'
+  // The home is the one this machine has: a typed path names a directory on the
+  // HOST, so it is spelled and resolved with the host's rules, and a fixture
+  // written in POSIX would come back Windows-spelled.
+  const home = homedir()
 
   it('opens at the home directory when nothing was asked for', () => {
-    expect(resolveBrowsePath(undefined, home)).toBe(home)
-    expect(resolveBrowsePath('', home)).toBe(home)
-    expect(resolveBrowsePath('   ', home)).toBe(home)
-    expect(resolveBrowsePath('~', home)).toBe(home)
+    expect(resolveBrowsePath(undefined, home)).toBe(normalize(home))
+    expect(resolveBrowsePath('', home)).toBe(normalize(home))
+    expect(resolveBrowsePath('   ', home)).toBe(normalize(home))
+    expect(resolveBrowsePath('~', home)).toBe(normalize(home))
   })
 
   it('expands ~ and resolves a relative path against the home, not the cwd', () => {
-    expect(resolveBrowsePath('~/dshell-data', home)).toBe('/home/u/dshell-data')
-    expect(resolveBrowsePath('dshell-data', home)).toBe('/home/u/dshell-data')
-    expect(resolveBrowsePath('data/../dshell', home)).toBe('/home/u/dshell')
+    expect(resolveBrowsePath('~/dshell-data', home)).toBe(join(home, 'dshell-data'))
+    expect(resolveBrowsePath('dshell-data', home)).toBe(join(home, 'dshell-data'))
+    expect(resolveBrowsePath('data/../dshell', home)).toBe(join(home, 'dshell'))
   })
 
   it('leaves an absolute path alone and refuses to guess another account', () => {
-    expect(resolveBrowsePath('/mnt/big', home)).toBe('/mnt/big')
-    expect(resolveBrowsePath('/', home)).toBe('/')
+    // An absolute path is taken as it is: it names a directory on this machine,
+    // and the picker is a browser that cannot see the host's disk.
+    const absolute = join(home, 'mnt', 'big')
+    expect(resolveBrowsePath(absolute, home)).toBe(normalize(absolute))
+    expect(resolveBrowsePath('/', home)).toBe(normalize('/'))
     // `~someone` is not a home this process can expand, and silently resolving
     // it against the READER's home would list a directory they never named.
-    expect(resolveBrowsePath('~someone/dir', home)).toBe('/home/u/~someone/dir')
+    expect(resolveBrowsePath('~someone/dir', home)).toBe(normalize(join(home, '~someone', 'dir')))
   })
 })
 
 describe('listing the directories below a path', () => {
-  it('lists directories and links to them, sorted, and never files', () => {
+  it('lists directories, sorted, and never files', () => {
     const root = scratch('tree')
     mkdirSync(join(root, 'zeta'))
     mkdirSync(join(root, 'alpha'))
     mkdirSync(join(root, '.hidden'))
     writeFileSync(join(root, 'notes.txt'), 'x\n')
-    symlinkSync(join(root, 'alpha'), join(root, 'link-to-dir'))
-    symlinkSync(join(root, 'notes.txt'), join(root, 'link-to-file'))
 
     return listDirectories(root).then(({ entries, truncated }) => {
-      expect(entries.map(entry => entry.name)).toEqual(['.hidden', 'alpha', 'link-to-dir', 'zeta'])
+      expect(entries.map(entry => entry.name)).toEqual(['.hidden', 'alpha', 'zeta'])
       expect(truncated).toBe(false)
       // Every entry carries the absolute path the field will store.
       expect(entries[1]?.path).toBe(join(root, 'alpha'))
+    })
+  })
+
+  // A symlink to a directory counts as one — that is a shape people really use
+  // for this (`~/dshell-data -> /mnt/big/dshell`), and refusing it would be
+  // refusing the most common way to move a data root to another disk. A symlink
+  // to a file does not.
+  it.skipIf(!SYMLINKS)('counts a link to a directory and ignores a link to a file', () => {
+    const root = scratch('links')
+    mkdirSync(join(root, 'alpha'))
+    writeFileSync(join(root, 'notes.txt'), 'x\n')
+    symlinkSync(join(root, 'alpha'), join(root, 'link-to-dir'))
+    symlinkSync(join(root, 'notes.txt'), join(root, 'link-to-file'))
+
+    return listDirectories(root).then(({ entries }) => {
+      expect(entries.map(entry => entry.name)).toEqual(['alpha', 'link-to-dir'])
     })
   })
 
@@ -83,12 +122,12 @@ describe('listing the directories below a path', () => {
 })
 
 describe('naming a directory to create', () => {
-  const parent = '/home/u/data'
+  const parent = join(homedir(), 'data')
 
   it('accepts one ordinary segment below the parent', () => {
-    expect(resolveNewDirectoryPath(parent, 'dshell')).toBe('/home/u/data/dshell')
-    expect(resolveNewDirectoryPath(parent, '  spaced  ')).toBe('/home/u/data/spaced')
-    expect(resolveNewDirectoryPath(parent, 'a.b-c_d')).toBe('/home/u/data/a.b-c_d')
+    expect(resolveNewDirectoryPath(parent, 'dshell')).toBe(join(parent, 'dshell'))
+    expect(resolveNewDirectoryPath(parent, '  spaced  ')).toBe(join(parent, 'spaced'))
+    expect(resolveNewDirectoryPath(parent, 'a.b-c_d')).toBe(join(parent, 'a.b-c_d'))
   })
 
   it('refuses anything that is not a single segment below the parent', () => {
@@ -141,7 +180,10 @@ describe('creating a directory through the route', () => {
     expect(answer.path).toBe(root)
   })
 
-  it('reports the parent it cannot write to', async () => {
+  // Windows decides access with ACLs, not with the POSIX mode bits, so a
+  // directory made read-only here is still writable there — and the refusal
+  // this pins cannot be provoked by the file system at all.
+  it.skipIf(process.platform === 'win32')('reports the parent it cannot write to', async () => {
     const root = scratch('readonly')
     chmodSync(root, 0o500)
     try {

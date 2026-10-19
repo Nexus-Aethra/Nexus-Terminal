@@ -21,9 +21,21 @@
  * directory standing in for it. Both travel in the session's binding, so a
  * later device rename or a change to the device's own directory cannot make an
  * existing session's mapping drift.
+ *
+ * **Two namespaces, two path grammars.** The mount and the session's own
+ * directory live in THIS machine's namespace, so they are spelled with THIS
+ * machine's rules — `node:path` on the host, which is `win32` on Windows and
+ * `posix` everywhere else. The device's tree is spelled in the DEVICE's rules,
+ * which are POSIX on every device dshell talks to. Mixing the two is not a
+ * cosmetic difference: a device path built with the host's grammar is
+ * `\root\notes.md` on Windows, which the device's own helper refuses outright
+ * (its protocol says "always absolute: the caller translates, the device does
+ * not guess") and which no POSIX program can open. So the device side of every
+ * translation here is built with `path.posix`, and only the host side uses
+ * `node:path`.
  */
 
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { isAbsolute, join, posix, relative, sep } from 'node:path'
 import { mountBase } from './paths.js'
 
 /** One session's directory on a device, and the local directory mirroring it. */
@@ -92,13 +104,31 @@ export function mappingFor(
  */
 export function mountFor(deviceId: string, remoteRoot: string): string {
   const trimmed = remoteRoot.trim().replace(/^\/+/, '').replace(/\/+$/, '')
-  return join(mountBase(), deviceId, trimmed === '' ? 'root' : trimmed)
+  // The remote root is spelled in the device's grammar, so its segments are
+  // split on the device's separator before they are joined onto a host path.
+  return join(mountBase(), deviceId, ...(trimmed === '' ? ['root'] : trimmed.split('/')))
 }
 
 /** Whether `child` is `parent` or lies inside it; lexical, like the sandbox's own check. */
 export function isUnder(parent: string, child: string): boolean {
   const rel = relative(parent, child)
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+/**
+ * Whether one device path is another or lies inside it.
+ *
+ * The same lexical check as {@link isUnder}, in the DEVICE's grammar: both
+ * sides of the comparison are paths on the device, so they are POSIX on every
+ * device dshell talks to, whatever the host happens to be.
+ *
+ * @param parent - a device path.
+ * @param child - a device path.
+ * @returns whether the child is the parent or lies inside it.
+ */
+export function isUnderRemote(parent: string, child: string): boolean {
+  const rel = posix.relative(parent, child)
+  return rel === '' || (!rel.startsWith('../') && rel !== '..' && !posix.isAbsolute(rel))
 }
 
 /**
@@ -125,7 +155,8 @@ export function absoluteRemoteRoot(remoteRoot: string, deviceRoot: string | unde
   if (!remoteRoot.startsWith('~')) return remoteRoot
   if (deviceRoot === undefined || !deviceRoot.startsWith('/')) return remoteRoot
   const rest = remoteRoot.replace(/^~\/?/, '')
-  return rest === '' ? deviceRoot : join(deviceRoot, rest)
+  // The root is the device's, so the join is the device's too.
+  return rest === '' ? deviceRoot : posix.join(deviceRoot, rest)
 }
 
 /**
@@ -150,7 +181,9 @@ export function toRemotePath(mapping: MountMapping, path: string): string {
   if (rest === undefined) return path
   if (rest === '') return mapping.remoteRoot
   const base = mapping.remoteRoot === '/' ? '' : mapping.remoteRoot
-  return join(base === '' ? '/' : base, rest)
+  // The remainder is a fragment of a HOST path, so its separators are the
+  // host's; the result is a DEVICE path, so its separators are the device's.
+  return posix.join(base === '' ? '/' : base, rest.split(sep).join('/'))
 }
 
 /** The part of `path` under `root`, or undefined when it is not under it. */
@@ -168,8 +201,8 @@ function under(root: string, path: string): string | undefined {
  * @returns path under the mount, or the input when it is outside the tree.
  */
 export function toMountPath(mapping: MountMapping, remotePath: string): string {
-  if (!isUnder(mapping.remoteRoot, remotePath)) return remotePath
-  const rest = relative(mapping.remoteRoot, remotePath)
+  if (!isUnderRemote(mapping.remoteRoot, remotePath)) return remotePath
+  const rest = posix.relative(mapping.remoteRoot, remotePath)
   return rest === '' ? mapping.mount : join(mapping.mount, rest)
 }
 

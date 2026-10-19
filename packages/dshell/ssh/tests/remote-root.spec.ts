@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { absoluteRemoteRoot } from '../src/mount.js'
+import { shellDir } from '../src/spawn-routing.js'
 
 describe('absoluteRemoteRoot', () => {
   it('expands a bare home root to the device directory', () => {
@@ -60,5 +61,25 @@ describe('absoluteRemoteRoot', () => {
     // Only a leading `~` is the shell's home shorthand; a `~` inside a name is
     // a name, and rewriting it would address something the reader never named.
     expect(absoluteRemoteRoot('/srv/~backup', '/root')).toBe('/srv/~backup')
+  })
+})
+
+describe('shellDir', () => {
+  it('leaves the tilde outside the quotes, where the far shell expands it', () => {
+    // The spelling `absoluteRemoteRoot` keeps when no helper has handshaked.
+    // Quoting it — `cd '~'` — asks for a directory literally named `~`, which
+    // no machine has, and every command on a `~`-rooted device without a helper
+    // died on exactly that. The tilde is the shell's to expand; the quotes are
+    // for the rest of the word, which may still hold a space.
+    expect(shellDir('~')).toBe('~')
+    expect(shellDir('~/app')).toBe("~/'app'")
+    expect(shellDir('~/my app')).toBe("~/'my app'")
+  })
+
+  it('quotes an absolute directory whole, tilde or no tilde', () => {
+    expect(shellDir('/srv/app')).toBe("'/srv/app'")
+    expect(shellDir('/srv/my app')).toBe("'/srv/my app'")
+    // A tilde in the middle of a name is a name.
+    expect(shellDir('/srv/~backup')).toBe("'/srv/~backup'")
   })
 })

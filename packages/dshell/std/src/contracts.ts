@@ -670,8 +670,24 @@ export interface DeviceView {
   readonly remoteRoot: string
   /** Selected login method. */
   readonly auth: DeviceAuth
+  /**
+   * The vault credential this device logs in with.
+   *
+   * Preferred over {@link hasSecret}: a key shared by thirty machines should be
+   * rotated in one place. Absent means the device still carries its own inline
+   * secret, which is what every device did before the vault existed.
+   */
+  readonly credentialId?: string | undefined
   /** Whether the secret for {@link auth} (key or password) is stored. */
   readonly hasSecret: boolean
+  /**
+   * Whether a passphrase for the stored key is stored alongside it.
+   *
+   * A key with no passphrase is the common case and needs no `ssh` interaction,
+   * while a key with one cannot connect at all unless ssh is allowed to ask —
+   * so the device card's two states are different, not cosmetic.
+   */
+  readonly hasPassphrase?: boolean | undefined
   /** Helper deployment state, when known. Absent for compositions that have not checked. */
   readonly helper?: DeviceHelperStatus | undefined
 }
@@ -697,6 +713,92 @@ export interface DeviceInput {
    * {@link key}.
    */
   readonly password?: string | undefined
+  /**
+   * Passphrase for the stored key, used when `auth` is `key`. Same
+   * omitted/empty semantics as {@link key}: omitted leaves it, empty removes it.
+   *
+   * Only meaningful WITH a key — a passphrase for no key is refused rather than
+   * stored, because ssh would never read it and a stored secret nothing reads is
+   * the exact shape of a credential nobody rotates.
+   */
+  readonly passphrase?: string | undefined
+  /**
+   * The vault credential to log in with, instead of an inline secret.
+   *
+   * Set alongside {@link auth}; supplying it clears any inline key or password,
+   * because a device holding both would have two answers to the same question
+   * and only one of them gets rotated.
+   */
+  readonly credentialId?: string | undefined
+}
+
+/** What kind of secret a vault credential holds. */
+export type CredentialKind = 'key' | 'password'
+
+/**
+ * One stored credential, as the UI sees it.
+ *
+ * Never carries the secret: the same rule the device view has always followed,
+ * so a settings document that leaks contains no credential.
+ */
+export interface CredentialView {
+  readonly id: string
+  /** The owning group, which decides whether the bytes are sealed. */
+  readonly group: string
+  readonly name: string
+  readonly kind: CredentialKind
+  readonly hasSecret: boolean
+  /** Only meaningful for a `key`: whether a passphrase is stored with it. */
+  readonly hasPassphrase: boolean
+}
+
+/** One vault group, as the UI sees it. */
+export interface VaultGroupView {
+  readonly id: string
+  readonly name: string
+  /** False means the group's credentials are stored UNENCRYPTED. */
+  readonly sealed: boolean
+  /** Sealed and not currently open: its credentials cannot be read right now. */
+  readonly locked: boolean
+  /**
+   * Whether the group carries a token at all.
+   *
+   * A sealed group without one — the default group a fresh vault creates — can
+   * never be unlocked: there is no key to derive and nothing to check a guess
+   * against. It is waiting to be CLAIMED, and offering it an unlock box would
+   * be offering a door with no lock.
+   */
+  readonly hasToken: boolean
+}
+
+/**
+ * One private key sitting in the harness user's `~/.ssh`, offered as an
+ * alternative to pasting its contents.
+ *
+ * Naming it rather than its path is deliberate: `name` is what the reader
+ * recognises, and `path` is what has to come back to be read, so the browser
+ * sends the path back untouched and the host decides whether it may still be
+ * read (see the `readKey` action).
+ */
+export interface SshKeyFile {
+  readonly name: string
+  readonly path: string
+}
+
+/**
+ * One host key this plugin currently trusts, as OpenSSH spells it.
+ *
+ * A device may present several (an ed25519 and an rsa, say), so this is one
+ * ENTRY rather than one fingerprint per destination.
+ */
+export interface TrustedHostKey {
+  /** The host field as known_hosts spells it: bare, or `[host]:port`. */
+  readonly host: string
+  readonly port: number
+  /** `SHA256:…`, OpenSSH's own spelling. */
+  readonly fingerprint: string
+  /** `ssh-ed25519`, `ecdsa-sha2-nistp256`, … */
+  readonly keyType: string
 }
 
 /** One session's device binding, kept host-side because execution routing needs it. */
@@ -760,6 +862,63 @@ export type SshRequest =
     readonly action: 'install'
     readonly deviceId: string
   }
+  /** Private keys in the harness user's `~/.ssh`, for the device form's picker. */
+  | { readonly action: 'listKeys' }
+  /**
+   * One of those keys' contents, so the form can offer the file without the
+   * browser ever holding a path it could read on its own. The host re-checks
+   * that the path is still inside `~/.ssh`.
+   */
+  | { readonly action: 'readKey'; readonly path: string }
+  /** The host keys this plugin records as trusted for one device. */
+  | { readonly action: 'hostKeys'; readonly deviceId: string }
+  /**
+   * Drop what is recorded for one device, so the next connection trusts whatever
+   * it presents. The way out of a host key that changed for a legitimate reason.
+   */
+  | { readonly action: 'revokeHostKey'; readonly deviceId: string }
+  /**
+   * What one device's host presents RIGHT NOW, for side-by-side comparison with
+   * what is trusted.
+   *
+   * Unauthenticated by construction: it arrives over the very connection whose
+   * identity is in question, so a UI may show it but must never trust it.
+   */
+  | { readonly action: 'probeHostKey'; readonly deviceId: string }
+  /** The vault's groups. */
+  | { readonly action: 'vaultList' }
+  | { readonly action: 'vaultCreateGroup'; readonly name: string; readonly token: string | null }
+  | { readonly action: 'vaultRenameGroup'; readonly groupId: string; readonly name: string }
+  | { readonly action: 'vaultDeleteGroup'; readonly groupId: string }
+  | { readonly action: 'vaultUnlock'; readonly groupId: string; readonly token: string }
+  /** Lock one group, or every group when `groupId` is absent. */
+  | { readonly action: 'vaultLock'; readonly groupId?: string }
+  /**
+   * Move a group to token-protected, or off it.
+   *
+   * Both re-seal the group's stored credentials in the same request, because a
+   * policy that applied only to writes would leave the group half-protected
+   * with no way to see which rows were the old ones.
+   */
+  | { readonly action: 'vaultSetToken'; readonly groupId: string; readonly token: string }
+  | { readonly action: 'vaultClearToken'; readonly groupId: string }
+  /** The credential library. */
+  | { readonly action: 'credentialList' }
+  | { readonly action: 'credentialSave'; readonly credential: CredentialInput }
+  | { readonly action: 'credentialDelete'; readonly credentialId: string }
+
+/** What the UI submits for one credential. Omitted secret keeps the stored one. */
+export interface CredentialInput {
+  readonly id?: string
+  /** The owning group, which decides whether the bytes are sealed. */
+  readonly group: string
+  readonly name: string
+  readonly kind: CredentialKind
+  /** Key contents or password. Empty string removes the secret. */
+  readonly secret?: string
+  /** Passphrase for a key credential. Empty string removes it. */
+  readonly passphrase?: string
+}
 
 /** One response body; `error` is a refusal the UI shows verbatim. */
 export interface SshResponse {
@@ -774,71 +933,27 @@ export interface SshResponse {
    * (`install` action or the eventual three-phase `test` extension).
    */
   readonly helper?: DeviceHelperStatus | undefined
-  readonly error?: string | undefined
-}
-
-// ─── workspace — the session delete route ───
-// moved from packages/dshell/workspace/src/protocol.ts
-
-/**
- * dshell session-panel wire — design 4.7 follow-up.
- *
- * This route carries ONE dshell-only concern now: the history purge. Its
- * companion, the archive tag, has moved to upstream and left this contract:
- *
- * - The **archive set is upstream's.** `workspaceRegistry.archiveSession` /
- *   `unarchiveSession` own it, the stock `workspace-controller` row (enabled in
- *   this profile) exposes both as remote commands and pushes a
- *   `{ type: 'archived' }` increment, and `ui-settings-unarchive-sessions` —
- *   the settings page this profile renders — is its restore surface. dshell
- *   supplies the registry's storage half and nothing else; there is no dshell
- *   archive UI and no dshell archive route. See packages/dshell/workspace/
- *   src/index.ts.
- * - The **history purge still has no upstream.** `SessionPersistence` is
- *   append-only — create/open/stat/list and no delete — `session-controller`
- *   has no delete command, and the jsonl lease documents "Release never
- *   removes". `api-session/removed` is a `session/disposed` relay that
- *   upstream's own client turns into a snapshot flag, deleting nothing.
- *
- * The purge travels over dshell's own exact route on the shared `/api` channel
- * rather than through the Typert Remote table (whose client artifacts are
- * generated from dsh's own packages).
- *
- * The path sits below the shared channel exactly like file-upload's: the
- * physical carrier applies dsh's trust and authentication policy before the
- * handler ever runs, so the route itself does no authorization.
- *
- * Shared by both halves of the package, so the constant and the shapes live
- * in one file that neither the host nor the client bundle owns.
- */
-
-/** Exact `/api` route path owned by the dshell session panel. */
-export const DSHELL_SESSIONS_PATH = '/api/dshell/sessions'
-
-/** One request body the route accepts; `list` is also the GET shape. */
-export type SessionRequest =
-  | { readonly action: 'list' }
-  | { readonly action: 'delete'; readonly sessionId: string }
-
-/**
- * One response body. `pendingPurge` rides on every response — the scheduled
- * set after the request, so one round trip leaves the caller's snapshot
- * current.
- *
- * It is only the QUALIFIER half of the archive set: a pending id is always
- * archived too, but the archive half is not dshell's to report any more (see
- * above), and the sidebar reads it from the workspace registry's snapshot.
- * `error` is a refusal the sidebar shows verbatim; it is not a transport
- * failure, so the response still carries a 2xx status.
- */
-export interface SessionResponse {
+  /** Host keys currently trusted, answering `hostKeys`. */
+  readonly hostKeys?: readonly TrustedHostKey[] | undefined
+  /** What the device presents now, answering `probeHostKey`. */
+  readonly probe?: TrustedHostKey | undefined
+  /** Private keys found in `~/.ssh`, answering `listKeys`. */
+  readonly keys?: readonly SshKeyFile[] | undefined
+  /** One key's contents, answering `readKey`. */
+  readonly keyBody?: string | undefined
+  /** The vault's groups, answering any `vault*` action. */
+  readonly groups?: readonly VaultGroupView[] | undefined
+  /** The stored credentials, answering any `credential*` action. */
+  readonly credentials?: readonly CredentialView[] | undefined
   /**
-   * Archived ids whose log is scheduled for removal at the next start (the
-   * session was still loaded in this process, so its writer would have
-   * recreated the directory).
+   * The vault group a refusal is about, when the refusal IS a locked group.
+   *
+   * The error string names it too, but a surface that has the vault panel can
+   * do better than print a name: this is what lets it open that group's unlock
+   * box, so the reader is taken to the door rather than told about it.
    */
-  readonly pendingPurge?: readonly string[]
-  readonly error?: string
+  readonly lockedGroup?: { readonly id: string; readonly name: string } | undefined
+  readonly error?: string | undefined
 }
 
 // ─── terminal-bridge — the shell's history read ───
