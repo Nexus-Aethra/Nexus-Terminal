@@ -768,7 +768,7 @@ export class DshellTerminalBridge extends Service {
       // the seeded scrollback does: reset the log to the snapshot instead of
       // to nothing, and hand that same text back to every client, which
       // replaces its own history from a replay chunk.
-      void record.buffer.truncate().then(() => {
+      const restore = (): void => {
         record.buffer.append(seeded)
         deliver({
           kind: 'output',
@@ -783,6 +783,13 @@ export class DshellTerminalBridge extends Service {
         // `\n` would add another empty echo row, and over many respawns that
         // is exactly the blank block the user sees growing on every reconnect.
         options.afterRestore?.()
+      }
+      void record.buffer.truncate().then(restore).catch((error: unknown) => {
+        // The log reset is a cache operation, and the host treats an
+        // unhandled rejection as fatal — a respawn must never take the
+        // desktop app down with it. The client still gets its scrollback.
+        console.warn('dshell: pty log reset failed:', error)
+        restore()
       })
     }, () => {
       record.activeSend = undefined

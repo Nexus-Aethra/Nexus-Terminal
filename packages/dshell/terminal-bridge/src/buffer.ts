@@ -20,7 +20,7 @@
  * host was there for all of it, so the times travel with the text.
  */
 
-import { mkdir, open, readFile, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, stat, truncate as truncateFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   hardenDir, hardenFile, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivate,
@@ -115,7 +115,8 @@ export class PtyBuffer {
   private handle: import('node:fs/promises').FileHandle | undefined
   private pending = ''
   private flushTimer: NodeJS.Timeout | undefined
-  private writing = false
+  /** Serializes writes: every flush waits for the one before it. */
+  private writer: Promise<void> = Promise.resolve()
   /** Arrival time of each append still inside the window, oldest first. */
   private timeline: PtyTimelineEntry[] = []
   private timelineTimer: NodeJS.Timeout | undefined
@@ -173,7 +174,9 @@ export class PtyBuffer {
     if (this.flushTimer === undefined) {
       this.flushTimer = setTimeout(() => {
         this.flushTimer = undefined
-        void this.flush()
+        // A failed write is reported by flush() itself; it must not become
+        // an unhandled rejection, which the host treats as fatal.
+        void this.flush().catch(() => { /* reported by flush() */ })
       }, this.options.flushIntervalMs)
     }
   }
@@ -216,14 +219,44 @@ export class PtyBuffer {
     return text
   }
 
-  /** Drop the window and truncate the log (the spawn reset, before re-seeding). */
+  /**
+   * Drop the window and truncate the log (the spawn reset, before re-seeding).
+   *
+   * Never rejects. The log is a cache of the window, and a cache that
+   * cannot be reset must not fail its caller: the host treats an
+   * unhandled rejection as fatal, so a failed reset would take the whole
+   * desktop app down over a scrollback file.
+   */
   async truncate(): Promise<void> {
     this.window = ''
     this.timeline = []
     if (this.timelineTimer !== undefined) { clearTimeout(this.timelineTimer); this.timelineTimer = undefined }
-    await this.flush()
-    await this.handle?.truncate(0)
+    await this.flush().catch(() => { /* best effort: the log is a cache */ })
+    await this.zeroLog()
     await writePrivate(timelinePath(this.logPath), '[]').catch(() => { /* best effort */ })
+  }
+
+  /**
+   * Zero the log file.
+   *
+   * The log's own handle is opened in append mode, and on Windows an
+   * append-mode handle carries only FILE_APPEND_DATA: SetEndOfFile needs
+   * FILE_WRITE_DATA, so truncating through that handle fails there with
+   * EPERM. Truncating by path opens its own read/write handle, which
+   * holds that right on every platform, and an append handle keeps
+   * writing at the (new) end of the file either way — so the log lands
+   * empty everywhere, with no platform branch to keep in sync.
+   */
+  private async zeroLog(): Promise<void> {
+    try {
+      await truncateFile(this.logPath, 0)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        // The log was removed under us: there is nothing left to zero.
+        return
+      }
+      console.warn('dshell-pty: log truncate failed:', error)
+    }
   }
 
   /**
@@ -231,34 +264,39 @@ export class PtyBuffer {
    * write drains everything queued during it, a failed write re-queues
    * its batch and resurfaces on the next trigger instead of poisoning
    * later writes.
+   *
+   * Every flush waits for the flush before it, so a caller that flushes
+   * before truncating or closing knows the log already holds the text
+   * that was pending when it called.
    */
   async flush(): Promise<void> {
     if (this.flushTimer !== undefined) {
       clearTimeout(this.flushTimer)
       this.flushTimer = undefined
     }
-    if (this.writing) return
-    this.writing = true
-    try {
-      for (;;) {
-        const batch = this.pending
-        this.pending = ''
-        if (batch.length === 0) return
-        const handle = this.handle
-        if (handle === undefined) {
-          this.pending = batch + this.pending
-          return
-        }
-        try {
-          await handle.write(batch, null, 'utf8')
-        } catch (error) {
-          this.pending = batch + this.pending
-          console.warn('dshell-pty: log write failed:', error)
-          return
-        }
+    const run = this.writer.then(() => this.drain(), () => this.drain())
+    this.writer = run.catch(() => { /* a failed write must not poison the chain */ })
+    await run
+  }
+
+  /** Write every pending batch to the log, oldest first. */
+  private async drain(): Promise<void> {
+    for (;;) {
+      const batch = this.pending
+      this.pending = ''
+      if (batch.length === 0) return
+      const handle = this.handle
+      if (handle === undefined) {
+        this.pending = batch + this.pending
+        return
       }
-    } finally {
-      this.writing = false
+      try {
+        await handle.write(batch, null, 'utf8')
+      } catch (error) {
+        this.pending = batch + this.pending
+        console.warn('dshell-pty: log write failed:', error)
+        return
+      }
     }
   }
 
