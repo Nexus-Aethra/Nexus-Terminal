@@ -31,7 +31,7 @@ import { PROBE, installProbe } from './helper/target.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import { absoluteRemoteRoot, isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
-import { quote } from './shell-quote.js'
+import { quote, quoteDevicePath } from './shell-quote.js'
 import { deviceTransport, type DeviceShell } from './transport/transport.js'
 
 /**
@@ -918,17 +918,36 @@ export interface DeviceShellPlan {
 }
 
 /**
+ * The command that puts the far shell into one directory.
+ *
+ * The root is a DEVICE path, so a `~` in it is the device's own spelling of
+ * home — and the far shell is the only one that knows where home is. So the
+ * tilde stays OUTSIDE the quotes: quoting the whole word asks for a
+ * directory literally named `~`, which no machine has, and the shell lands
+ * in the login directory claiming the configured root is missing (see
+ * `quoteDevicePath`).
+ *
+ * A missing directory must not cost the user their terminal. Chaining with
+ * `&&` would short-circuit `exec bash` and end the session on a typo, with
+ * nothing on screen to explain it; the shell lands in the login directory
+ * instead and says why.
+ *
+ * @param root - the device path to start in; empty means the login dir.
+ * @param missing - the line to print when that directory is not there.
+ * @returns the command to run before the shell takes over.
+ */
+export function deviceShellCd(root: string, missing: string): string {
+  if (root === '') return ''
+  return `cd ${quoteDevicePath(root)} 2>/dev/null || echo ${quote(missing)} >&2; `
+}
+
+/**
  * The plan that opens a device shell in one remote directory.
  *
  * `bash -l` (not `--norc`) on purpose: the user's real login shell is what they
  * expect to land in. The bridge overwrites PS1 and PROMPT_COMMAND right after
  * startup for its own settle marker, so the prompt looks the same on every
  * device regardless of the remote profile.
- *
- * A missing directory must not cost the user their terminal. Chaining with `&&`
- * would short-circuit `exec bash` and end the session on a typo, with nothing on
- * screen to explain it; the shell lands in the login directory instead and says
- * why.
  *
  * @param device - device the session is bound to.
  * @param remoteCwd - directory the shell starts in; empty means the login dir.
@@ -937,9 +956,7 @@ export interface DeviceShellPlan {
  */
 function deviceShellPlan(device: DeviceConnection, remoteCwd: string, t: DshellSshTranslate): DeviceShellPlan {
   const root = remoteCwd.trim()
-  const cd = root === ''
-    ? ''
-    : `cd ${quote(root)} 2>/dev/null || echo ${quote(t('shell.missingRemoteDir', { root }))} >&2; `
+  const cd = deviceShellCd(root, t('shell.missingRemoteDir', { root }))
   return {
     kind: 'device',
     open: async window => await deviceTransport().shell(
