@@ -247,6 +247,14 @@ In `✦ agent` mode Enter simply sends. **Switching to agent mode also attaches 
 commands and their output** (2 KiB each, with the agent able to page further on demand), so you never
 have to explain "that command I just ran failed".
 
+```mermaid
+flowchart TB
+  IN["The input line — one keypress either way"] --> S["$ shell<br/>Enter runs the line in this session's shell<br/>Ctrl+C abandons it"]
+  IN --> A["✦ agent<br/>Enter sends the line to the AI<br/>your last three commands come along"]
+  S -->|"click the glyph, or /agent"| A
+  A -->|"click the glyph, or /shell"| S
+```
+
 ---
 
 ## The AI has a terminal of its own
@@ -264,6 +272,12 @@ If dsh's bash tool spawns a persistent shell in the same session, dshell **claim
 terminal, so the model's `bash` calls, `terminal_send`, and the panel you are watching all converge on
 one PTY — no more "the panel shows one shell while the model ran its command in another".
 
+```mermaid
+flowchart LR
+  YOU["Your main shell<br/>the foreground, full width"] -.->|"the AI may only READ it<br/>(dshell_terminal_read)"| AI["The AI's own PTY<br/>spawned on first need"]
+  AI -->|"its own commands"| OUT["Its own output<br/>in the status card"]
+```
+
 ---
 
 ## Full-screen programs
@@ -279,6 +293,13 @@ is painting the screen (hiding the cursor, opening a synchronized update, enabli
 or the alternate screen that `vim` and friends switch to. Either one is enough. A long command is not
 a full-screen program — `npm install` and `sleep 30` keep their timeline.
 
+```mermaid
+flowchart TB
+  T["The timeline"] -->|"a program takes the surface<br/>(vim, htop, less, a TUI)"| F["The program's own screen<br/>every key goes straight to it"]
+  F -->|"it exits, or 退出全屏"| T
+  F -.->|"its repaints are kept OUT of the timeline"| L["the session's raw log"]
+```
+
 | | |
 |---|---|
 | Getting out | the `退出全屏` button on the small bar over the program's own screen — or just quit the program, and the timeline comes back by itself |
@@ -291,6 +312,17 @@ a full-screen program — `npm install` and `sleep 30` keep their timeline.
 ## Input assists: Tab, ↑, →
 
 All three live in the `$ shell` input line and each can be switched off independently.
+
+```mermaid
+flowchart TB
+  W["the word under the caret"] --> P{"what the line says that word is"}
+  P -->|"the command position<br/>(also after sudo, or after ;)"| C["command names<br/>from the session's own PATH"]
+  P -->|"right after cd"| D["directories"]
+  P -->|"anywhere else"| F["paths"]
+  C --> R["one candidate lands directly<br/>several open a floating list"]
+  D --> R
+  F --> R
+```
 
 | Gesture | Behaviour |
 |---|---|
@@ -480,10 +512,20 @@ flowchart LR
   M -.->|"mirrored view"| F
 ```
 
+The prompt in your terminal is the **device's** prompt — this session is `root@VM-0-6-ubuntu`, and
+that is where its commands run:
+
+![A device session's terminal](docs/images/device-terminal.png)
+
 Such sessions wear an `SSH` badge in the sidebar. Their right sidebar gains **`打开文件传输`**: two
 panes, `本机` and `设备`, and dragging a file or folder from one to the other starts the copy — with
 per-item progress, chunk counts, skip counts, and an `覆盖` / `移除` question when something already
 exists. (32 MB per file, 20 000 entries or 2 GiB per plan.)
+
+The `文件` tab of that sidebar browses the **device's** tree, not this machine's — the breadcrumb is
+the device's own path:
+
+![A device session's file pane, showing the device's /root](docs/images/device-file-pane.png)
 
 ---
 
@@ -545,6 +587,8 @@ have something to say:
 On Windows the integrated terminal cannot run: it needs a POSIX shell and there is none on the host, so the terminal view says so and offers the way out — bind a device and the session's terminal runs on that machine instead. A device-bound session is unaffected, and needs nothing installed on Windows: the connection is dshell's own SSH client, not the operating system's.
 
 Opening the card heads it with the machine this session runs on: CPU and memory, each with a bar carrying the whole green→yellow→orange→red ramp and clipped to the share in use, so the colour at the bar's edge is the colour for that load. Below them are its cores, load average and exact memory. A session bound to a device reports the **device's** figures and names it, and an unreachable one says so rather than falling back to this machine. Nothing is shown until the session has taken its first input — until then the device is still yours to pick.
+
+![The status card of a device session: the device's own CPU and memory](docs/images/device-status-card.png)
 
 How often that is re-read is yours to choose, under **设置 → 插件 → dshell → 资源读数**: 2s / 5s / 10s / 30s / 1m. On this machine a tick is one file read; on a device every tick is a round trip over ssh.
 
