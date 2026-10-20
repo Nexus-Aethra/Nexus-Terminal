@@ -19,7 +19,7 @@ import {
 } from '../src/commands.js'
 
 const MARK = (code: number): string => `\u001b]133;D;${String(code)}\u0007`
-const PROMPT = 'wpp@wpp:~/x$ '
+const PROMPT = 'reader@host:~/x$ '
 const CRLF = '\r\n'
 
 describe('the command splitter', () => {

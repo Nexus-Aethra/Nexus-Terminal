@@ -20,8 +20,8 @@ describe('reading the shell\'s reported directory', () => {
   })
 
   it('reads a local session\'s report, and the last one when a chunk holds several', () => {
-    const local = '\u001b]3008;start=abc;user=wpp;hostname=box;cwd=/home/wpp/nexus/Nexus-Shell\u001b\\'
-    expect(shellReportCwd(local)).toBe('/home/wpp/nexus/Nexus-Shell')
+    const local = '\u001b]3008;start=abc;user=reader;hostname=box;cwd=/home/reader/nexus/Nexus-Shell\u001b\\'
+    expect(shellReportCwd(local)).toBe('/home/reader/nexus/Nexus-Shell')
     // A redraw reprints the report; the newest one is the directory in force.
     expect(shellReportCwd(`${local}${DEVICE_REPORT}`)).toBe('/root')
   })
@@ -33,7 +33,7 @@ describe('reading the shell\'s reported directory', () => {
   it('keeps a directory whose name contains the field separator', () => {
     // The value runs to the terminator, not to the next `;` — a path may
     // legitimately contain one, and truncating it would name another directory.
-    expect(shellReportCwd('\u001b]3008;start=x;cwd=/home/wpp/a;b;c\u001b\\')).toBe('/home/wpp/a;b;c')
+    expect(shellReportCwd('\u001b]3008;start=x;cwd=/home/reader/a;b;c\u001b\\')).toBe('/home/reader/a;b;c')
   })
 
   it('says nothing when the chunk carries no report, or an unfinished one', () => {

@@ -53,11 +53,11 @@ describe('annotateLink', () => {
     const link = await svc.createLink(A, B)
     expect(link.label).toBeUndefined()
 
-    const byA = await svc.annotateLink(link.id, { label: '部署机', description: '把构建产物送到 43.138.57.105' }, A)
+    const byA = await svc.annotateLink(link.id, { label: '部署机', description: '把构建产物送到 43.138.••.••' }, A)
     expect(byA.label).toEqual('部署机')
-    expect(byA.description).toEqual('把构建产物送到 43.138.57.105')
+    expect(byA.description).toEqual('把构建产物送到 43.138.••.••')
     expect(byA.annotatedBy).toEqual(A)
-    expect(svc.linksFor(A).find(entry => entry.id === link.id)?.description).toEqual('把构建产物送到 43.138.57.105')
+    expect(svc.linksFor(A).find(entry => entry.id === link.id)?.description).toEqual('把构建产物送到 43.138.••.••')
 
     const byB = await svc.annotateLink(link.id, { description: '接收构建产物并部署' }, B)
     expect(byB.label).toEqual('部署机')
@@ -96,7 +96,7 @@ describe('annotateLink', () => {
 describe('the prompt section', () => {
   it('states each live pipe\'s purpose, so a peer can judge the request', () => {
     const text = renderBufferPrompt([{
-      linkId: 'link_1', peer: '终端会话 21:29', where: '运行在设备「43.138.57.105」，工作目录 /root',
+      linkId: 'link_1', peer: '终端会话 21:29', where: '运行在设备「43.138.••.••」，工作目录 /root',
       purpose: '把构建产物送到服务器',
     }])
     expect(text).toContain('purpose: 把构建产物送到服务器')

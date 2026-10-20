@@ -4,7 +4,7 @@
  * A bound session's own cwd is the directory it was created in on this
  * machine — the mount's stand-in — while its shell and file tools answer from
  * the device. The panel used to print that stand-in beside the peer's title,
- * which reads as "this pipe ends in /home/wpp" for a peer that lives on a
+ * which reads as "this pipe ends in /home/reader" for a peer that lives on a
  * device; the snapshot therefore carries the device root per endpoint, and
  * these cases pin what goes in it.
  */

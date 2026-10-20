@@ -1,7 +1,35 @@
 import assert from 'node:assert/strict'
-import { chromium } from '/home/wpp/nexus/Nexus-Shell/dsh/node_modules/.pnpm/playwright-core@1.61.1/node_modules/playwright-core/index.mjs'
+import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const browser = await chromium.launch({ executablePath: '/opt/google/chrome/chrome', headless: true, args: ['--no-sandbox'] })
+/**
+ * Where playwright-core lives, and which Chrome to drive.
+ *
+ * Both were absolute paths into one machine's checkout, so the script died with
+ * ERR_MODULE_NOT_FOUND everywhere else. A checkout is not a place a script may
+ * assume: the browser driver is resolved from the dsh checkout next to this
+ * repository, and the browser itself from the environment, falling back to the
+ * usual Linux install.
+ */
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const playwrightCandidates = [
+  process.env.PLAYWRIGHT_CORE,
+  join(repoRoot, 'dsh', 'node_modules', 'playwright-core', 'index.mjs'),
+  join(repoRoot, 'dsh', 'node_modules', '.pnpm', 'playwright-core@1.61.1', 'node_modules', 'playwright-core', 'index.mjs'),
+].filter(path => path !== undefined)
+const playwrightPath = playwrightCandidates.find(path => existsSync(path))
+if (playwrightPath === undefined) {
+  throw new Error(
+    `playwright-core not found. Looked in:\n  ${playwrightCandidates.join('\n  ')}\n` +
+    'Set PLAYWRIGHT_CORE to the module path, or install it in the dsh checkout.',
+  )
+}
+const { chromium } = await import(playwrightPath)
+
+const chromePath = process.env.CHROME_PATH ?? '/opt/google/chrome/chrome'
+const browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] })
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 })
 const errors = []
 page.on('pageerror', error => errors.push(error.message))

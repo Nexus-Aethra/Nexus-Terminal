@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-buffer",
-  "version": "0.1.14-alpha.13",
+  "version": "0.1.14",
   "description": "dshell cross-session buffer: user-established links between sessions, deferred requests one agent hands to another, a durable ticket queue with progress reports, scoped revocable folder grants, and a watchdog that guarantees the requester is always woken with an outcome.",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --emitDeclarationOnly false && tsdown --config-loader tsx",
+    "prepack": "pnpm run build",
     "build:host": "tsc -p tsconfig.json --emitDeclarationOnly false",
     "build:client": "tsdown --config-loader tsx"
   },
