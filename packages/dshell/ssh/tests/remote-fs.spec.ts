@@ -59,13 +59,17 @@ function makeRecordingTransport(): RecordingTransport {
     calls.push({ method: 'resolve', args: [path] })
     return Promise.resolve(path)
   }
-  return { calls, statByPath, versionsByPath, resolve, stat, list, read, stream, write }
+  // The device's own grammar: a path the transport could not open is never
+  // put on the wire, so the fake answers for the paths it does know.
+  const canOpen = (path: string): boolean => path.startsWith('/')
+  return { calls, statByPath, versionsByPath, canOpen, resolve, stat, list, read, stream, write }
 }
 
 /** A transport that reports the same kind of failure the helper would. */
 function makeFailingTransport(code: string, message: string): RemoteFsTransport {
   const reject = (): Promise<never> => Promise.reject(new FsError(message, code as never))
   return {
+    canOpen: () => true,
     resolve: reject,
     stat: reject,
     list: reject,

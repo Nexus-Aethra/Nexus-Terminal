@@ -99,6 +99,14 @@ export class HelperFsTransport implements RemoteFsTransport {
   }
 
   /** @inheritDoc */
+  canOpen(path: string): boolean {
+    // The helper's protocol admits absolute device paths and nothing else:
+    // every request field that names a path is validated as one, and a
+    // refusal comes back as a schema error rather than as an answer.
+    return path.startsWith('/')
+  }
+
+  /** @inheritDoc */
   async resolve(path: string, signal?: AbortSignal): Promise<string> {
     const reply = await this.call<{ path: string }>(HELPER_OPS.fsResolve, { path }, fsResolveReply, signal)
     return reply.path

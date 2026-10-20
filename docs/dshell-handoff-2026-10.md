@@ -18,7 +18,7 @@
 2. **门禁全绿、真机验收通过**：564 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。
-3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.7`（npm `alpha` dist-tag），
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.8`（npm `alpha` dist-tag），
    `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
@@ -29,10 +29,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.7` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 58 files / **567 tests passed / 44 skipped**，约 3 s | `pnpm run test` |
+| 版本 | 11 个包全部 `0.1.14-alpha.8` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 59 files / **574 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.7` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.8` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -204,6 +204,27 @@ spawn 重置时 `handle.truncate(0)` 直接抛 `EPERM`；而 dsh 宿主把**未�
 2. **本地容器副本上的临时补丁会掩盖源码缺陷**。这块 EPERM 当初在容器里是用手写补丁
    （`DSHELL-WIN-EPERM-PATCH`）绕过去的，容器全程绿；而走 npm 包的**桌面版照崩不误**——
    补丁只活在容器那一份 `lib/buffer.js` 里，源码从没改过。**绕过症状的补丁不是修复。**
+
+**第三个坑（2026-10-20 桌面版实测）：设备问不了的路径，线上协议会把它变成"回合死掉"。**
+
+设备的 helper 协议只收**绝对 POSIX 路径**（"always absolute: the caller translates, the
+device does not guess"），而 seam 的 `toRemotePath` 对「不在会话树里的路径」是**原样透传**的
+——那段推理假设模型说的是 POSIX 拼法，可 Windows 宿主上模型的 cwd 是 `C:\Users\hp`，它说
+的也是 Windows 拼法。于是：
+
+- dsh 在**回合开始前、模型还没被调用时**，会从会话目录**往上爬**找项目标记
+  （`agent-instructions` 的 `findProjectRoot`），每层都问 fs seam；
+- 爬到会话树之外时，路径原样上了线 → 设备用 zod 拒了 → 错误是一段**裸的 issue 数组**，
+  不是 `FsError` → 工具层认不出来 → **整个回合以 error 收尾，用户只看到"没回信"**。
+
+修法不是「让路径活下来」，而是**让 seam 自己回答**：`RemoteFsTransport` 现在声明
+`canOpen(path)`（helper 只收绝对 POSIX，shell 通道还收设备自己展开的 `~`），seam 在上线
+之前先问一句——问不了就是「设备上没有这个东西」，`stat` 答**不存在**、写入答**一句人话**，
+**设备一次都不会被问**。
+
+★ 教训：**一个协议校验错误，落在回合之外就会变成"模型没回话"**。回合内的工具错误是能读的
+（模型看得见、能重试），回合外的同类错误只会让界面上一片空白。**所以 seam 的每个出口都要
+自己判断「这个请求能不能被回答」，而不是把不可能的请求发出去等对方报错。**
 
 **验收读数（2026-10-20，Windows 桌面版）**：把桌面 profile 的 `@nexus-aethra/dshell-bundle`
 换成新版（走 GUI 的「插件 → 添加插件」；中途**必须先卸载**——GUI 只认"这个插件装没装"，
