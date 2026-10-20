@@ -18,7 +18,9 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 
 ## Contents
 
+- [How it fits together](#how-it-fits-together)
 - [What it is](#what-it-is)
+- [What's new since 0.1.13](#whats-new-since-013)
 - [Getting started](#getting-started)
 - [A tour of the screen](#a-tour-of-the-screen)
 - [Two modes: `$ shell` and `✦ agent`](#two-modes-shell-and-agent)
@@ -37,6 +39,62 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 
 ---
 
+## How it fits together
+
+dshell is two layers: a **view** you look at, and a **host** that does the work. What you see is
+always a view of something else — which is why one column can hold your shell output and the AI's
+turns at once, and why a session can be pointing at another machine while the window stays here.
+
+```mermaid
+flowchart TB
+  subgraph WIN["The window — a browser, or the desktop app"]
+    UI["One column: your shell output and the AI's turns<br/>the input line, the sidebars"]
+  end
+  subgraph HOST["The host — one Node process"]
+    CORE["dsh's own core<br/>sessions, the agent, the tool registry"]
+    subgraph ROWS["dshell's plugin rows — eleven packages"]
+      VIEW["mode + terminal-bridge<br/>the view, and the PTYs behind it"]
+      PANE["files + ssh<br/>the file pane, and where a session runs"]
+      LINK["buffer<br/>pipes, and the buffer between them"]
+    end
+    ROOT["the data root<br/>where dshell keeps its own files"]
+  end
+  subgraph WORLD["Where the work happens"]
+    HERE["This machine<br/>a real shell, a real tree"]
+    THERE["A device<br/>a real shell, a real tree"]
+  end
+  UI <-->|"one websocket"| CORE
+  CORE ---|"plugged in at dsh's extension points"| ROWS
+  VIEW -->|"your shell, your files"| HERE
+  VIEW -->|"the same session, pointed elsewhere"| THERE
+  PANE --> HERE
+  PANE --> THERE
+  LINK -.->|"files by name, between sessions"| HERE
+  LINK -.-> THERE
+  VIEW --- ROOT
+  PANE --- ROOT
+```
+
+Three bands, top to bottom:
+
+- **The window** is the browser or the desktop app. It draws one column — your shell's output and
+  the AI's turns, in the order they happened — and it sends what you type. It holds no state of its
+  own: everything on screen comes from the host over one websocket.
+- **The host** is dsh's own Node process. dshell adds **plugin rows** to it and changes none of
+  dsh's source, so dsh stays upgradeable with upstream. Those rows are the eleven packages listed
+  at the bottom of this page, and the **data root** (`$DSH_HOME/dshell`) is where they keep their
+  own files.
+- **Where the work happens** is a **world**: this machine, or a device. A session's commands, files
+  and visible terminal all run inside one world — the device row is the *same* session, pointed
+  somewhere else, not a second one.
+
+The seams are where the interesting behaviour lives, and each has its own section below: the two
+PTYs ([the AI has a terminal of its own](#the-ai-has-a-terminal-of-its-own)), the file pane and the
+device routing ([SSH device sessions](#ssh-device-sessions)), and the pipes and the buffer
+([cross-session collaboration](#cross-session-collaboration-pipes-and-the-buffer)).
+
+---
+
 ## What it is
 
 | What you get | Details |
@@ -48,6 +106,23 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 | Cross-session work | Sessions form **pipes** to delegate tasks to each other and share files by name (the **buffer**) — including across SSH devices |
 | Device sessions | Open a session directly on a remote machine: commands, files and the visible terminal all run there |
 | Context without retelling | Switching to `✦ agent` automatically carries your last few commands and their output to the AI |
+
+---
+
+## What's new since 0.1.13
+
+`0.1.14` is the line that makes a device session behave like a session instead of a proxy. It is on
+npm as `0.1.14-alpha.13` (the `alpha` tag) and needs dsh `0.2.1-rc.2`.
+
+| | What changed | What you notice |
+|---|---|---|
+| **The agent speaks the device's dialect** | A session bound to a device now gives its agent a shell tool **of its own** — the device's name, the device's dialect, the device's paths — and the host's shell tool is hidden from that agent | The model writes `uname -a` and gets the device's Linux answer, instead of writing PowerShell and getting `command not found` |
+| **The file pane shows the device's tree** | The pane measured a path against the host's own working directory and pasted the result under the device's root | A device session's pane opens on the device's `/root`, and the crumbs say `/root` — not a host directory that does not exist on the device |
+| **The desktop app stops dying on Windows** | A file opened for appending cannot be truncated, so resetting the PTY log threw `EPERM`, and the host treats an unhandled rejection as fatal | The app no longer exits with `dsh: fatal load failure` when a session reconnects |
+| **Device passwords stay in memory** | Every secret used to be written to a file under the data root for the transport to read back | The device's plaintext password is no longer on disk |
+| **One connection per device, not per read** | The connection pool dialled per operation, and a release could cut a connection another operation was still using | A turn that reads four files opens one SSH connection, and a read no longer ends the turn as "interrupted" |
+| **The timeline tells the truth** | Tool calls interleave in the session's own order, and the running turn wears dsh's whale tail | Your commands and the AI's turns read in the order they actually happened |
+| **dsh `0.2.1-rc.2` is supported** | Every dsh peer range dshell declares now includes it | The plugin installs on a `0.2.1-rc.2` dsh |
 
 ---
 
