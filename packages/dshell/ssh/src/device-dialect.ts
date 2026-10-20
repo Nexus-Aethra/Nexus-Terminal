@@ -223,15 +223,24 @@ function baseDefinition(registry: ToolRegistryShape, agent: AgentShape): ToolDef
 /**
  * The device's shell tool, derived from the host's.
  *
+ * The description is a GETTER, so it is written when the model reads the
+ * schema rather than when the tool was registered. That matters: the device's
+ * root is only resolved once the helper has shaken hands, so a description
+ * captured at registration time says the device's home is still the `~` the
+ * reader typed.
+ *
  * @param base - the host's shell tool definition.
- * @param facts - the device the commands run on.
+ * @param facts - the device the commands run on, read at schema time.
  * @returns the definition to register in the agent's scope.
  */
-function deviceShellDefinition(base: ToolDefinitionShape, facts: DeviceFacts): ToolDefinitionShape {
+function deviceShellDefinition(base: ToolDefinitionShape, facts: () => DeviceFacts | undefined): ToolDefinitionShape {
   return {
     ...base,
     name: DEVICE_SHELL_TOOL,
-    description: deviceShellDescription(facts),
+    get description() {
+      const live = facts()
+      return live === undefined ? base.description : deviceShellDescription(live)
+    },
     parameters: deviceParameters(base.parameters),
   }
 }
@@ -361,7 +370,7 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
     const scoped = agent.ctx.tools
     const base = baseDefinition(scoped, agent)
     if (base === undefined) return { facts, dispose: () => {} }
-    const definition = deviceShellDefinition(base, facts)
+    const definition = deviceShellDefinition(base, () => deviceFacts(router, String(agent.id)))
     const unregister = scoped.register(definition)
     // The host's own shell tool, when it has a different name, must not stay
     // visible: two shells in one scope is a choice the model cannot make

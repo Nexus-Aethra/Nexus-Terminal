@@ -18,7 +18,7 @@
 2. **门禁全绿、真机验收通过**：584 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。
-3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.11`（npm `alpha` dist-tag），
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.12`（npm `alpha` dist-tag），
    `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
@@ -29,10 +29,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.11` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 60 files / **585 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
+| 版本 | 11 个包全部 `0.1.14-alpha.12` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 60 files / **586 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.11` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.12` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |

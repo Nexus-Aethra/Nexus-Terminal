@@ -336,6 +336,17 @@ describe('a session bound to a device', () => {
     expect(description).not.toContain('pwsh -Command')
   })
 
+  it('writes the description when the model reads it, not when it was registered', () => {
+    const { ctx, router, agent } = world()
+    installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
+
+    // The device's root is only resolved once the helper has shaken hands, so
+    // a description frozen at registration time would still name the `~` the
+    // reader typed.
+    router.bind('session-on-device', 'tencent', '/srv/app')
+    expect(agent.ctx.tools.get('bash', agent)?.description).toContain('/srv/app')
+  })
+
   it('rewrites the command and workdir parameters for the device', () => {
     const { ctx, router, agent } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
