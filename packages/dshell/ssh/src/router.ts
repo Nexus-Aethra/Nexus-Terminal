@@ -260,6 +260,18 @@ export class SshRouter {
   onDeviceChanged: ((deviceId: string, event: 'saved' | 'removed' | 'bound') => void) | undefined
 
   /**
+   * Told when one SESSION's assignment changed — bound to a device, unbound,
+   * or pointed at a device whose own record changed.
+   *
+   * A separate hook from {@link onDeviceChanged} because that one is about a
+   * DEVICE (its helper target, its live connection) and names no session,
+   * while this one is about a SESSION and names the device it now runs on.
+   * What the model is told about a session's world follows the assignment, so
+   * the two have to be able to move together.
+   */
+  onAssignmentChanged: ((sessionId: string, deviceId: string | null) => void) | undefined
+
+  /**
    * The device's verified helper connection, when one is up right now.
    *
    * Assigned by the subprocess seam along with the hook above, because that is
@@ -405,6 +417,7 @@ export class SshRouter {
     }
     await this.bindings.set(sessionId, deviceId, remoteRoot, assigned)
     if (deviceId !== null) this.onDeviceChanged?.(deviceId, 'bound')
+    this.onAssignmentChanged?.(sessionId, deviceId)
   }
 
   /**
@@ -415,6 +428,7 @@ export class SshRouter {
     const view = await this.devices.save(input, this.t)
     await this.refreshDevices()
     this.onDeviceChanged?.(view.id, 'saved')
+    this.notifyDeviceSessions(view.id)
     return view
   }
 
@@ -426,6 +440,24 @@ export class SshRouter {
     await this.devices.remove(deviceId)
     await this.refreshDevices()
     this.onDeviceChanged?.(deviceId, 'removed')
+    this.notifyDeviceSessions(deviceId)
+  }
+
+  /**
+   * Tell the assignment hook about every session bound to one device.
+   *
+   * A device that was renamed, or removed, changes what the model is told
+   * about the sessions that run on it: the device's name is part of that
+   * contract, so the sessions move with the device rather than keeping a
+   * description of a device that no longer answers.
+   *
+   * @param deviceId - the device whose sessions moved.
+   */
+  private notifyDeviceSessions(deviceId: string): void {
+    if (this.onAssignmentChanged === undefined) return
+    for (const assignment of this.bindings.all()) {
+      if (assignment.deviceId === deviceId) this.onAssignmentChanged(assignment.sessionId, deviceId)
+    }
   }
 
   /**

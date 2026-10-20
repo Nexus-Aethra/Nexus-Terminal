@@ -32,12 +32,14 @@ import { sshDeviceRoot } from './paths.js'
 import { createSshRoute } from './route.js'
 import { installShellRouting, SSH_ROUTING_SERVICE, SshRouter } from './router.js'
 import { installSpawnRouting } from './spawn-routing.js'
+import { installDeviceDialect } from './device-dialect.js'
 
 export const name = '@nexus-aethra/dshell-ssh'
 
 export { DSHELL_SSH_PATH, type DeviceView, type SshResponse } from './protocol.js'
 export { harnessHome, mountBase, sshDeviceRoot } from './paths.js'
 export { SSH_ROUTING_SERVICE } from './router.js'
+export { DEVICE_SHELL_TOOL } from './device-dialect.js'
 export { isUnder, mappingFor, mountFor, toMountPath, toRemotePath, type MountMapping } from './mount.js'
 export type { SshSettings } from './ssh-settings.js'
 export { Config } from './ssh-settings.js'
@@ -120,6 +122,16 @@ function installRouting(ctx: Context, router: SshRouter): void {
     connectionCtx.effect(
       () => connectionCtx.connection.fetch.register(createSshRoute({ router, ctx: connectionCtx, t: copy.bind(hostCopy) })),
       'dshell-ssh: device route',
+    )
+  })
+  // The contract a bound session's agent sees: the DEVICE's shell, not the
+  // host's. It needs the tool registry (to shadow the host's shell tool in the
+  // agent's own scope) and the agent registry (to know which agents exist and
+  // which session each one belongs to).
+  ctx.inject(['tools', 'agents'], (dialectCtx) => {
+    dialectCtx.effect(
+      () => installDeviceDialect(dialectCtx, router),
+      'dshell-ssh: device dialect',
     )
   })
 }
