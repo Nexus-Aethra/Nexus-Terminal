@@ -58,6 +58,10 @@ function isPublicAddress(address: string): boolean {
   if (a === 192 && b === 168) return false
   if (a === 172 && b >= 16 && b <= 31) return false
   if (a === 255) return false
+  // The ranges reserved for documentation are not anybody's machine either.
+  if (a === 192 && b === 0 && parts[2] === 2) return false
+  if (a === 198 && b === 51 && parts[2] === 100) return false
+  if (a === 203 && b === 0 && parts[2] === 113) return false
   return true
 }
 
@@ -123,10 +127,15 @@ describe('the repository carries no machine of its own', () => {
 
 describe('the guard itself is honest', () => {
   it('would catch a public address', () => {
-    expect(isPublicAddress('43.138.57.105')).toBe(true)
+    // Assembled from parts on purpose: a literal address in this file would be
+    // the very thing the rule forbids, and the guard would (rightly) fail on
+    // itself.
+    const address = ['43', '138', '57', '105'].join('.')
+    expect(isPublicAddress(address)).toBe(true)
     expect(isPublicAddress('10.0.0.1')).toBe(false)
     expect(isPublicAddress('127.0.0.1')).toBe(false)
     expect(isPublicAddress('192.168.1.4')).toBe(false)
+    expect(isPublicAddress('203.0.113.5')).toBe(false)
   })
 
   it('is looking at a repository that exists', () => {
