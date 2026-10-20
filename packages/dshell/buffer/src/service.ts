@@ -274,7 +274,7 @@ export class BufferService {
    * A bound session's header cwd is the directory it was created in on this
    * machine — the mount's stand-in — while its shell and file tools answer
    * from the device. Labeling the peer with the stand-in reads as "this pipe
-   * ends in /home/wpp" for a peer that lives elsewhere, so the panel takes
+   * ends in /home/reader" for a peer that lives elsewhere, so the panel takes
    * the device root the assignment names (the same knowledge `promptPipes`
    * already puts in the agent-facing lines) and falls back to the cwd only
    * where no binding exists.

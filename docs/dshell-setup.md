@@ -63,9 +63,13 @@ nvm install 24
 
 # Pin pnpm by direct wrapper (bypass corepack auto-dispatch):
 corepack prepare pnpm@9.15.0 --activate
+# The wrapper resolves corepack's own cache under $HOME, so it works on any
+# machine — the path is derived, never typed in.
 cat > "$HOME/.local/bin/pnpm" <<'WRAP'
 #!/usr/bin/env node
-require('/home/wpp/.cache/node/corepack/pnpm/9.15.0/bin/pnpm.cjs')
+const { homedir } = require('node:os')
+const { join } = require('node:path')
+require(join(homedir(), '.cache', 'node', 'corepack', 'pnpm', '9.15.0', 'bin', 'pnpm.cjs'))
 WRAP
 chmod +x "$HOME/.local/bin/pnpm"
 

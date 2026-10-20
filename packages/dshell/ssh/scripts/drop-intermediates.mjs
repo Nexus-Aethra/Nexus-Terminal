@@ -20,4 +20,8 @@ import { rmSync } from 'node:fs'
 
 for (const path of ['lib/helper-entry.js', 'lib/helper/run.js']) {
   rmSync(path, { force: true })
+  // The source map goes with the file it describes: a map without its script
+  // is dead weight in the tarball, and `sourceMappingURL` in a shipped file
+  // would point at nothing.
+  rmSync(`${path}.map`, { force: true })
 }

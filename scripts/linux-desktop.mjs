@@ -42,7 +42,7 @@ export const LINUX_ICON_SIZES = [16, 32, 48, 64, 128, 256, 512]
 export const LINUX_TARGETS = ['AppImage', 'deb']
 
 /** Required by fpm; the checkout's own identity, since releases stop at this disk. */
-export const DEB_MAINTAINER = 'dshell maintainers <wpp@localhost>'
+export const DEB_MAINTAINER = 'dshell maintainers <maintainers@nexus-aethra.dev>'
 
 /** Required by fpm when the package metadata carries none of its own. */
 export const HOMEPAGE = 'https://github.com/Nexus-Aethra/Nexus-Terminal'

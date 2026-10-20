@@ -30,7 +30,7 @@ describe('readingKey', () => {
   })
 
   it('separates a relative path from an absolute one under a base', () => {
-    expect(readingKey('local', 'src', '/home/wpp')).not.toBe(readingKey('local', 'src', '/tmp'))
+    expect(readingKey('local', 'src', '/home/reader')).not.toBe(readingKey('local', 'src', '/tmp'))
   })
 })
 

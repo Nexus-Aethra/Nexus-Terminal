@@ -308,7 +308,7 @@ function world(): {
     order: 100,
     required: true,
     interpolate: false,
-    text: 'Current working directory: "C:\\Users\\hp".',
+    text: 'Current working directory: "C:\\Users\\reader".',
   })
   const ctx = new FakeContext(state, [agent, local])
   const router = new FakeRouter()

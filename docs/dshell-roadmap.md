@@ -2352,7 +2352,7 @@ engine uses for its roots. A local session's path is unchanged; a device-bound
 one gets the device's path, so the shell and `ctx.fs` name one directory.
 
 Verified end to end with the two registered devices (the local sshd rig as
-`本地测试机` and `43.138.57.105`), one session on each, a pipe between them, and a
+`本地测试机` and `43.138.••.••`), one session on each, a pipe between them, and a
 40 MiB file (>32 MiB, so the relay is the path taken):
 
 - `download` rig → server: three chunks, the server's copy reported 41943040

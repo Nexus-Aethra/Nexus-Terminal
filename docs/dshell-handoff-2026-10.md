@@ -19,8 +19,8 @@
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。Windows 桌面版上另外验过：设备会话的 agent 拿到的是**设备的 bash**
    （不是宿主的 pwsh），设备会话的**文件面板**列的是**设备的 `/root`**（不是宿主目录树）。
-3. **发版已做，tag 还没做**：0.1.14 线发到 `0.1.14-alpha.13`（npm `alpha` dist-tag），
-   `latest` 仍是 `0.1.13`。**0.1.14 线不打 tag、不做 release**（wpplight 明确要求过）。
+3. **0.1.14 正式版已发，tag 还没打**：11 个包发到 `0.1.14`（npm `latest` dist-tag），
+   `alpha` 留在 `0.1.14-alpha.13`。**tag 等 wpplight 点头**——0.1.14 线此前一直被标为"不打 tag"。
 
 ## 1. 现场快照
 
@@ -30,10 +30,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.13` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 版本 | 11 个包全部 `0.1.14` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
 | 测试 | 60 files / **602 tests passed / 44 skipped**，约 3 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.13` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.14`，`alpha` = `0.1.14-alpha.13` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -137,11 +137,15 @@ dshbox container start <id>
 ### ③ 一个已经犯过并且修掉的错，值得记住
 
 这次重写 `passphrase.spec.ts` 时，把测试服务器的**真实 root 口令**当 fixture 写进了断言
-（`expect(config.password).toBe('20250406Ilove!')`）。HEAD 里从来没有这个值——原来的测试
+（`expect(config.password).toBe('…')`——**字面量已打码，不在本文复述**）。HEAD 里从来没有这个值——原来的测试
 用的是 `/k/web.password` 这种假路径。提交前已全部换成 `'not a real password'`，7 个测试重跑通过。
 
 **口令本身已经进过本次会话记录，wpplight 需要改密。** 教训：往测试里写凭据 fixture 时，
 值必须是显然为假的，哪怕"只是本地跑跑"。
+
+★ **2026-10-20 补记**：本节第一次写下这段时，把**真实口令的字面量**连同上面的说明一起留在了
+文档里——而这个仓是要公开的。**写下"我们曾经泄漏过"的时候，别把泄漏的东西再写一遍**：
+打码、只留形状（这里只说"一个真实口令"），并且把"改密"这条继续挂着。
 
 ### ④ 真实 `/compact` 回路仍未验
 
@@ -330,6 +334,39 @@ desktop/~/` 恰好就是宿主自己的目录树。**拼路径之前先问"这�
 见 `helper`——那正是设备上 helper 的安装位置），**没有任何宿主目录**。改之前的读数是
 `/root/.dsh/profiles/desktop/~/`。新增测试 `ssh/tests/device-namespace.spec.ts`（16 例），四处
 "牙齿检查"逐条确认改回旧写法就会变红。
+
+**第六个坑（2026-10-20 发布前审计）：`grep` 干净了 ≠ 干净了。**
+
+发 0.1.14 正式版之前做了一次发布前审计（四个 agent 并行扫：凭据、硬路径、发布产物、仓库事实）。
+结论是**不能发**，而挡住它的东西用 grep 一个都抓不到：
+
+- **两张已跟踪的 PNG 里烧着未打码的设备公网 IP**——`docs/images/main-view.png`（README 的首图，
+  仓库首页直接可见）与 `docs/images/pipe-detail.png`。二进制里的字，grep 是瞎的。
+- **真实设备 root 口令的字面量**，写在 `docs/dshell-handoff-2026-10.md` 里——**这行本身就是
+  "我们曾经泄漏过"的记录**。写下泄漏这件事的时候，别把泄漏的东西再写一遍。
+- 而这个仓是 **PUBLIC**（`gh repo view` ⇒ `visibility: PUBLIC`），`git log -S` 证明那个口令在
+  commit `49982c7` 里、已推到 `origin/main` ⇒ **等于已经公开，改代码不能撤回**。
+  真正能收口的是**轮换设备凭据**，净化历史只是补充。
+
+★ 教训：**审计要分面，且"没搜到"不等于"没有"**。同一个仓，四次扫描问的是四件不同的事
+（凭据 / 硬路径 / 产物里到底有什么 / 仓库事实），任何一次单看 grep 的结果都会放行那两张 PNG。
+**二进制资产要逐张看，发布产物要 `npm pack --dry-run` 逐包看，仓库可见性要联网问。**
+
+顺手修掉的、属于"发了也不对"的四个：
+
+1. `commands` 与 `bundle` 的 `exports["."].types` 指向**不存在的** `./lib/index.d.ts`
+   （实际在 `lib/types/`）⇒ node16/nodenext 解析下消费方**拿不到类型**。
+2. **11 个包都没有 `prepack`** ⇒ `lib/` 不在版本控制里，`pnpm publish` 会**直接打包磁盘上那一份**
+   （可能半旧）而没有任何钩子失败。现在每个包发布前自己重建一次。
+3. `scripts/dshell-ui-order-acceptance.mjs` 写死了作者 Linux 机的 playwright 与 Chrome 绝对路径
+   （换机必崩）；`scripts/linux-desktop.mjs` 的 `.deb` Maintainer 字段写着 `wpp@localhost`。
+4. ssh 的 `drop-intermediates.mjs` 只删 `.js` 不删 `.map` ⇒ tarball 里躺着两个没有对应脚本的孤儿 map。
+
+**没有动的**：`pnpm-lock.yaml` 里那 30 条 `link:/home/wpp/nexus/Nexus-Shell/dsh/...`。
+它是 pnpm 自己写的元数据（`packages:` 段记录 registry 包的 peer 被解析到了哪儿），
+**建软链走的是 `overrides:` / `importers:` 里的相对路径**——本机实测：锁文件写着 `/home/wpp/...`，
+而 `node_modules` 里的软链指向的是本机路径 ⇒ 那 30 条**不影响别人 `pnpm install`**。
+手改它反而可能让 `--frozen-lockfile` 对不上。**留着，但在这一节记账。**
 
 ## 6. 交接纪律（先读这条再看代码）
 
