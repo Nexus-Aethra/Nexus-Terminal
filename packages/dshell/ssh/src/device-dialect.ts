@@ -62,6 +62,20 @@ export const DEVICE_SHELL_TOOL = 'bash'
 const HOST_SHELL_TOOLS = ['pwsh', 'bash'] as const
 
 /**
+ * Where the device's own working directory sits in the runtime context.
+ *
+ * The same slot the stock working-directory contribution occupies, so the
+ * shadowed entry keeps its place in the snapshot.
+ */
+const WORKING_DIRECTORY_ORDER = 100
+
+/**
+ * Where the device section sits: right after the working directory, before
+ * the file policy.
+ */
+const DEVICE_CONTEXT_ORDER = 105
+
+/**
  * One tool definition, as much of it as this module reads or rewrites.
  *
  * Structural on purpose: the ssh package does not depend on the tools
@@ -79,10 +93,9 @@ interface ToolDefinitionShape {
 /**
  * The registry surface this module uses.
  *
- * `get` without a scope reads the GLOBAL view, which is where the host's own
- * shell tool lives; the scoped registry an agent carries is reached through
- * that agent's own context, so a registration made through it lands in that
- * agent's layer.
+ * `get` with a scope reads that scope's view — the global view when the scope
+ * is omitted — and a registration made through an agent's own registry lands
+ * in that agent's layer.
  */
 interface ToolRegistryShape {
   get(name: string, scope?: unknown): ToolDefinitionShape | undefined
@@ -90,10 +103,27 @@ interface ToolRegistryShape {
   restrict(filter: { deny?: readonly string[] }): () => void
 }
 
+/** One runtime-context contribution, as the prompt registry takes it. */
+interface ContextContribution {
+  readonly name: string
+  readonly order: number
+  readonly text: string | ((context: unknown) => string)
+  readonly interpolate?: boolean
+  readonly required?: boolean
+}
+
+/** The prompt registry surface this module uses. */
+interface SystemPromptShape {
+  context(contribution: ContextContribution): () => void
+}
+
 /** The agent surface this module uses: its id and its own scoped context. */
 interface AgentShape {
   readonly id: unknown
-  readonly ctx: { readonly tools: ToolRegistryShape }
+  readonly ctx: {
+    readonly tools: ToolRegistryShape
+    readonly systemPrompt: SystemPromptShape
+  }
 }
 
 /**
@@ -107,13 +137,6 @@ interface DialectContextShape {
   readonly tools: ToolRegistryShape
   readonly agents: { list(): AgentShape[] }
   on(event: string, listener: Listener, options?: { prepend?: boolean }): () => void
-}
-
-/** One assembled runtime-context contribution. */
-interface ContextEntry {
-  readonly name: string
-  readonly text: string
-  readonly interpolate?: boolean
 }
 
 /** What the model is told about the device a session runs on. */
@@ -269,7 +292,7 @@ function deviceParameters(parameters: unknown): unknown {
  *
  * The stock context names THIS machine's directory, which is a local stand-in
  * for the device's tree and means nothing to a command that runs on the
- * device. The context is rewritten rather than added to: two "current working
+ * device. The context is REPLACED rather than added to: two "current working
  * directory" lines, one of them wrong, are worse than one right one.
  *
  * @param facts - the device the session runs on.
@@ -294,41 +317,22 @@ function deviceContextText(facts: DeviceFacts): string {
 }
 
 /**
- * Rewrite the assembled runtime context for a device session.
- *
- * @param assembly - the assembly the waterfall produced.
- * @param facts - the device the session runs on.
- */
-function applyDeviceContext(assembly: { contexts?: ContextEntry[] }, facts: DeviceFacts): void {
-  const contexts = assembly.contexts
-  if (contexts === undefined) return
-  const index = contexts.findIndex(entry => entry.name === 'working-directory:current')
-  const working: ContextEntry = {
-    name: 'working-directory:current',
-    text: workingDirectoryText(facts),
-    interpolate: false,
-  }
-  if (index >= 0) contexts[index] = working
-  else contexts.push(working)
-  const at = index >= 0 ? index + 1 : contexts.length
-  contexts.splice(at, 0, { name: 'dshell:device', text: deviceContextText(facts), interpolate: false })
-}
-
-/**
  * Install the device dialect.
  *
- * Three registrations, all of them per agent and all of them reversible:
+ * Four registrations, all of them per agent and all of them reversible:
  *
  *  - the device's shell tool, in the agent's own scope;
  *  - the host's shell tool, hidden from that scope;
- *  - the runtime-context rewrite, which is global but only fires for a
- *    session that runs on a device.
+ *  - the device's working directory, shadowing the stock contribution;
+ *  - the device section, next to it.
  *
- * The context rewrite is installed on the FIRST agent, not at composition:
- * the stock working-directory context rewrites its own text inside the same
- * waterfall, and only a listener registered after it can have the last word.
- * A plugin is loaded before any agent exists, so "the first agent" is the
- * earliest moment at which that is guaranteed.
+ * The two context registrations are scoped CONTRIBUTIONS rather than a
+ * waterfall listener, and that is the point: the snapshot the model reads is
+ * rendered from the registry, and a scoped contribution shadows the global one
+ * of the same name. The stock working-directory contribution rewrites its own
+ * text inside the assembly waterfall, and it is re-registered for every agent
+ * — so a listener there is a race the listener cannot win, whatever its
+ * position.
  *
  * @param ctx - the host context.
  * @param router - the device assignments.
@@ -352,7 +356,7 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
     applied.set(sessionId, installFor(agent, facts))
   }
 
-  /** Register the device's shell tool in one agent's scope. */
+  /** Register the device's shell tool and context in one agent's scope. */
   const installFor = (agent: AgentShape, facts: DeviceFacts): Applied => {
     const scoped = agent.ctx.tools
     const base = baseDefinition(scoped, agent)
@@ -364,31 +368,53 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
     // reliably, and it keeps choosing the one it knows.
     const denied = HOST_SHELL_TOOLS.filter(name => name !== definition.name && scoped.get(name, agent) !== undefined)
     const unrestrict = denied.length > 0 ? scoped.restrict({ deny: denied }) : undefined
+    // The runtime context, in the agent's own scope: a scoped contribution
+    // SHADOWS the global one of the same name, and the snapshot the model
+    // reads is rendered from the registry, so the device's directory is what
+    // it says.
+    //
+    // NOT done through the assembly waterfall: the stock working-directory
+    // contribution rewrites its own text there, and it is re-registered for
+    // every agent, so no listener order can have the last word there.
+    const prompt = agent.ctx.systemPrompt
+    const unregisterWorking = prompt.context({
+      name: 'working-directory:current',
+      order: WORKING_DIRECTORY_ORDER,
+      required: true,
+      interpolate: false,
+      text: (context: unknown) => {
+        const live = factsFor(context)
+        return live === undefined ? '' : workingDirectoryText(live)
+      },
+    })
+    const unregisterDevice = prompt.context({
+      name: 'dshell:device',
+      order: DEVICE_CONTEXT_ORDER,
+      interpolate: false,
+      text: (context: unknown) => {
+        const live = factsFor(context)
+        return live === undefined ? '' : deviceContextText(live)
+      },
+    })
     return {
       facts,
       dispose: () => {
         unrestrict?.()
         unregister()
+        unregisterWorking()
+        unregisterDevice()
       },
     }
   }
 
-  let contextHook: (() => void) | undefined
-  const ensureContextHook = (): void => {
-    if (contextHook !== undefined) return
-    contextHook = host.on('system-prompt/assemble', async (_assembly: unknown, context: unknown, next: () => Promise<unknown>) => {
-      const agent = (context as { agent?: AgentShape } | undefined)?.agent
-      if (agent === undefined) return next()
-      const facts = deviceFacts(router, String(agent.id))
-      if (facts === undefined) return next()
-      const result = await next()
-      applyDeviceContext(result as { contexts?: ContextEntry[] }, facts)
-      return result
-    }, { prepend: true })
+  /** The device facts for the agent an assembly is for, read live. */
+  const factsFor = (context: unknown): DeviceFacts | undefined => {
+    const agent = (context as { agent?: AgentShape } | undefined)?.agent
+    if (agent === undefined) return undefined
+    return deviceFacts(router, String(agent.id))
   }
 
   host.on('agent/created', (payload: { agent: AgentShape }) => {
-    ensureContextHook()
     const agent = payload.agent
     apply(String(agent.id), agent)
   })
@@ -413,7 +439,6 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
    * installed, so no agent can slip through the gap between the two.
    */
   const sweep = (): void => {
-    ensureContextHook()
     for (const agent of host.agents.list()) {
       apply(String(agent.id), agent)
     }
@@ -427,8 +452,6 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
   return () => {
     for (const entry of applied.values()) entry.dispose()
     applied.clear()
-    contextHook?.()
-    contextHook = undefined
     router.onAssignmentChanged = undefined
   }
 }

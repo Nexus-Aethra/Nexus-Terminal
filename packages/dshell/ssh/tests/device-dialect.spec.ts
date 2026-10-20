@@ -24,6 +24,13 @@
  * and a lookup that reads the deployment layer finds nothing there —
  * silently, because "no such tool" and "this deployment has no shell tool"
  * look the same to the code that asks.
+ *
+ * The runtime context is modelled the way the prompt registry renders it: a
+ * scoped contribution SHADOWS the global one of the same name, and the
+ * snapshot is rendered from the registry. That is the only place a device
+ * session's working directory can be stated, because the stock contribution
+ * rewrites its own text inside the assembly waterfall and is re-registered
+ * for every agent.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -39,6 +46,15 @@ interface ToolDefinitionShape {
   readonly [key: string]: unknown
 }
 
+/** One runtime-context contribution, as the prompt registry takes it. */
+interface ContextContribution {
+  readonly name: string
+  readonly order: number
+  readonly text: string | ((context: unknown) => string)
+  readonly interpolate?: boolean
+  readonly required?: boolean
+}
+
 /** The registry state every scope view shares. */
 class RegistryState {
   /** The deployment-level layer; a preset deployment leaves it empty. */
@@ -49,6 +65,10 @@ class RegistryState {
   readonly restrictions = new Map<object, Set<string>>()
   /** Each scope's parent, the way a preset scope parents an agent's scope. */
   readonly parents = new Map<object, object>()
+  /** The deployment-level runtime-context contributions. */
+  readonly contexts = new Map<string, ContextContribution>()
+  /** The scoped runtime-context contributions, keyed by scope. */
+  readonly scopedContexts = new Map<object, Map<string, ContextContribution>>()
 }
 
 /**
@@ -138,12 +158,28 @@ class FakeRegistry {
   }
 }
 
-/** One agent, with the scoped registry its own context carries. */
+/** The prompt registry an agent's scope carries. */
+class FakeSystemPrompt {
+  constructor(private readonly state: RegistryState, private readonly scope: object, private readonly agent: { id: string }) {}
+
+  context(contribution: ContextContribution): () => void {
+    const layer = this.state.scopedContexts.get(this.scope) ?? new Map<string, ContextContribution>()
+    if (layer.has(contribution.name)) throw new Error(`context "${contribution.name}" is already registered`)
+    layer.set(contribution.name, contribution)
+    this.state.scopedContexts.set(this.scope, layer)
+    return () => { layer.delete(contribution.name) }
+  }
+}
+
+/** One agent, with the scoped registries its own context carries. */
 class FakeAgent {
-  readonly ctx: { tools: FakeRegistry }
+  readonly ctx: { tools: FakeRegistry; systemPrompt: FakeSystemPrompt }
 
   constructor(readonly id: string, state: RegistryState) {
-    this.ctx = { tools: new FakeRegistry(state, this) }
+    this.ctx = {
+      tools: new FakeRegistry(state, this),
+      systemPrompt: new FakeSystemPrompt(state, this, this),
+    }
   }
 }
 
@@ -159,6 +195,26 @@ class FakeContext {
   /** The model's view of one scope: the tool names it can see. */
   visible(scope: object): string[] {
     return [...new FakeRegistry(this.state, scope).view().keys()].sort()
+  }
+
+  /**
+   * The runtime context one scope reads, rendered the way the prompt registry
+   * renders it: the scoped contributions shadow the global ones of the same
+   * name, and the text providers are resolved against the assembly.
+   */
+  context(scope: object): { name: string; text: string }[] {
+    const providers = new Map(this.state.contexts)
+    for (const [name, contribution] of this.state.scopedContexts.get(scope) ?? []) {
+      providers.set(name, contribution)
+    }
+    const agent = this.live.find(candidate => candidate === scope)
+    return [...providers.values()]
+      .sort((a, b) => a.order - b.order)
+      .map(contribution => ({
+        name: contribution.name,
+        text: typeof contribution.text === 'function' ? contribution.text({ agent }) : contribution.text,
+      }))
+      .filter(entry => entry.text.length > 0)
   }
 
   on(event: string, listener: (...args: never[]) => unknown): () => void {
@@ -246,6 +302,14 @@ function world(): {
   state.parents.set(agent, preset)
   state.parents.set(local, preset)
   state.layers.set(preset, new Map([['pwsh', hostPwsh()]]))
+  // The stock runtime context, at the deployment level.
+  state.contexts.set('working-directory:current', {
+    name: 'working-directory:current',
+    order: 100,
+    required: true,
+    interpolate: false,
+    text: 'Current working directory: "C:\\Users\\hp".',
+  })
   const ctx = new FakeContext(state, [agent, local])
   const router = new FakeRouter()
   router.bind('session-on-device', 'tencent', '/root')
@@ -314,41 +378,32 @@ describe('a session bound to a device', () => {
 })
 
 describe('the runtime context of a device session', () => {
-  it('names the device directory instead of this machine one', async () => {
+  it('names the device directory instead of this machine one', () => {
     const { ctx, router, agent } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
 
-    const assembly = {
-      contexts: [
-        { name: 'working-directory:current', text: 'Current working directory: "C:\\Users\\hp".', interpolate: false },
-      ],
-    }
-    const handler = ctx.handlers.get('system-prompt/assemble')?.[0]
-    expect(handler).toBeDefined()
-    await handler?.(assembly, { agent }, async () => assembly)
-
-    const working = assembly.contexts.find(entry => entry.name === 'working-directory:current')
+    const working = ctx.context(agent).find(entry => entry.name === 'working-directory:current')
     expect(working?.text).toContain('/root')
     expect(working?.text).toContain('tencent')
     expect(working?.text).not.toContain('C:\\\\Users')
-    const device = assembly.contexts.find(entry => entry.name === 'dshell:device')
-    expect(device?.text).toContain('bash')
   })
 
-  it('leaves a local session context alone', async () => {
+  it('says which machine the session runs on', () => {
+    const { ctx, router, agent } = world()
+    installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
+
+    const device = ctx.context(agent).find(entry => entry.name === 'dshell:device')
+    expect(device?.text).toContain('bash')
+    expect(device?.text).toContain('tencent')
+  })
+
+  it('leaves a local session context alone', () => {
     const { ctx, router, local } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
 
-    const assembly = {
-      contexts: [
-        { name: 'working-directory:current', text: 'Current working directory: "C:\\Users\\hp".', interpolate: false },
-      ],
-    }
-    const handler = ctx.handlers.get('system-prompt/assemble')?.[0]
-    await handler?.(assembly, { agent: local }, async () => assembly)
-
-    expect(assembly.contexts).toHaveLength(1)
-    expect(assembly.contexts[0]?.text).toContain('C:')
+    const working = ctx.context(local).find(entry => entry.name === 'working-directory:current')
+    expect(working?.text).toContain('C:')
+    expect(ctx.context(local).some(entry => entry.name === 'dshell:device')).toBe(false)
   })
 })
 

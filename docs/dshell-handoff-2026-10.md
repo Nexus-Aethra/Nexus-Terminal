@@ -18,7 +18,7 @@
 2. **门禁全绿、真机验收通过**：584 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。
-3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.10`（npm `alpha` dist-tag），
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.11`（npm `alpha` dist-tag），
    `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
@@ -29,10 +29,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.10` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 60 files / **584 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
+| 版本 | 11 个包全部 `0.1.14-alpha.11` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 60 files / **585 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.10` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.11` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -263,6 +263,21 @@ dsh 本身就有这个机制——`agent.ctx` 里注册的同名工具**遮蔽**
 ★ 教训：**"查不到"和"没有"是两种答案，代码必须分得开**。一个静默的空返回可以让整个
 特性凭空消失，而门禁全绿——因为**测试夹具写的是自己方便的样子**（把 `pwsh` 放在全局层），
 不是生产的样子（放在 preset scope）。夹具必须照抄生产的形状，否则它测的是一个不存在的世界。
+
+**还有第三层：工作目录那一行，改不了的是"谁最后写"。**
+
+stock 的 `working-directory:current` 在**组装的水瀑里**改写自己的文本，而那份钩子**每个
+agent 都会重新注册一次**（preset 是按 agent 挂的）。所以"我也在同一个钩子里改写"是一场
+**注定输的竞争**：不管先后顺序，stock 总是最后写的那一个——真机上的读数就是这样：设备段
+插进去了，`Current working directory` 还是宿主那行。
+
+**能赢的位置是注册表本身**：运行时快照是**从注册表渲染**的（`refreshContext` 重新解析每个
+provider），而**同名的作用域贡献会遮蔽全局的那一个**。所以设备会话的 agent 在**自己的作用域
+里**注册一份 `working-directory:current`（外加一段 `dshell:device`），快照里读到的就是设备的
+目录。
+
+★ 教训：**"同一个事件里的先后顺序"是脆弱的，"谁渲染"是稳的**。要改一段别人也会写的文本，
+就去改**谁生成它**，别去抢最后一次写入。
 
 **验收读数（2026-10-20，Windows 桌面版）**：把桌面 profile 的 `@nexus-aethra/dshell-bundle`
 换成新版（走 GUI 的「插件 → 添加插件」；中途**必须先卸载**——GUI 只认"这个插件装没装"，
