@@ -15,10 +15,10 @@
 1. **宿主 `ssh` 依赖已经整个拆掉**：设备连接改走内置的 `ssh2` 客户端，Windows 上不再需要装
    OpenSSH Client，也不再读写用户的 `~/.ssh`。改动已提交（`7728876`）并推到
    `origin/feat/dshell-device-metrics`，领先 main **18 个提交**。
-2. **门禁全绿、真机验收通过**：564 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
+2. **门禁全绿、真机验收通过**：584 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
    文件列举/写入/回读/搜索。
-3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.8`（npm `alpha` dist-tag），
+3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.12`（npm `alpha` dist-tag），
    `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
 
 ## 1. 现场快照
@@ -29,10 +29,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.8` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 59 files / **574 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
+| 版本 | 11 个包全部 `0.1.14-alpha.12` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 60 files / **586 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.8` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.12` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -226,6 +226,59 @@ device does not guess"），而 seam 的 `toRemotePath` 对「不在会话树里
 （模型看得见、能重试），回合外的同类错误只会让界面上一片空白。**所以 seam 的每个出口都要
 自己判断「这个请求能不能被回答」，而不是把不可能的请求发出去等对方报错。**
 
+**第四个坑（2026-10-20 桌面版实测）：执行世界换了，工具契约没换。**
+
+设备绑定的会话里，**命令确实跑在设备上**（seam 把 argv 换成 `bash -c`，设备回的是
+`Linux VM-0-6-ubuntu ... /root`），但**模型看到的还是宿主那套**——一个叫 `pwsh` 的工具，
+描述里写死了 PowerShell、`C:\...` 路径、`$env:NAME`，运行时上下文还报着宿主的
+`Current working directory: "C:\Users\hp"`。于是模型写 PowerShell，设备答
+`command not found`（127），agent 自己都察觉了："the pwsh tool actually runs on
+Linux VM-0-6-ubuntu — it's bash, not pwsh"。
+
+修法不是「在上下文里提醒一句」，而是**把契约一起换掉**。dshell 换的是*执行*，没换*契约*；
+两边必须同时换，否则模型看到的方言和真实执行世界对不上，每一轮都在错方言上耗一次往返。
+dsh 本身就有这个机制——`agent.ctx` 里注册的同名工具**遮蔽**全局的那个，作用域里的
+`restrict({deny})` 能把全局工具对某一个 agent 藏起来——于是设备会话的 agent 拿到的是
+**自己的 shell 工具**：名字是设备的（`bash`），描述写明在哪台机器、用什么方言、用什么路径，
+宿主那个 `pwsh` 在这个作用域里**看不见**。执行体没动（复用宿主工具自己的 body，所以后台任务、
+沙箱升级、结果渲染全都不变），**只有契约变了**；运行时上下文里的工作目录也一并改写成设备的。
+
+★ 教训：**"命令跑在哪"和"模型以为命令跑在哪"是两件事**。seam 换了执行世界，模型那边的
+契约却还留在宿主上——这跟"补丁绕过了症状"是同一类病：两边对不上，界面上每一条报错看着都像
+工具坏了，而不是像方言写错了。
+
+**这个坑还有第二层，值得单独记：工具注册表有"层"，全局层可能是空的。**
+
+桌面版把模型可见的工具挂在一个 **preset scope** 里（agent 的 scope 以 preset 为父），
+**全局层里一行都没有**。所以"从全局注册表里查宿主那个 `pwsh` 工具"查不到——而
+`get()` 返回 undefined 与"这个部署没有 shell 工具"在代码看来**一模一样**，于是整个
+功能**一声不吭地什么也没做**：没有报错、没有日志，agent 照旧看见 `pwsh`。
+
+正确的查法是**用 agent 自己的视图**查（`get(name, agent)`，agent 就是 scope key），
+作用域限制同理（`restrict({deny})` 限的是"全局 + 祖先链"的名字）。另外，**别只靠
+`agent/created` 事件**：dshell-ssh 的 `apply` 要先 await 数据根落定，会话可能在那之前
+就恢复了、agent 就已经存在了——所以安装时要**扫一遍存量 agent**，并且在**路由的缓存
+就绪之后再扫一次**（绑定表是异步读的）。
+
+★ 教训：**"查不到"和"没有"是两种答案，代码必须分得开**。一个静默的空返回可以让整个
+特性凭空消失，而门禁全绿——因为**测试夹具写的是自己方便的样子**（把 `pwsh` 放在全局层），
+不是生产的样子（放在 preset scope）。夹具必须照抄生产的形状，否则它测的是一个不存在的世界。
+
+**还有第三层：工作目录那一行，改不了的是"谁最后写"。**
+
+stock 的 `working-directory:current` 在**组装的水瀑里**改写自己的文本，而那份钩子**每个
+agent 都会重新注册一次**（preset 是按 agent 挂的）。所以"我也在同一个钩子里改写"是一场
+**注定输的竞争**：不管先后顺序，stock 总是最后写的那一个——真机上的读数就是这样：设备段
+插进去了，`Current working directory` 还是宿主那行。
+
+**能赢的位置是注册表本身**：运行时快照是**从注册表渲染**的（`refreshContext` 重新解析每个
+provider），而**同名的作用域贡献会遮蔽全局的那一个**。所以设备会话的 agent 在**自己的作用域
+里**注册一份 `working-directory:current`（外加一段 `dshell:device`），快照里读到的就是设备的
+目录。
+
+★ 教训：**"同一个事件里的先后顺序"是脆弱的，"谁渲染"是稳的**。要改一段别人也会写的文本，
+就去改**谁生成它**，别去抢最后一次写入。
+
 **验收读数（2026-10-20，Windows 桌面版）**：把桌面 profile 的 `@nexus-aethra/dshell-bundle`
 换成新版（走 GUI 的「插件 → 添加插件」；中途**必须先卸载**——GUI 只认"这个插件装没装"，
 不认版本号，装之前还会拿上一次输入时的缓存结果挡你），重启宿主进程，再解锁分组 `test`、
@@ -269,7 +322,7 @@ device does not guess"），而 seam 的 `toRemotePath` 对「不在会话树里
 cd /home/wpp/nexus/Nexus-Shell
 git status -sb                 # 应显示与 origin/feat/dshell-device-metrics 同步
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 564/564 + 干净
+pnpm run test && pnpm run typecheck     # 期望 584/584 + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 git status --short             # 只剩 assets/*.mp4 八个未跟踪，就是干净现场
 ```
