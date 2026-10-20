@@ -171,20 +171,27 @@ function displayRoot(root: string): string {
 }
 
 /**
- * The host's own shell tool, read from the global view.
+ * The host's own shell tool, read from the AGENT's view.
  *
- * The body of the host's tool is reused rather than written again: the jobs,
- * the background promotion, the sandbox escalation and the rendering are the
- * host's, and a device command is the same command with a different place to
- * run it.
+ * The agent's view, not the global one, and that is not a detail. A deployment
+ * that mounts its model-facing tools into a preset scope has NO global row for
+ * them: the agent's scope chain is what resolves them, and the global view is
+ * empty. Reading the global view here is how a whole feature can do nothing at
+ * all without a word of complaint — the lookup answers "no such tool", the
+ * code takes that as "this deployment has no shell tool", and the agent keeps
+ * the host's contract.
  *
- * @param registry - the global registry.
- * @returns the definition to derive from, or undefined when the host has no
+ * The scope key is the agent itself: the agent loop mints the agent's scope
+ * with the agent as its key, and the preset's scope is its parent.
+ *
+ * @param registry - the registry, reached through the agent's own context.
+ * @param agent - the agent whose view decides what the model sees.
+ * @returns the definition to derive from, or undefined when the agent sees no
  *   shell tool to derive from.
  */
-function baseDefinition(registry: ToolRegistryShape): ToolDefinitionShape | undefined {
+function baseDefinition(registry: ToolRegistryShape, agent: AgentShape): ToolDefinitionShape | undefined {
   for (const name of HOST_SHELL_TOOLS) {
-    const definition = registry.get(name)
+    const definition = registry.get(name, agent)
     if (definition !== undefined) return definition
   }
   return undefined
@@ -329,8 +336,6 @@ function applyDeviceContext(assembly: { contexts?: ContextEntry[] }, facts: Devi
  */
 export function installDeviceDialect(ctx: Context, router: SshRouter): () => void {
   const host = ctx as unknown as DialectContextShape
-  const registry = host.tools
-  if (registry === undefined) return () => {}
   const applied = new Map<string, Applied>()
 
   /** Put the device's contract in one agent's scope, or take it back out. */
@@ -350,14 +355,14 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
   /** Register the device's shell tool in one agent's scope. */
   const installFor = (agent: AgentShape, facts: DeviceFacts): Applied => {
     const scoped = agent.ctx.tools
-    const base = baseDefinition(registry)
+    const base = baseDefinition(scoped, agent)
     if (base === undefined) return { facts, dispose: () => {} }
     const definition = deviceShellDefinition(base, facts)
     const unregister = scoped.register(definition)
     // The host's own shell tool, when it has a different name, must not stay
     // visible: two shells in one scope is a choice the model cannot make
     // reliably, and it keeps choosing the one it knows.
-    const denied = HOST_SHELL_TOOLS.filter(name => name !== definition.name && scoped.get(name) !== undefined)
+    const denied = HOST_SHELL_TOOLS.filter(name => name !== definition.name && scoped.get(name, agent) !== undefined)
     const unrestrict = denied.length > 0 ? scoped.restrict({ deny: denied }) : undefined
     return {
       facts,
@@ -397,6 +402,27 @@ export function installDeviceDialect(ctx: Context, router: SshRouter): () => voi
     if (agent === undefined) return
     apply(sessionId, agent)
   }
+
+  /**
+   * Put the device's contract in every live agent's scope.
+   *
+   * The listener above only sees agents created after it was installed, and
+   * this package settles its data root asynchronously: a session can be
+   * resumed — and its agent created — before the device routing is in place.
+   * The sweep is what covers those, and it runs AFTER the listener is
+   * installed, so no agent can slip through the gap between the two.
+   */
+  const sweep = (): void => {
+    ensureContextHook()
+    for (const agent of host.agents.list()) {
+      apply(String(agent.id), agent)
+    }
+  }
+  sweep()
+  // The router's caches fill asynchronously too, and an agent that was
+  // resumed before they were filled has no assignment to read yet. Sweeping
+  // again when they are is what gives that agent its device contract.
+  void router.whenReady().then(sweep).catch(() => {})
 
   return () => {
     for (const entry of applied.values()) entry.dispose()

@@ -13,6 +13,17 @@
  * tool named for the device's shell, described in the device's dialect, and
  * the host's own shell tool is out of that scope. The execution stays the
  * host tool's own body — the same command, run somewhere else.
+ *
+ * The fixture below is the PRODUCTION shape, not a convenient one:
+ *
+ *  - the scope key is the AGENT itself, the way the agent loop mints it;
+ *  - the host's shell tool lives in a PRESET scope, which parents the
+ *    agent's scope, and the deployment layer is EMPTY.
+ *
+ * A deployment that mounts its model-facing tools that way is the normal one,
+ * and a lookup that reads the deployment layer finds nothing there —
+ * silently, because "no such tool" and "this deployment has no shell tool"
+ * look the same to the code that asks.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -30,43 +41,99 @@ interface ToolDefinitionShape {
 
 /** The registry state every scope view shares. */
 class RegistryState {
+  /** The deployment-level layer; a preset deployment leaves it empty. */
   readonly globals = new Map<string, ToolDefinitionShape>()
-  readonly layers = new Map<string, Map<string, ToolDefinitionShape>>()
-  readonly restrictions = new Map<string, Set<string>>()
+  /** One layer per scope, keyed by the scope's key. */
+  readonly layers = new Map<object, Map<string, ToolDefinitionShape>>()
+  /** The names a scope's own filter removes. */
+  readonly restrictions = new Map<object, Set<string>>()
+  /** Each scope's parent, the way a preset scope parents an agent's scope. */
+  readonly parents = new Map<object, object>()
 }
 
-/** One view of the registry: the global one, or one scope's. */
+/**
+ * One view of the registry: the deployment's, or one scope's.
+ *
+ * A scope sees the deployment layer, its ancestors' layers and its own, the
+ * nearest winning; its own filter removes the inherited names but not its
+ * own registrations.
+ */
 class FakeRegistry {
-  constructor(private readonly state: RegistryState, private readonly scope?: string) {}
+  constructor(private readonly state: RegistryState, private readonly scope?: object) {}
 
-  get(name: string): ToolDefinitionShape | undefined {
-    const own = this.scope === undefined ? undefined : this.state.layers.get(this.scope)?.get(name)
-    if (own !== undefined) return own
-    if (this.scope !== undefined && this.state.restrictions.get(this.scope)?.has(name)) return undefined
-    return this.state.globals.get(name)
+  /** The scope's chain, farthest ancestor first. */
+  private chain(): object[] {
+    const chain: object[] = []
+    let cursor = this.scope
+    while (cursor !== undefined) {
+      chain.unshift(cursor)
+      cursor = this.state.parents.get(cursor)
+    }
+    return chain
+  }
+
+  /** What this scope can see, after its own filter. */
+  view(): Map<string, ToolDefinitionShape> {
+    if (this.scope === undefined) return new Map(this.state.globals)
+    const own = this.state.layers.get(this.scope) ?? new Map<string, ToolDefinitionShape>()
+    const denied = this.state.restrictions.get(this.scope) ?? new Set<string>()
+    const view = new Map(this.state.globals)
+    for (const key of this.chain()) {
+      for (const [name, definition] of this.state.layers.get(key) ?? []) view.set(name, definition)
+    }
+    for (const [name, definition] of own) view.set(name, definition)
+    for (const name of denied) {
+      if (!own.has(name)) view.delete(name)
+    }
+    return view
+  }
+
+  /** What this scope can see, EXCLUDING its own registrations. */
+  private inherited(): Map<string, ToolDefinitionShape> {
+    if (this.scope === undefined) return new Map(this.state.globals)
+    const denied = this.state.restrictions.get(this.scope) ?? new Set<string>()
+    const view = new Map(this.state.globals)
+    for (const key of this.chain()) {
+      for (const [name, definition] of this.state.layers.get(key) ?? []) view.set(name, definition)
+    }
+    for (const name of denied) view.delete(name)
+    return view
+  }
+
+  get(name: string, scope?: unknown): ToolDefinitionShape | undefined {
+    if (scope === undefined) return new Map(this.state.globals).get(name)
+    if (typeof scope === 'object' && scope !== null) {
+      return new FakeRegistry(this.state, scope).view().get(name)
+    }
+    return this.view().get(name)
   }
 
   register(definition: ToolDefinitionShape): () => void {
-    if (this.scope === undefined) {
+    const key = this.scope
+    if (key === undefined) {
       this.state.globals.set(definition.name, definition)
       return () => { this.state.globals.delete(definition.name) }
     }
-    const layer = this.state.layers.get(this.scope) ?? new Map<string, ToolDefinitionShape>()
+    const layer = this.state.layers.get(key) ?? new Map<string, ToolDefinitionShape>()
     layer.set(definition.name, definition)
-    this.state.layers.set(this.scope, layer)
+    this.state.layers.set(key, layer)
     return () => { layer.delete(definition.name) }
   }
 
   restrict(filter: { deny?: readonly string[] }): () => void {
     if (this.scope === undefined) throw new Error('restrict() requires a scoped context')
-    const layer = this.state.layers.get(this.scope)
-    const denied = this.state.restrictions.get(this.scope) ?? new Set<string>()
+    const key = this.scope
+    const layer = this.state.layers.get(key)
+    const denied = this.state.restrictions.get(key) ?? new Set<string>()
+    const inherited = this.inherited()
     for (const name of filter.deny ?? []) {
+      // A scope's own registration is exempt from its own filter, so naming
+      // it is a caller error rather than a silent no-op.
       if (layer?.has(name) === true) throw new Error(`unknown global tool "${name}"`)
-      if (!this.state.globals.has(name)) throw new Error(`unknown global tool "${name}"`)
+      if (!inherited.has(name)) throw new Error(`unknown global tool "${name}"`)
       denied.add(name)
     }
-    this.state.restrictions.set(this.scope, denied)
+    this.state.restrictions.set(key, denied)
     return () => { for (const name of filter.deny ?? []) denied.delete(name) }
   }
 }
@@ -75,20 +142,23 @@ class FakeRegistry {
 class FakeAgent {
   readonly ctx: { tools: FakeRegistry }
 
-  constructor(readonly id: string, tools: FakeRegistry) {
-    this.ctx = { tools }
+  constructor(readonly id: string, state: RegistryState) {
+    this.ctx = { tools: new FakeRegistry(state, this) }
   }
 }
 
 /** The host context, with the listeners the module installs. */
 class FakeContext {
-  readonly tools: FakeRegistry
   readonly agents: { list(): FakeAgent[] }
   readonly handlers = new Map<string, ((...args: never[]) => unknown)[]>()
 
-  constructor(tools: FakeRegistry, private readonly live: FakeAgent[]) {
-    this.tools = tools
+  constructor(private readonly state: RegistryState, private readonly live: FakeAgent[]) {
     this.agents = { list: () => this.live }
+  }
+
+  /** The model's view of one scope: the tool names it can see. */
+  visible(scope: object): string[] {
+    return [...new FakeRegistry(this.state, scope).view().keys()].sort()
   }
 
   on(event: string, listener: (...args: never[]) => unknown): () => void {
@@ -111,9 +181,18 @@ class FakeContext {
 class FakeRouter {
   onAssignmentChanged: ((sessionId: string, deviceId: string | null) => void) | undefined
   private readonly targets = new Map<string, { name: string; remoteRoot: string }>()
+  private readonly ready = Promise.resolve()
 
   bind(sessionId: string, name: string, remoteRoot: string): void {
     this.targets.set(sessionId, { name, remoteRoot })
+  }
+
+  unbind(sessionId: string): void {
+    this.targets.delete(sessionId)
+  }
+
+  whenReady(): Promise<void> {
+    return this.ready
   }
 
   targetForSession(sessionId: string): { device: { name: string }; remoteRoot: string; mount: string | undefined } | undefined {
@@ -150,54 +229,42 @@ function hostPwsh(): ToolDefinitionShape {
   }
 }
 
-/** The world one test runs in: a Windows host, one device, one agent. */
+/** The world one test runs in: a Windows host, a preset, one device, one agent. */
 function world(): {
   ctx: FakeContext
   router: FakeRouter
   agent: FakeAgent
   local: FakeAgent
   state: RegistryState
-  global: FakeRegistry
 } {
   const state = new RegistryState()
-  state.globals.set('pwsh', hostPwsh())
-  const global = new FakeRegistry(state)
-  const agent = new FakeAgent('session-on-device', new FakeRegistry(state, 'session-on-device'))
-  const local = new FakeAgent('session-on-this-machine', new FakeRegistry(state, 'session-on-this-machine'))
-  const ctx = new FakeContext(global, [agent, local])
+  const preset = { name: 'standard preset' }
+  const agent = new FakeAgent('session-on-device', state)
+  const local = new FakeAgent('session-on-this-machine', state)
+  // The production shape: the host's shell tool belongs to the PRESET scope,
+  // which parents the agent's scope. The deployment layer is empty.
+  state.parents.set(agent, preset)
+  state.parents.set(local, preset)
+  state.layers.set(preset, new Map([['pwsh', hostPwsh()]]))
+  const ctx = new FakeContext(state, [agent, local])
   const router = new FakeRouter()
   router.bind('session-on-device', 'tencent', '/root')
-  return { ctx, router, agent, local, state, global }
-}
-
-/** The model's view of one scope: the tool names it can see. */
-function visible(state: RegistryState, scope: string): string[] {
-  const view = new FakeRegistry(state, scope)
-  const names = [...state.globals.keys()].filter(name => view.get(name) !== undefined)
-  const own = state.layers.get(scope)
-  return [...new Set([...names, ...(own?.keys() ?? [])])].filter(name => view.get(name) !== undefined).sort()
-}
-
-/** The definition the agent's scope carries for one tool. */
-function definition(state: RegistryState, scope: string, name: string): ToolDefinitionShape | undefined {
-  return new FakeRegistry(state, scope).get(name)
+  return { ctx, router, agent, local, state }
 }
 
 describe('a session bound to a device', () => {
   it('shows the agent the device shell, not the host one', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
 
-    expect(visible(state, 'session-on-device')).toEqual(['bash'])
+    expect(ctx.visible(ctx.agents.list()[0]!)).toEqual(['bash'])
   })
 
   it('describes the device, its dialect and its paths', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router, agent } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
 
-    const description = definition(state, 'session-on-device', 'bash')?.description ?? ''
+    const description = agent.ctx.tools.get('bash', agent)?.description ?? ''
     expect(description).toContain('"tencent"')
     expect(description).toContain('bash')
     expect(description).toContain('/root')
@@ -206,11 +273,10 @@ describe('a session bound to a device', () => {
   })
 
   it('rewrites the command and workdir parameters for the device', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router, agent } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
 
-    const parameters = definition(state, 'session-on-device', 'bash')?.parameters as {
+    const parameters = agent.ctx.tools.get('bash', agent)?.parameters as {
       properties: Record<string, { description: string }>
     }
     expect(parameters.properties.command.description).toContain('POSIX shell (bash) syntax')
@@ -219,32 +285,31 @@ describe('a session bound to a device', () => {
   })
 
   it('keeps the host tool own execution, so jobs and rendering are unchanged', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router, agent, state } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
 
-    const base = state.globals.get('pwsh')
-    const variant = definition(state, 'session-on-device', 'bash')
+    const base = state.layers.get(state.parents.get(agent)!)?.get('pwsh')
+    const variant = agent.ctx.tools.get('bash', agent)
     expect(variant?.execute).toBe(base?.execute)
     expect(variant?.output).toBe(base?.output)
   })
 
   it('hides the host shell tool from the device agent only', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router, agent, local, state } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
 
-    expect(visible(state, 'session-on-device')).not.toContain('pwsh')
-    // The global view is untouched: every other agent still has the host shell.
-    expect([...state.globals.keys()]).toEqual(['pwsh'])
+    expect(ctx.visible(agent)).not.toContain('pwsh')
+    // Every other agent still has the host shell.
+    expect(ctx.visible(local)).toEqual(['pwsh'])
+    // The preset's own layer is untouched.
+    expect([...(state.layers.get(state.parents.get(agent)!)?.keys() ?? [])]).toEqual(['pwsh'])
   })
 
   it('leaves a local session alone', () => {
-    const { ctx, router, state } = world()
+    const { ctx, router, local } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-this-machine', ctx: { tools: new FakeRegistry(state, 'session-on-this-machine') } } })
 
-    expect(visible(state, 'session-on-this-machine')).toEqual(['pwsh'])
+    expect(ctx.visible(local)).toEqual(['pwsh'])
   })
 })
 
@@ -252,7 +317,6 @@ describe('the runtime context of a device session', () => {
   it('names the device directory instead of this machine one', async () => {
     const { ctx, router, agent } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent })
 
     const assembly = {
       contexts: [
@@ -272,9 +336,8 @@ describe('the runtime context of a device session', () => {
   })
 
   it('leaves a local session context alone', async () => {
-    const { ctx, router, agent, local } = world()
+    const { ctx, router, local } = world()
     installDeviceDialect(ctx as unknown as Context, router as unknown as SshRouter)
-    ctx.emit('agent/created', { agent })
 
     const assembly = {
       contexts: [
@@ -291,33 +354,30 @@ describe('the runtime context of a device session', () => {
 
 describe('a binding that arrives after the agent', () => {
   it('gives the agent the device shell when the session is bound', () => {
-    const { ctx, router, state } = world()
+    const { ctx, agent } = world()
     const target = new FakeRouter()
     installDeviceDialect(ctx as unknown as Context, target as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
-    expect(visible(state, 'session-on-device')).toEqual(['pwsh'])
+
+    expect(ctx.visible(agent)).toEqual(['pwsh'])
 
     target.bind('session-on-device', 'tencent', '/root')
     target.onAssignmentChanged?.('session-on-device', 'tencent')
 
-    expect(visible(state, 'session-on-device')).toEqual(['bash'])
+    expect(ctx.visible(agent)).toEqual(['bash'])
   })
 
   it('takes the device shell back when the session is unbound', () => {
-    const { ctx, router, state } = world()
+    const { ctx, agent } = world()
     const target = new FakeRouter()
     installDeviceDialect(ctx as unknown as Context, target as unknown as SshRouter)
-    ctx.emit('agent/created', { agent: { id: 'session-on-device', ctx: { tools: new FakeRegistry(state, 'session-on-device') } } })
+
     target.bind('session-on-device', 'tencent', '/root')
     target.onAssignmentChanged?.('session-on-device', 'tencent')
-    expect(visible(state, 'session-on-device')).toEqual(['bash'])
+    expect(ctx.visible(agent)).toEqual(['bash'])
 
-    // An unbound session runs here again: the host shell comes back.
-    const unbound = new FakeRouter()
-    void unbound
-    ;(target as unknown as { targets: Map<string, unknown> }).targets.clear()
+    target.unbind('session-on-device')
     target.onAssignmentChanged?.('session-on-device', null)
 
-    expect(visible(state, 'session-on-device')).toEqual(['pwsh'])
+    expect(ctx.visible(agent)).toEqual(['pwsh'])
   })
 })

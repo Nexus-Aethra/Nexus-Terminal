@@ -325,6 +325,20 @@ export class SshRouter {
   }
 
   /**
+   * Resolves when the device and assignment caches are filled.
+   *
+   * The caches are filled asynchronously, and everything that reads them
+   * synchronously — the seams inside a tool call, the per-agent view of "where
+   * does this session run" — can run before they are. A caller that needs the
+   * answers rather than an answer to "not yet" waits here.
+   *
+   * @returns the load promise; it rejects when the load failed.
+   */
+  whenReady(): Promise<void> {
+    return this.ready
+  }
+
+  /**
    * One device's connection record from the routing cache.
    * @param deviceId - device to look up.
    * @returns the resolved connection, or undefined when it is not loaded.
