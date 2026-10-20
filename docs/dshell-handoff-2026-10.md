@@ -361,6 +361,14 @@ desktop/~/` 恰好就是宿主自己的目录树。**拼路径之前先问"这�
 3. `scripts/dshell-ui-order-acceptance.mjs` 写死了作者 Linux 机的 playwright 与 Chrome 绝对路径
    （换机必崩）；`scripts/linux-desktop.mjs` 的 `.deb` Maintainer 字段写着 一个本地账号。
 4. ssh 的 `drop-intermediates.mjs` 只删 `.js` 不删 `.map` ⇒ tarball 里躺着两个没有对应脚本的孤儿 map。
+5. **`scripts/tests/repo-hygiene.spec.ts`（新增）**：把上面的三条规则做成测试——已跟踪文件里不许出现
+   **公网地址**、**不是本仓虚构用户的家目录**、**绝对路径的 link/file**；并且**把跟踪的图片按名字钉住**
+   （`docs/images/**`），因为**没有文字规则能看进 PNG**，而新截图必须被"有意地"加进那张表——那正是
+   该有人看一眼它的时刻。**牙齿检查**：把这三种泄漏放回去，恰好那三条规则变红。
+
+★ 配合 `.gitignore` 新增的一段（profile / 数据根 / 凭据文件 / scratch 目录）——**文字规则管"描述"，
+ignore 管"本身"**。缺了 ignore，一个 profile 或凭据文件会在某次 `git add -A` 里跟上来；
+缺了规则，机器身份会随着每一次读数渗进文档。
 
 **后来还是动了的**：`pnpm-lock.yaml` 里那 30 条指向一台机器家目录的 link。
 它是 pnpm 自己写的元数据（`packages:` 段记录 registry 包的 peer 被解析到了哪儿），
