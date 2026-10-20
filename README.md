@@ -65,7 +65,7 @@ Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.2` | **`0.1.14-alpha.8`** — the npm `alpha` dist-tag; prerelease, so it is not what `@latest` resolves to |
+| `0.2.1-rc.2` | **`0.1.14-alpha.9`** — the npm `alpha` dist-tag; prerelease, so it is not what `@latest` resolves to |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** — the npm `latest` dist-tag |
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
@@ -77,7 +77,7 @@ To run one anyway: `dsh plugin --profile <name> allow-version <package@version> 
 # One package: the bundle is the patch layer, it depends on the other ten dshell
 # packages, and dshell-ssh carries the one dsh package a stock profile does not
 # ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.8
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.14-alpha.9
 
 dsh web
 ```
@@ -85,7 +85,7 @@ dsh web
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
 
 In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
-`@nexus-aethra/dshell-bundle@0.1.14-alpha.8` (it installs from npmjs and pins the version exactly).
+`@nexus-aethra/dshell-bundle@0.1.14-alpha.9` (it installs from npmjs and pins the version exactly).
 
 > Skipping step 2 is not fatal — dsh boots and reports the two rows as `did not activate`, and the
 > rest of dshell works. It is listed because the SSH device sessions and the agent's terminal tool
