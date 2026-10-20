@@ -27,7 +27,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --emitDeclarationOnly false",
-    "prepack": "pnpm run build",
+    "prepack": "corepack pnpm run build",
     "build:host": "tsc -p tsconfig.json --emitDeclarationOnly false"
   },
   "files": [
