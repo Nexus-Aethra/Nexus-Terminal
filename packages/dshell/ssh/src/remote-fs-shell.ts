@@ -142,6 +142,15 @@ export class ShellFsTransport implements RemoteFsTransport {
   }
 
   /** @inheritDoc */
+  canOpen(path: string): boolean {
+    // The device's own shell expands a tilde, so this lane can be asked
+    // about `~` and about paths under it — which is how a device whose
+    // root is still spelled `~` is served at all. Everything else has to
+    // be an absolute device path, like every other lane.
+    return path.startsWith('/') || path === '~' || path.startsWith('~/')
+  }
+
+  /** @inheritDoc */
   async resolve(path: string, signal?: AbortSignal): Promise<string> {
     // `-m` canonicalizes a path that does not exist yet, the way the local
     // backend resolves a missing file through its nearest existing ancestor.

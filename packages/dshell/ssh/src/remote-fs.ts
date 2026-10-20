@@ -82,11 +82,54 @@ export class RemoteFileSystem {
     return this.remote(local)
   }
 
+  /**
+   * The device path a target names, when the device can be asked about it.
+   *
+   * @param target - the resolved target.
+   * @returns the path to send to the device.
+   * @throws FsError when the target names something the device does not have.
+   */
+  private require(target: FsTarget): string {
+    return this.requirePath(String(target.targetKey), target.displayPath)
+  }
+
+  /**
+   * The device path, when the device can be asked about it.
+   *
+   * A path in the HOST's grammar names nothing on the device, and the
+   * device's protocol refuses it outright. Refusing it here — in the
+   * filesystem's own vocabulary, with the path named — is what turns a
+   * schema error that ends a turn into an answer a caller can act on.
+   *
+   * @param path - the path the caller named.
+   * @param displayPath - the spelling to show the reader.
+   * @returns the path to send to the device.
+   * @throws FsError when the device cannot be asked about this path.
+   */
+  private requirePath(path: string, displayPath: string = path): string {
+    if (!this.transport.canOpen(path)) {
+      throw new FsError(
+        `"${displayPath}" is a path on this machine, and this session runs on the device: the device has no such path`,
+        'FS_NOT_FOUND',
+      )
+    }
+    return path
+  }
+
   /** Resolve a caller path into a target identity on the device. */
   async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     if (opts?.signal?.aborted === true) throw new FsError('resolve aborted', 'FS_ABORTED')
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
     const remote = this.remoteFrom(opts?.cwd, path)
+    // A path the device cannot be asked about names nothing there. The
+    // target is the path as given, and the device is never asked: its
+    // protocol refuses a path that is not absolute in the device's
+    // grammar, and that refusal is a schema error rather than an answer —
+    // on a path the seam was asked about before the model said anything,
+    // it ends the whole turn instead of answering the question.
+    if (!this.transport.canOpen(remote)) {
+      return { targetKey: FsTargetKey(remote), displayPath: remote }
+    }
     // The device canonicalizes, because only it knows how its own symlinks
     // resolve — and it does so for a path that does not exist yet, the way the
     // local backend resolves a missing file through its nearest existing
@@ -97,7 +140,11 @@ export class RemoteFileSystem {
 
   /** Metadata for a resolved target; `undefined` when the device has no such file. */
   async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
-    const info = await this.transport.stat(String(target.targetKey), true, signal)
+    const remote = String(target.targetKey)
+    // A path the device cannot be asked about is a path the device does
+    // not have: absent, not an error, and the device is never asked.
+    if (!this.transport.canOpen(remote)) return undefined
+    const info = await this.transport.stat(remote, true, signal)
     if (info === undefined) return undefined
     return { version: info.version, type: info.kind === 'file' || info.kind === 'directory' ? info.kind : 'other', size: info.size }
   }
@@ -106,6 +153,7 @@ export class RemoteFileSystem {
   async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
     const remote = this.remoteFrom(opts?.cwd, path)
+    if (!this.transport.canOpen(remote)) return undefined
     const info = await this.transport.stat(remote, false, signal)
     if (info === undefined) return undefined
     return { version: info.version, type: info.kind, size: info.size }
@@ -120,7 +168,7 @@ export class RemoteFileSystem {
   /** Stream one file's text. */
   async streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
     const displayPath = target.displayPath
-    const chunks = await this.transport.stream(String(target.targetKey), signal)
+    const chunks = await this.transport.stream(this.require(target), signal)
     return (async function* stream(): AsyncIterable<string> {
       const decoder = new TextDecoder('utf-8', { fatal: true })
       try {
@@ -142,7 +190,7 @@ export class RemoteFileSystem {
   async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number, displayPath = target.displayPath): Promise<Uint8Array> {
     // One byte more than allowed, so "exactly at the limit" and "over it" stay
     // distinguishable without asking the device how large the file is.
-    const bytes = await this.transport.read(String(target.targetKey), 0, maxBytes + 1, signal)
+    const bytes = await this.transport.read(this.require(target), 0, maxBytes + 1, signal)
     if (bytes.byteLength > maxBytes) {
       throw new FsError(`cannot read "${displayPath}": file exceeds the ${String(maxBytes)} byte limit`, 'FS_TOO_LARGE')
     }
@@ -151,12 +199,12 @@ export class RemoteFileSystem {
 
   /** Read one byte window of a file. */
   async readByteRange(target: FsTarget, range: { offset: number; length: number }, signal?: AbortSignal): Promise<Uint8Array> {
-    return await this.transport.read(String(target.targetKey), range.offset, range.length, signal)
+    return await this.transport.read(this.require(target), range.offset, range.length, signal)
   }
 
   /** Direct children of a directory, ordered by name. */
   async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
-    const remote = String(target.targetKey)
+    const remote = this.require(target)
     const entries = await this.transport.list(remote, signal)
     // Ordered here rather than on the device, because the order is part of what
     // a caller sees and exactly one place should decide it: a device's own
@@ -189,7 +237,7 @@ export class RemoteFileSystem {
     expected?: FsWriteIntent,
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome> {
-    const remote = String(target.targetKey)
+    const remote = this.require(target)
     const existing = await this.transport.stat(remote, true, signal)
     if (existing !== undefined && existing.kind !== 'file') {
       throw new FsError(`cannot write "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
@@ -221,7 +269,7 @@ export class RemoteFileSystem {
     expected?: { version: FsVersion },
     signal?: AbortSignal,
   ): Promise<FsEditOutcome> {
-    const remote = String(target.targetKey)
+    const remote = this.require(target)
     const existing = await this.transport.stat(remote, true, signal)
     if (existing === undefined) throw new FsError(`cannot edit "${target.displayPath}": file changed since it was read`, 'FS_STALE_VERSION')
     if (existing.kind !== 'file') throw new FsError(`cannot edit "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
@@ -277,29 +325,30 @@ export class RemoteFileSystem {
    * @param signal - cancellation; a published file is not rolled back.
    */
   async writeBytes(remote: string, bytes: Uint8Array, signal?: AbortSignal): Promise<{ version: FsVersion } | undefined> {
-    return await this.transport.writeBytes(remote, bytes, signal)
-      ?? await this.transport.stat(remote, true, signal)
+    const path = this.requirePath(remote)
+    return await this.transport.writeBytes(path, bytes, signal)
+      ?? await this.transport.stat(path, true, signal)
   }
 
   /** Create one or more directories on the device. */
   async mkdir(paths: readonly string[], recursive: boolean, signal?: AbortSignal): Promise<void> {
-    await this.transport.mkdir(paths, recursive, signal)
+    await this.transport.mkdir(paths.map(path => this.requirePath(path)), recursive, signal)
   }
 
   /** Remove one path, recursively and tolerating absence when forced. */
   async remove(path: string, force: boolean, signal?: AbortSignal): Promise<void> {
-    await this.transport.remove(path, force, signal)
+    await this.transport.remove(this.requirePath(path), force, signal)
   }
 
   /** Rename one device path to another, optionally overwriting. */
   async rename(from: string, to: string, overwrite: boolean, signal?: AbortSignal): Promise<{ version: FsVersion } | undefined> {
-    const info = await this.transport.rename(from, to, overwrite, signal)
+    const info = await this.transport.rename(this.requirePath(from), this.requirePath(to), overwrite, signal)
     return info === undefined ? undefined : { version: info.version }
   }
 
   /** The whole-file SHA-256 of one device path, computed on the device. */
   async sha256(path: string, signal?: AbortSignal): Promise<string> {
-    return await this.transport.sha256(path, signal)
+    return await this.transport.sha256(this.requirePath(path), signal)
   }
 
   /**
@@ -318,7 +367,9 @@ export class RemoteFileSystem {
     onProgress: (written: number, totalBytes: number) => void,
     signal: AbortSignal,
   ): Promise<{ destination: { version: FsVersion }; sourceSha256: string; bytes: number }> {
-    const outcome = await this.transport.copy(source, destination, overwrite, expectedSha256, onProgress, signal)
+    const outcome = await this.transport.copy(
+      this.requirePath(source), this.requirePath(destination), overwrite, expectedSha256, onProgress, signal,
+    )
     return {
       destination: { version: outcome.destination.version },
       sourceSha256: outcome.sourceSha256,

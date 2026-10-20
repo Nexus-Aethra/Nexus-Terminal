@@ -64,6 +64,21 @@ export interface RemoteFsDeps {
 /** The device filesystem primitives, as one lane implements them. */
 export interface RemoteFsTransport {
   /**
+   * Whether this lane can be asked about a path at all.
+   *
+   * The device's own grammar is POSIX absolute. A path in the HOST's
+   * grammar names nothing on the device, and the device refuses it
+   * outright — its protocol says "always absolute: the caller translates,
+   * the device does not guess". That refusal is a schema error and not an
+   * answer, so the seam asks the lane first and never puts a path on the
+   * wire that the lane could not open.
+   *
+   * @param path - a path in the device's namespace.
+   * @returns whether the device can be asked about this path.
+   */
+  canOpen(path: string): boolean
+
+  /**
    * A path's canonical form.
    * @param path - absolute device path, which need not exist.
    * @param signal - cancellation.
