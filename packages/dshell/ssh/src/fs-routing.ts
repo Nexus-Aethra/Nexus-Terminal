@@ -78,10 +78,17 @@ export class DshellFileSystem extends SandboxedFileSystem {
    * a helper into a stall on every read, and a device that will never have one
    * into a hang.
    */
-  private remote(): RemoteFileSystem | undefined {
+  private async remote(): Promise<RemoteFileSystem | undefined> {
     const routed = this.route()
     if (routed === undefined) return undefined
-    const { target, mapping } = routed
+    const { target, sessionCwd } = routed
+    // The mapping's root has to be an ABSOLUTE device path: the helper's
+    // protocol admits nothing else, and the containment check can only compare
+    // a path against an absolute root. A device that has not said where its
+    // home is asked now, rather than being sent a `~` it cannot open.
+    const remoteRoot = await this.absoluteRoot(target)
+    const mapping = mappingFor({ ...target, remoteRoot }, sessionCwd)
+    if (mapping === undefined) return undefined
     return new RemoteFileSystem({
       ctx: this.ctx,
       device: target.device,
@@ -92,9 +99,20 @@ export class DshellFileSystem extends SandboxedFileSystem {
     })
   }
 
+  /** The device's absolute root, asked for once if the device has not said. */
+  private async absoluteRoot(
+    target: NonNullable<ReturnType<SshRouter['targetForSession']>>,
+  ): Promise<string> {
+    if (target.remoteRoot.startsWith('/')) return target.remoteRoot
+    const root = await this.ctx[SSH_ROUTING_SERVICE].ensureDeviceRoot(target.device.id)
+    return root ?? target.remoteRoot
+  }
+
   /** The mapping for the ambient call, for the policy fence. */
   private mapping(): MountMapping | undefined {
-    return this.route()?.mapping
+    const routed = this.route()
+    if (routed === undefined) return undefined
+    return mappingFor(routed.target, routed.sessionCwd)
   }
 
   /**
@@ -115,14 +133,14 @@ export class DshellFileSystem extends SandboxedFileSystem {
    * root when the two differ, which is what makes the model's relative paths
    * land on the device (see `mappingFor`).
    */
-  private route(): { target: NonNullable<ReturnType<SshRouter['targetForSession']>>; mapping: MountMapping } | undefined {
+  private route(): { target: NonNullable<ReturnType<SshRouter['targetForSession']>>; sessionCwd: string | undefined } | undefined {
     const agent = this.ctx.agents.currentInitiator()
     if (agent === undefined) return undefined
     const routing = this.ctx[SSH_ROUTING_SERVICE]
     const sessionId = String(agent.id)
     const target = routing.targetForSession(sessionId)
-    const mapping = target === undefined ? undefined : mappingFor(target, agent.session.header.cwd)
-    if (target !== undefined && mapping !== undefined) return { target, mapping }
+    const sessionCwd = agent.session.header.cwd
+    if (target !== undefined && mappingFor(target, sessionCwd) !== undefined) return { target, sessionCwd }
     const bound = routing.assignmentForSession(sessionId)
     if (bound === undefined) return undefined
     throw new FsError(routing.unservableMessage(bound.deviceId), 'FS_PERMISSION_DENIED')
@@ -165,32 +183,32 @@ export class DshellFileSystem extends SandboxedFileSystem {
   }
 
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.resolve(path, opts) : await remote.resolve(path, opts)
   }
 
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.stat(target, signal) : await remote.stat(target, signal)
   }
 
   override async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.lstat(path, opts, signal) : await remote.lstat(path, opts, signal)
   }
 
   override async readText(target: FsTarget, signal?: AbortSignal): Promise<string> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.readText(target, signal) : await remote.readText(target, signal)
   }
 
   override async streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.streamText(target, signal) : await remote.streamText(target, signal)
   }
 
   override async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined
       ? await super.readBytes(target, signal, maxBytes)
       : await remote.readBytes(target, signal, maxBytes)
@@ -201,14 +219,14 @@ export class DshellFileSystem extends SandboxedFileSystem {
     range: { offset: number; length: number },
     signal?: AbortSignal,
   ): Promise<Uint8Array> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined
       ? await super.readByteRange(target, range, signal)
       : await remote.readByteRange(target, range, signal)
   }
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
-    const remote = this.remote()
+    const remote = await this.remote()
     return remote === undefined ? await super.listDir(target, signal) : await remote.listDir(target, signal)
   }
 
@@ -219,7 +237,7 @@ export class DshellFileSystem extends SandboxedFileSystem {
     signal?: AbortSignal,
     sandboxPolicy?: SandboxExecutionPolicy,
   ): Promise<FsWriteOutcome> {
-    const remote = this.remote()
+    const remote = await this.remote()
     const mapping = this.mapping()
     if (remote === undefined || mapping === undefined) {
       return await super.writeText(target, content, expected, signal, sandboxPolicy)
@@ -237,7 +255,7 @@ export class DshellFileSystem extends SandboxedFileSystem {
     signal?: AbortSignal,
     sandboxPolicy?: SandboxExecutionPolicy,
   ): Promise<FsEditOutcome> {
-    const remote = this.remote()
+    const remote = await this.remote()
     const mapping = this.mapping()
     if (remote === undefined || mapping === undefined) {
       return await super.editText(target, edit, expected, signal, sandboxPolicy)

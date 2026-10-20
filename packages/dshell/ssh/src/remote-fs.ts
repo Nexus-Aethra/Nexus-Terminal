@@ -37,7 +37,7 @@ import type {
   FsTarget, FsWriteIntent, FsWriteOutcome,
 } from '@deepseek-ai/dsh-fs'
 import type { MountMapping } from './mount.js'
-import { toRemotePath } from './mount.js'
+import { expandDeviceHome, isDevicePath, toRemotePath } from './mount.js'
 import {
   applyLiteralEdit, detectLineEndings, normalizeLineEndings, restoreLineEndings,
 } from './literal-edit.js'
@@ -78,8 +78,22 @@ export class RemoteFileSystem {
   /** Resolve a caller path (relative to `cwd`) into a device path. */
   private remoteFrom(cwd: string | undefined, path: string): string {
     const base = cwd ?? this.deps.mapping.mount
-    const local = isAbsolute(path) ? path : join(base, path)
-    return this.remote(local)
+    // A `~`-spelled path is the device's home, and the device's own shell would
+    // expand it while the helper's protocol refuses it — so it is expanded here
+    // against the device's root, which the mapping carries in absolute form.
+    const wanted = expandDeviceHome(path, this.deps.mapping.remoteRoot)
+    const against = expandDeviceHome(base, this.deps.mapping.remoteRoot)
+    // An absolute path already names a place: the device's own, or this
+    // machine's (which the mapping then re-bases). It is never joined onto a
+    // base — a device path joined onto a host directory would be spelled with
+    // the host's separators and would name a directory that is in neither
+    // world.
+    if (isAbsolute(wanted)) return this.remote(wanted)
+    // A relative path is resolved against the base, in the BASE's grammar: a
+    // base in the device's world is joined with the device's separators, so a
+    // completion or a `cd` lands where the shell would land it.
+    if (isDevicePath(this.deps.mapping, against)) return posix.join(against, wanted)
+    return this.remote(join(against, wanted))
   }
 
   /**

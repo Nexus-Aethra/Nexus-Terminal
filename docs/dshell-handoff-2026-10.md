@@ -15,11 +15,12 @@
 1. **宿主 `ssh` 依赖已经整个拆掉**：设备连接改走内置的 `ssh2` 客户端，Windows 上不再需要装
    OpenSSH Client，也不再读写用户的 `~/.ssh`。改动已提交（`7728876`）并推到
    `origin/feat/dshell-device-metrics`，领先 main **18 个提交**。
-2. **门禁全绿、真机验收通过**：584 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
+2. **门禁全绿、真机验收通过**：602 个测试通过 / 44 跳过、typecheck 干净、build 通过；DSHBox 容器里对
    `root@43.138.••.•••` 跑通了连接测试、helper 部署、设备终端（含 settle 标记、resize、Ctrl+C）、
-   文件列举/写入/回读/搜索。
-3. **发版已做，tag 与合 main 还没做**：0.1.14 线发到 `0.1.14-alpha.12`（npm `alpha` dist-tag），
-   `latest` 仍是 `0.1.13`。合 main、打 tag 都还没做——按规矩先问 wpplight。
+   文件列举/写入/回读/搜索。Windows 桌面版上另外验过：设备会话的 agent 拿到的是**设备的 bash**
+   （不是宿主的 pwsh），设备会话的**文件面板**列的是**设备的 `/root`**（不是宿主目录树）。
+3. **发版已做，tag 还没做**：0.1.14 线发到 `0.1.14-alpha.13`（npm `alpha` dist-tag），
+   `latest` 仍是 `0.1.13`。**0.1.14 线不打 tag、不做 release**（wpplight 明确要求过）。
 
 ## 1. 现场快照
 
@@ -29,10 +30,10 @@
 | HEAD | `7abb36c`（`docs(dshell): the handover, the phase, and the claims that stopped being true`） | `git log --oneline -1` |
 | main | `600406e`（`feat(dshell): support dsh 0.2.1-rc.2`） | `git log --oneline -1 main` |
 | 工作区 | **不干净**：57 个已跟踪文件被改（11 个包版本号、凭据/传输层/路径、客户端文案），8 个未跟踪全是新测试文件 | `git status --short` |
-| 版本 | 11 个包全部 `0.1.14-alpha.12` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
-| 测试 | 60 files / **586 tests passed / 44 skipped**，约 2 s | `pnpm run test` |
+| 版本 | 11 个包全部 `0.1.14-alpha.13` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 测试 | 60 files / **602 tests passed / 44 skipped**，约 3 s | `pnpm run test` |
 | 类型 | 干净（清 tsbuildinfo 后 `tsc -b tsconfig.host.json && tsc -b tsconfig.client.json`） | `pnpm run typecheck` |
-| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.12` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
+| npm 上 | `latest` = `0.1.13`，`alpha` = `0.1.14-alpha.13` | `NPM_CONFIG_USERCONFIG=~/.npmrc.publish npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新是 `dshell-v0.1.13`；**0.1.14 线没有 tag**（wpplight 明确要求过） | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | 工具链 | Node `v24.21.0`（nvm）、pnpm `9.15.0`（`~/.local/bin/pnpm` 包装脚本） | `node -v`、`pnpm -v` |
 | 宿主检出 | `dsh/`（未跟踪）在 `dsh-v0.2.0-rc.2-1923-g1be013386c`；根 `package.json` 用 `link:./dsh/packages/...` 覆盖全部 dsh 包 | `git -C dsh describe --tags` |
@@ -295,6 +296,40 @@ provider），而**同名的作用域贡献会遮蔽全局的那一个**。所�
 都打一行「dshell: 远端目录 ~ 不存在，已回到登录目录」。`quoteDevicePath` 早就在
 `shell-quote.ts` 里写好了（tilde 必须在引号外，理由写在那儿），只是 `deviceShellPlan`
 漏用了它。现在命令构造抽成了可测的 `deviceShellCd`，并补了断言：要 `cd ~`，不能是 `cd '~'`。
+
+**第五个坑（2026-10-20 桌面版实测）：设备会话的文件面板，把宿主的目录树拼到了设备的根下面。**
+
+设备绑定会话的右侧「文件」面板报的是「读取失败：目录不存在：`/root/.dsh/profiles/desktop/~/`」，
+面包屑却是 `C:\Users\hp`——**两个命名空间被拼在了一起**：设备根 `/root` 底下挂着宿主 profile
+目录的树，末尾还挂着一个 `~`。用真实的 `mount.js` 复现，能凑出这个串的拼法只有一种：
+**`node:path` 的 `relative()` 拿一个相对路径去比一个绝对根时，会把那个相对路径解析到"本进程的
+工作目录"**——Windows 上 dsh 宿主进程的工作目录正是 `C:\Users\hp\.dsh\profiles\desktop`，于是
+宿主自己的目录树被原样拼到了设备的 `/root` 下面。
+
+触发它还有半个前提：会话的根在绑定里存的是读者敲的 `~`，而它**展开成绝对路径靠的是 helper 握手的
+回答**——helper 是一条会掉线的连接，掉线时那个根就退回字面的 `~`，于是映射的根在 `/root` 与 `~`
+之间**抖动**；`~` 不是绝对 POSIX 路径（设备的协议只收绝对的），拼装就崩在了宿主那一侧。
+
+修法三处一起：
+
+1. **量之前先分命名空间**（`mount.ts` 的 `under`）：根与路径必须**同为绝对或同为相对**，否则一律不量。
+   跨命名空间的一次 `relative()` 换来的是"拿宿主 cwd 当答案"。
+2. **相对路径按基准所在的语法拼接**（`remote-fs.ts` 的 `remoteFrom`）：基准在设备树上就用设备的
+   分隔符，否则拼出来的是 `\root\notes.md`——设备上没有这种路径。
+3. **设备的根要记住**（`router.ts`）：helper 握手的回答**记下来**，映射的根因此**始终是绝对设备路径**，
+   不再随连接的存活抖动；`~` 由 seam 按设备根展开（设备的 shell 本来就会展开，helper 的协议却不收）。
+
+★ 教训：**"路径"这个词在两个命名空间里各有一套语法**。宿主侧 `node:path`、设备侧 POSIX，混用的
+代价不是报错，而是**一个看起来像设备路径、其实在两个世界都不存在的目录**——`/root/.dsh/profiles/
+desktop/~/` 恰好就是宿主自己的目录树。**拼路径之前先问"这是谁的路径"，以及"这两个根是不是同一
+个命名空间"。**
+
+**验收读数（2026-10-20，Windows 桌面版 + 真机 tencent）**：把桌面 profile 里的
+`@nexus-aethra/dshell-ssh/lib` 换成新构建、重启桌面版、解锁分组 `test` 之后，右侧「文件」面板的
+面包屑是 **`/root`**，列出的是设备上的 `.cache` / `.config` / `.docker` / `.dshell`（展开 `.dshell`
+见 `helper`——那正是设备上 helper 的安装位置），**没有任何宿主目录**。改之前的读数是
+`/root/.dsh/profiles/desktop/~/`。新增测试 `ssh/tests/device-namespace.spec.ts`（16 例），四处
+"牙齿检查"逐条确认改回旧写法就会变红。
 
 ## 6. 交接纪律（先读这条再看代码）
 
