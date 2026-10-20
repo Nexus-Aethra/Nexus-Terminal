@@ -129,6 +129,11 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     void (async () => {
       const device = router.deviceFor(deviceId)
       if (device === undefined) return
+      // Where the device's home is, remembered by the router: a `~`-spelled
+      // session root has to become an absolute device path, and the device is
+      // the only party that knows what its own `~` means. Asked before the
+      // target, because the home is an answer even for a device with no Node.
+      router.noteDeviceRoot(deviceId, await targets.home(device))
       const target = await targets.resolve(device)
       if (target === undefined) return
       await connections.forDevice(device, target)

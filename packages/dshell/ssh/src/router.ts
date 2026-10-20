@@ -243,6 +243,20 @@ export class SshRouter {
    * between "this machine is unreachable" and "unlock this group".
    */
   private unservable = new Map<string, { reason: string; groupId: string | undefined }>()
+  /**
+   * The device's absolute root, by device id, as the last answer about it said.
+   *
+   * A session's root is stored the way the reader typed it — `~` is the common
+   * one — and the device is the only party that knows what its own `~` means.
+   * The helper's handshake reports it, and the probe reports it too, but both are
+   * answers that arrive over a connection: a helper that is not up *right now* is
+   * not a device whose home is unknown. Remembering the answer is what keeps a
+   * mapping's root an ABSOLUTE device path, which is the only spelling the
+   * device's protocol accepts and the only one the containment check can
+   * compare a path against. Without it the root flapped between `~` and
+   * `/root`, and everything built on it flapped with it.
+   */
+  private readonly deviceRoots = new Map<string, string>()
   private ready: Promise<void>
   /**
    * This package's host copy, bound to the language service once it is
@@ -497,6 +511,10 @@ export class SshRouter {
     const device = await this.connectionFor(deviceId)
     const artifact = localHelperArtifact()
     const probe = await this.probeDevice(device)
+    // The device said where its home is, and a `~`-spelled session root is
+    // expanded against it — so the answer is kept, whether or not the device
+    // turns out to have a Node to run a helper with.
+    this.noteDeviceRoot(deviceId, probe.home)
     let status: DeviceHelperStatus
     if (probe.node === undefined) {
       status = {
@@ -572,6 +590,13 @@ export class SshRouter {
     if (assignment === undefined) return undefined
     const device = this.connections.get(assignment.deviceId)
     if (device === undefined) return undefined
+    // The device's own root: from the helper when one is up, and from what it
+    // said the last time one was. The mapping's root has to be absolute — the
+    // device's protocol admits nothing else, and the sandbox's containment
+    // check compares against it — so it is never left as the `~` the reader
+    // typed.
+    const live = this.helperConnection?.(device.id)?.deviceRoot()
+    if (live !== undefined) this.noteDeviceRoot(device.id, live)
     return {
       device,
       // The stored root is what the reader typed (`~` is the common one) and a
@@ -580,9 +605,56 @@ export class SshRouter {
       // is made — against the root the device reported at its handshake.
       remoteRoot: absoluteRemoteRoot(
         assignment.remoteRoot ?? device.remoteRoot,
-        this.helperConnection?.(device.id)?.deviceRoot(),
+        this.deviceRoots.get(device.id),
       ),
       mount: assignment.mount,
+    }
+  }
+
+  /**
+   * Remember a device's absolute root.
+   *
+   * The device is the only party that knows what its own `~` means, so every
+   * answer about its home is worth keeping: the mapping's root is built from
+   * it, and a root that turned back into a `~` whenever a connection was not
+   * up is a root the device cannot be asked about.
+   *
+   * @param deviceId - the device the root belongs to.
+   * @param root - the device's absolute home directory.
+   */
+  noteDeviceRoot(deviceId: string, root: string): void {
+    if (!root.startsWith('/')) return
+    this.deviceRoots.set(deviceId, root)
+  }
+
+  /**
+   * A device's absolute root, asking the device when it has not said yet.
+   *
+   * The device is the only party that knows what its own `~` means, so the
+   * answer has to come from it: a session's root is stored the way the reader
+   * typed it, and the mapping built from it has to be an absolute device path
+   * — the device's protocol admits nothing else, and the containment check can
+   * only compare a path against an absolute root.
+   *
+   * Asked once: the answer is remembered, so the second caller does not pay for
+   * it again, and a device that cannot be reached is asked no more than once.
+   *
+   * @param deviceId - device to ask.
+   * @returns the device's absolute root, or undefined when it cannot be asked.
+   */
+  async ensureDeviceRoot(deviceId: string): Promise<string | undefined> {
+    const known = this.deviceRoots.get(deviceId)
+    if (known !== undefined) return known
+    const device = this.connections.get(deviceId)
+    if (device === undefined) return undefined
+    try {
+      const probe = await this.probeDevice(device)
+      this.noteDeviceRoot(deviceId, probe.home)
+      return this.deviceRoots.get(deviceId)
+    } catch (error) {
+      // A device that cannot be reached has no root to give. The caller falls
+      // back to what it had, which is the spelling the reader typed.
+      return undefined
     }
   }
 
@@ -778,6 +850,11 @@ export class SshRouter {
     if (result.exitCode !== 0) return
     const [home = '', node = '', onDevice = ''] = result.stdout.trimEnd().split('\n')
     const homeDir = home.trim()
+    // The device said where its home is; a session's `~`-spelled root is
+    // expanded against it, and the answer is kept even when the device turns
+    // out to have no Node — the assembled-command lane serves that device
+    // perfectly well.
+    if (homeDir.startsWith('/')) this.noteDeviceRoot(deviceId, homeDir)
     if (!homeDir.startsWith('/') || node.trim() === '') {
       await this.devices.setHelper(deviceId, {
         state: 'absent',

@@ -62,12 +62,29 @@ export function installProbe(expectedHash: string): string {
 
 /** Where a device's helper lives, and the digest it must report. */
 export interface ResolvedTarget {
+  /** The device's absolute home directory, as its probe reported it. */
+  home: string
   /** Absolute remote Node executable. */
   node: string
   /** Absolute path of the installed helper entry on the device. */
   helper: string
   /** The digest the device's entry must report. */
   expectedHash: string
+}
+
+/**
+ * What one probe asked the device, and what it said.
+ *
+ * The home and the Node executable come from the same round trip, and they are
+ * kept together because they are answers about the same device: the home is an
+ * answer even when the device has no Node to run a helper with, and the device's
+ * root is what a `~`-spelled session root expands to either way.
+ */
+interface ProbeAnswer {
+  /** The device's absolute home directory. */
+  readonly home: string
+  /** The device's absolute Node executable, when it has one. */
+  readonly node: string | undefined
 }
 
 /** Device subdirectory the helper is installed under, relative to the home. */
@@ -83,7 +100,7 @@ const HELPER_DIRECTORY = '.dshell/helper'
  * instead make behaviour depend on how long ago the last probe ran.
  */
 export class HelperTargets {
-  private readonly cache = new Map<string, Promise<ResolvedTarget | undefined>>()
+  private readonly cache = new Map<string, Promise<ProbeAnswer>>()
 
   /**
    * @param artifact - the helper this build ships, read at call time.
@@ -98,6 +115,31 @@ export class HelperTargets {
    * @returns the target, or undefined when the device has no Node to run it.
    */
   async resolve(device: DeviceConnection): Promise<ResolvedTarget | undefined> {
+    const answer = await this.answer(device)
+    if (answer.node === undefined) return undefined
+    return {
+      home: answer.home,
+      node: answer.node,
+      helper: `${answer.home.replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.mjs`,
+      expectedHash: this.artifact().hash,
+    }
+  }
+
+  /**
+   * The device's absolute home directory, from the same probe.
+   *
+   * An answer even when the device has no Node: the home is what a `~`-spelled
+   * session root expands to, and the assembled-command lane serves a device
+   * without Node perfectly well — so a device with no helper still has a root.
+   * @param device - device to ask.
+   * @returns the device's absolute home directory.
+   */
+  async home(device: DeviceConnection): Promise<string> {
+    return (await this.answer(device)).home
+  }
+
+  /** The probe's answer for one device, asked once. */
+  private async answer(device: DeviceConnection): Promise<ProbeAnswer> {
     const existing = this.cache.get(device.id)
     if (existing !== undefined) return await existing
     const pending = this.probe(device)
@@ -126,7 +168,7 @@ export class HelperTargets {
   }
 
   /** Ask the device where its home is and whether it has Node. */
-  private async probe(device: DeviceConnection): Promise<ResolvedTarget | undefined> {
+  private async probe(device: DeviceConnection): Promise<ProbeAnswer> {
     const result = await deviceTransport().exec(device, PROBE, { graceMs: 10_000 })
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() === ''
@@ -137,11 +179,9 @@ export class HelperTargets {
     if (home.trim() === '' || !home.startsWith('/')) {
       throw new Error('the device did not report a usable home directory')
     }
-    if (node.trim() === '' || !node.startsWith('/')) return undefined
-    return {
-      node: node.trim(),
-      helper: `${home.trim().replace(/\/$/u, '')}/${HELPER_DIRECTORY}/helper-${this.artifact().hash}.mjs`,
-      expectedHash: this.artifact().hash,
-    }
+    // The home is an answer whatever the Node answer is: a device without Node
+    // still has a home, and the assembled-command lane serves it.
+    const nodePath = node.trim() === '' || !node.startsWith('/') ? undefined : node.trim()
+    return { home: home.trim(), node: nodePath }
   }
 }

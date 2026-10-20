@@ -177,6 +177,12 @@ export function absoluteRemoteRoot(remoteRoot: string, deviceRoot: string | unde
  * @returns absolute path in the device's namespace.
  */
 export function toRemotePath(mapping: MountMapping, path: string): string {
+  // Only a path in the SAME namespace as the root it is measured against can
+  // be re-based onto the mount or the alias. A relative path measured against
+  // an absolute root would be resolved against this PROCESS's working
+  // directory — which is how the host's own tree ended up spelled as the
+  // device's `/root/.dsh/profiles/<profile>/~`: a directory that is in neither
+  // world, reported to the reader as if the device had it.
   const rest = under(mapping.mount, path) ?? (mapping.alias === undefined ? undefined : under(mapping.alias, path))
   if (rest === undefined) return path
   if (rest === '') return mapping.remoteRoot
@@ -186,9 +192,57 @@ export function toRemotePath(mapping: MountMapping, path: string): string {
   return posix.join(base === '' ? '/' : base, rest.split(sep).join('/'))
 }
 
-/** The part of `path` under `root`, or undefined when it is not under it. */
+/**
+ * The part of `path` under `root`, or undefined when it is not under it.
+ *
+ * The two have to be in the SAME namespace: a relative root and an absolute
+ * path are not, and the host's `relative` resolves the relative one against
+ * this process's working directory — so the answer would be a measurement of
+ * the path against a directory that has nothing to do with it.
+ */
 function under(root: string, path: string): string | undefined {
+  if (isAbsolute(root) !== isAbsolute(path)) return undefined
   return isUnder(root, path) ? relative(root, path) : undefined
+}
+
+/**
+ * Expand a leading `~` against the DEVICE's own home.
+ *
+ * The device's shell would do it for free, and the helper's protocol refuses
+ * anything that is not absolute — "always absolute: the caller translates, the
+ * device does not guess" — so the translation happens here, at the one place a
+ * mapping is made. A `~` that reaches the device unexpanded is a path the
+ * device cannot open, and a path the device cannot open is a whole panel that
+ * says "no such directory".
+ *
+ * @param path - the path as the caller spelled it.
+ * @param home - the device's absolute home directory.
+ * @returns the path with its `~` replaced, when it had one.
+ */
+export function expandDeviceHome(path: string, home: string): string {
+  if (!path.startsWith('~')) return path
+  return `${home.replace(/\/+$/u, '')}${path.slice(1)}`
+}
+
+/**
+ * Whether a path names a place in the DEVICE's tree rather than in this
+ * machine's.
+ *
+ * The mount and the alias are the two roots that stand in for the device here,
+// so a path under either of them is this machine's. Every other absolute path
+ * is the device's own — which is the point of a device session: `/var/log`
+ * means the device's `/var/log`, and a relative path is joined onto the
+ * device's root in the DEVICE's grammar rather than the host's.
+ *
+ * @param mapping - the session's mapping.
+ * @param path - the path to test.
+ * @returns whether the path names a place on the device.
+ */
+export function isDevicePath(mapping: MountMapping, path: string): boolean {
+  if (!isAbsolute(path)) return false
+  if (under(mapping.mount, path) !== undefined) return false
+  if (mapping.alias !== undefined && under(mapping.alias, path) !== undefined) return false
+  return true
 }
 
 /**
