@@ -474,6 +474,9 @@ importers:
       '@deepseek-ai/dsh-agent':
         specifier: link:../../../dsh/packages/core/agent
         version: link:../../../dsh/packages/core/agent
+      '@deepseek-ai/dsh-api-session-controller':
+        specifier: link:../../../dsh/packages/api/session-controller
+        version: link:../../../dsh/packages/api/session-controller
       '@deepseek-ai/dsh-client-connection':
         specifier: link:../../../dsh/packages/client/connection
         version: link:../../../dsh/packages/client/connection
