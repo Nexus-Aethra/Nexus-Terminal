@@ -16,6 +16,7 @@
 
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type { DshellCompletionNote } from '@nexus-aethra/dshell-std'
+import type { DshellDeviceNoteCode } from '../device-detail-protocol.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -347,10 +348,57 @@ export const zh = {
   'tui.enterTitle': '把整个界面交给这个程序，按键由它直接接收',
   'tui.leave': '退出全屏',
   'tui.occupying': '{program} 正在占用终端',
+
+  // The device panel: the machine a session is bound to, and what runs on it.
+  'device.type.label': '设备',
+  'device.guide.title': '设备详情',
+  'device.guide.description': '查看会话所在设备的进程、容器与监听端口',
+  'device.title': '设备详情',
+  'device.refresh': '刷新',
+  'device.pending': '正在读取设备…',
+  'device.section.machine': '机器',
+  'device.section.load': '负载',
+  'device.section.processes': '进程',
+  'device.section.containers': '容器',
+  'device.section.ports': '监听端口',
+  'device.machine.kind': '运行位置',
+  'device.machine.device': '远程设备',
+  'device.machine.local': '本机',
+  'device.machine.name': '设备名',
+  'device.machine.endpoint': '地址',
+  'device.load.pending': '读取中…',
+  'device.load.cpu': 'CPU',
+  'device.load.cores': '核',
+  'device.load.memory': '内存',
+  'device.load.load1': '1 分钟负载',
+  'device.load.unknown': '—',
+  'device.list.empty': '（无）',
+  'device.note.noPs': '这台机器的 ps 没能读出进程清单（缺少 ps，或 ps 不支持所问的字段）',
+  'device.note.noContainerRuntime': '这台机器的容器运行时没能读出清单（缺少 docker/podman，或守护进程没起）',
+  'device.note.noSocketTool': '这台机器的 ss/netstat 没能读出端口清单',
+  'device.note.processesUnreported': '设备没有报告进程清单',
+  'device.note.containersUnreported': '设备没有报告容器清单',
+  'device.note.portsUnreported': '设备没有报告端口清单',
 } satisfies Record<string, string>
 
 /** Mode dictionary key union. */
 export type DshellModeKey = keyof typeof zh
+
+/**
+ * The key each device note is written with.
+ *
+ * The host answers with a code, so the sentence is chosen here, where the
+ * language is known. Typed as a total map, so a note added to the wire cannot
+ * be silently rendered as "nothing to report".
+ */
+export const DEVICE_NOTE_KEYS: Record<DshellDeviceNoteCode, DshellModeKey> = {
+  'no-ps': 'device.note.noPs',
+  'no-container-runtime': 'device.note.noContainerRuntime',
+  'no-socket-tool': 'device.note.noSocketTool',
+  'processes-unreported': 'device.note.processesUnreported',
+  'containers-unreported': 'device.note.containersUnreported',
+  'ports-unreported': 'device.note.portsUnreported',
+}
 
 /**
  * The key each empty-completion reason is written with.
@@ -659,4 +707,35 @@ export const en = {
   'tui.enterTitle': 'Hand the whole surface to this program and let it take the keys',
   'tui.leave': 'Leave full screen',
   'tui.occupying': '{program} is holding the terminal',
+
+  // The device panel: the machine a session is bound to, and what runs on it.
+  'device.type.label': 'Device',
+  'device.guide.title': 'Device details',
+  'device.guide.description': 'The processes, containers and listening ports of the device this session runs on',
+  'device.title': 'Device details',
+  'device.refresh': 'Refresh',
+  'device.pending': 'Reading the device…',
+  'device.section.machine': 'Machine',
+  'device.section.load': 'Load',
+  'device.section.processes': 'Processes',
+  'device.section.containers': 'Containers',
+  'device.section.ports': 'Listening ports',
+  'device.machine.kind': 'Runs on',
+  'device.machine.device': 'a remote device',
+  'device.machine.local': 'this machine',
+  'device.machine.name': 'Device',
+  'device.machine.endpoint': 'Endpoint',
+  'device.load.pending': 'reading…',
+  'device.load.cpu': 'CPU',
+  'device.load.cores': 'cores',
+  'device.load.memory': 'Memory',
+  'device.load.load1': '1-minute load',
+  'device.load.unknown': '—',
+  'device.list.empty': '(none)',
+  'device.note.noPs': "This machine's ps could not list its processes (no ps, or ps does not speak the fields asked for)",
+  'device.note.noContainerRuntime': "This machine's container runtime could not list its containers (no docker or podman, or its daemon is not running)",
+  'device.note.noSocketTool': "This machine's ss or netstat could not list its sockets",
+  'device.note.processesUnreported': 'The device reported no process list',
+  'device.note.containersUnreported': 'The device reported no container list',
+  'device.note.portsUnreported': 'The device reported no socket list',
 } satisfies Record<DshellModeKey, string>
