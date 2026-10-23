@@ -12,6 +12,9 @@
  * A row opens to show what the list cannot fit: the whole command line, the
  * owner, the state, how long it has been running.
  *
+ * The heads and the rows are ONE grid: when they are two layouts, the columns
+ * drift apart and a reader who aims at "CPU" sorts by memory.
+ *
  * The load is NOT asked for again: the status chip polls it, the panel reads
  * the same answer, and two readers of one machine cost one round trip.
  *
@@ -29,14 +32,18 @@ import { deviceDetailSeat } from './device-detail.js'
 import { deviceMetricsSeat } from './device-metrics.js'
 import {
   devicePanelView,
+  filterContainerRows,
   filterPortRows,
   filterProcessRows,
   nextSort,
+  sortContainerRows,
   sortPortRows,
   sortProcessRows,
+  type ContainerSortKey,
+  type DevicePanelContainerRow,
   type DevicePanelPage,
-  type DevicePanelProcessRow,
   type DevicePanelPortRow,
+  type DevicePanelProcessRow,
   type DevicePanelStat,
   type PortSortKey,
   type ProcessSortKey,
@@ -50,6 +57,16 @@ import type {} from './locales.js'
 export type DevicePanelProps =
   & PropsRuntime<'sidebar.right.pane.tab'>
   & PropsLocale<'dshellMode'>
+
+/**
+ * The columns of each list, as ONE grid.
+ *
+ * The heads and the rows share it, so a column is where its head says it is
+ * and a click on the head reaches the column it names.
+ */
+const PROCESS_COLUMNS = '44px minmax(0, 1fr) 50px 50px'
+const PORT_COLUMNS = '38px 48px minmax(0, 1fr) minmax(0, 110px)'
+const CONTAINER_COLUMNS = 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, auto)'
 
 const styles = {
   root: {
@@ -189,7 +206,7 @@ const styles = {
   } as CSSProperties,
   /** The column heads: what the list can be ordered by. */
   heads: {
-    display: 'flex',
+    display: 'grid',
     alignItems: 'center',
     gap: 8,
     padding: '2px 0 4px',
@@ -210,11 +227,12 @@ const styles = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 3,
+    minWidth: 0,
   } as CSSProperties,
   headOn: { color: 'var(--dsw-alias-label-secondary)' } as CSSProperties,
   /** One row of a list: flat, a hairline under it, 24px tall. */
   row: {
-    display: 'flex',
+    display: 'grid',
     alignItems: 'center',
     gap: 8,
     minHeight: 24,
@@ -231,8 +249,7 @@ const styles = {
     fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
     fontSize: 11,
   } as CSSProperties,
-  grow: {
-    flex: '1 1 auto',
+  cell: {
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -240,32 +257,33 @@ const styles = {
   } as CSSProperties,
   number: {
     textAlign: 'right',
-    flex: '0 0 auto',
-    minWidth: 42,
   } as CSSProperties,
   dim: { color: 'var(--dsw-alias-label-tertiary)' } as CSSProperties,
   good: { color: 'var(--dsw-alias-state-business-primary)' } as CSSProperties,
   /** The process holding a socket: a link, because it leads somewhere. */
   holder: {
-    flex: '0 0 auto',
-    maxWidth: 92,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
     border: 'none',
     background: 'transparent',
     color: 'var(--dsw-alias-label-primary)',
     font: 'inherit',
     padding: 0,
     cursor: 'pointer',
+    textAlign: 'right',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   } as CSSProperties,
   /** The container's state, with the dot that says whether it is healthy. */
   stateWrap: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 5,
+    justifyContent: 'flex-end',
+    minWidth: 0,
   } as CSSProperties,
   stateDot: {
+    flex: '0 0 auto',
     width: 5,
     height: 5,
     borderRadius: 3,
@@ -361,21 +379,6 @@ function Stat({ stat, t }: { stat: DevicePanelStat; t: DevicePanelProps['t'] }):
   )
 }
 
-/**
- * A chevron for a row that GOES somewhere.
- *
- * dshell's own icon set has no chevron-right, and a row that switches page is
- * not a disclosure — so it carries a mark of its own, drawn in the same 1px
- * stroke as the rest of the panel's artwork.
- */
-function ChevronRight({ size = 14 }: { size?: number }): ReactNode {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M6 3.5L10.5 8L6 12.5" />
-    </svg>
-  )
-}
-
 /** A search glyph for the filter line. */
 function SearchGlyph(): ReactNode {
   return (
@@ -404,7 +407,11 @@ function SortHead<K extends string>({ label, keys, key, onSort, align }: {
   return (
     <button
       type="button"
-      style={{ ...styles.head, ...(entry === undefined ? {} : styles.headOn), ...(align === 'right' ? { marginLeft: 'auto' } : {}) }}
+      style={{
+        ...styles.head,
+        ...(entry === undefined ? {} : styles.headOn),
+        ...(align === 'right' ? { justifySelf: 'end' } : {}),
+      }}
       onClick={(event) => { onSort(key, event.shiftKey) }}
     >
       <span>{label}</span>
@@ -443,13 +450,14 @@ function ProcessRow({ row, open, onOpen, last, t }: {
         data-dshell-device-row="process"
         style={{
           ...styles.row,
+          gridTemplateColumns: PROCESS_COLUMNS,
           ...(open ? styles.rowOpen : {}),
           ...(last ? styles.rowLast : {}),
         }}
         onClick={() => { onOpen(row.pid) }}
       >
-        <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto' }}>{String(row.pid)}</span>
-        <span style={styles.grow}>{row.command}</span>
+        <span style={{ ...styles.mono, ...styles.dim, ...styles.cell }}>{String(row.pid)}</span>
+        <span style={styles.cell}>{row.command}</span>
         <span style={{ ...styles.mono, ...styles.number }}>{`${row.cpu.toFixed(1)}%`}</span>
         <span style={{ ...styles.mono, ...styles.number, ...styles.dim }}>{`${row.memory.toFixed(1)}%`}</span>
       </div>
@@ -484,22 +492,24 @@ function ProcessRow({ row, open, onOpen, last, t }: {
 }
 
 /** A row of the container list: name, image, and the runtime's own word. */
-function ContainerRow({ name, image, state, last }: {
-  name: string
-  image: string
-  state: string
+function ContainerRow({ row, last }: {
+  row: DevicePanelContainerRow
   last: boolean
 }): ReactNode {
   return (
     <div
       data-dshell-device-row="container"
-      style={last ? { ...styles.row, ...styles.rowLast } : styles.row}
+      style={{
+        ...styles.row,
+        gridTemplateColumns: CONTAINER_COLUMNS,
+        ...(last ? styles.rowLast : {}),
+      }}
     >
-      <span style={{ ...styles.grow, fontWeight: 500 }}>{name}</span>
-      <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{image}</span>
-      <span style={{ ...styles.stateWrap, flex: '0 0 auto' }}>
+      <span style={{ ...styles.cell, fontWeight: 500 }}>{row.name}</span>
+      <span style={{ ...styles.mono, ...styles.dim, ...styles.cell }}>{row.image}</span>
+      <span style={styles.stateWrap}>
         <span style={styles.stateDot} />
-        <span style={{ ...styles.mono, ...styles.good }}>{state}</span>
+        <span style={{ ...styles.mono, ...styles.good }}>{row.state}</span>
       </span>
     </div>
   )
@@ -519,13 +529,17 @@ function PortRow({ row, last, onHold }: {
   return (
     <div
       data-dshell-device-row="port"
-      style={last ? { ...styles.row, ...styles.rowLast } : styles.row}
+      style={{
+        ...styles.row,
+        gridTemplateColumns: PORT_COLUMNS,
+        ...(last ? styles.rowLast : {}),
+      }}
     >
-      <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto', width: 26 }}>{row.proto}</span>
-      <span style={{ ...styles.mono, flex: '0 0 auto', minWidth: 42 }}>{String(row.port)}</span>
-      <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{row.address}</span>
+      <span style={{ ...styles.mono, ...styles.dim }}>{row.proto}</span>
+      <span style={{ ...styles.mono }}>{String(row.port)}</span>
+      <span style={{ ...styles.mono, ...styles.dim, ...styles.cell }}>{row.address}</span>
       {row.processName === ''
-        ? <span style={{ ...styles.mono, flex: '0 0 auto', maxWidth: 92, opacity: 0.5 }}>—</span>
+        ? <span style={{ ...styles.mono, ...styles.cell, textAlign: 'right', opacity: 0.5 }}>—</span>
         : (
           <button
             type="button"
@@ -575,6 +589,7 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
   const [portQuery, setPortQuery] = useState('')
   const [portSort, setPortSort] = useState<readonly SortKey<PortSortKey>[]>([{ key: 'port', direction: 'asc' }])
   const [containerQuery, setContainerQuery] = useState('')
+  const [containerSort, setContainerSort] = useState<readonly SortKey<ContainerSortKey>[]>([{ key: 'name', direction: 'asc' }])
   const [expandedPid, setExpandedPid] = useState<number | undefined>(undefined)
 
   const pages = useMemo<readonly [SegmentedTab<DevicePanelPage>, ...SegmentedTab<DevicePanelPage>[]]>(() => ([
@@ -597,13 +612,10 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
     () => sortPortRows(filterPortRows(ports, portQuery, 'all'), portSort),
     [ports, portQuery, portSort],
   )
-  const shownContainers = useMemo(() => {
-    const needle = containerQuery.trim().toLowerCase()
-    if (needle === '') return containers
-    return containers.filter(row => row.name.toLowerCase().includes(needle)
-      || row.image.toLowerCase().includes(needle)
-      || row.state.toLowerCase().includes(needle))
-  }, [containers, containerQuery])
+  const shownContainers = useMemo(
+    () => sortContainerRows(filterContainerRows(containers, containerQuery), containerSort),
+    [containers, containerQuery, containerSort],
+  )
 
   return (
     <div style={styles.root}>
@@ -680,31 +692,6 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                           </DisclosureRow>
                         </div>
                       )}
-
-                    <DisclosureRow
-                      icon={<ChevronRight />}
-                      title={`${t('device.section.processes')} ${String(processes.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.pidCmd')}</span>}
-                      open={false}
-                      expandable={false}
-                      onToggle={() => { onPage('processes') }}
-                    />
-                    <DisclosureRow
-                      icon={<ChevronRight />}
-                      title={`${t('device.section.containers')} ${String(containers.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
-                      open={false}
-                      expandable={false}
-                      onToggle={() => { onPage('containers') }}
-                    />
-                    <DisclosureRow
-                      icon={<ChevronRight />}
-                      title={`${t('device.section.ports')} ${String(ports.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.portProto')}</span>}
-                      open={false}
-                      expandable={false}
-                      onToggle={() => { onPage('ports') }}
-                    />
                   </div>
                 )
                 : null}
@@ -730,7 +717,7 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                       expandOnRowClick
                       onToggle={() => { onToggle('processes') }}
                     >
-                      <div style={styles.heads}>
+                      <div style={{ ...styles.heads, gridTemplateColumns: PROCESS_COLUMNS }}>
                         <SortHead label={t('device.column.pid')} keys={processSort} key="pid" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
                         <SortHead label={t('device.column.command')} keys={processSort} key="name" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
                         <SortHead label={t('device.column.cpu')} keys={processSort} key="cpu" align="right" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
@@ -765,17 +752,30 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                         onChange={(event) => { setContainerQuery(event.target.value) }}
                       />
                     </div>
-                    {shownContainers.length === 0
-                      ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                      : shownContainers.map((container, index) => (
-                        <ContainerRow
-                          key={container.name}
-                          name={container.name}
-                          image={container.image}
-                          state={container.state}
-                          last={index === shownContainers.length - 1}
-                        />
-                      ))}
+                    <DisclosureRow
+                      icon={null}
+                      title={`${t('device.section.containers')} ${String(containers.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
+                      open={!folded.has('containers')}
+                      expandable
+                      expandOnRowClick
+                      onToggle={() => { onToggle('containers') }}
+                    >
+                      <div style={{ ...styles.heads, gridTemplateColumns: CONTAINER_COLUMNS }}>
+                        <SortHead label={t('device.column.name')} keys={containerSort} key="name" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
+                        <SortHead label={t('device.column.image')} keys={containerSort} key="image" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
+                        <SortHead label={t('device.column.state')} keys={containerSort} key="state" align="right" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
+                      </div>
+                      {shownContainers.length === 0
+                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                        : shownContainers.map((container, index) => (
+                          <ContainerRow
+                            key={container.name}
+                            row={container}
+                            last={index === shownContainers.length - 1}
+                          />
+                        ))}
+                    </DisclosureRow>
                   </div>
                 )
                 : null}
@@ -801,7 +801,7 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                       expandOnRowClick
                       onToggle={() => { onToggle('ports') }}
                     >
-                      <div style={styles.heads}>
+                      <div style={{ ...styles.heads, gridTemplateColumns: PORT_COLUMNS }}>
                         <SortHead label={t('device.column.proto')} keys={portSort} key="proto" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
                         <SortHead label={t('device.column.port')} keys={portSort} key="port" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
                         <SortHead label={t('device.column.address')} keys={portSort} key="address" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />

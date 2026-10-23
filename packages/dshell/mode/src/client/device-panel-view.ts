@@ -85,6 +85,7 @@ export interface DevicePanelPortRow {
  */
 export type ProcessSortKey = 'cpu' | 'memory' | 'pid' | 'name' | 'user' | 'elapsed'
 export type PortSortKey = 'port' | 'proto' | 'address' | 'process'
+export type ContainerSortKey = 'name' | 'image' | 'state'
 
 /** The direction one key is sorted in. */
 export type SortDirection = 'asc' | 'desc'
@@ -333,6 +334,35 @@ export function sortPortRows(
   keys: readonly SortKey<PortSortKey>[],
 ): readonly DevicePanelPortRow[] {
   return orderBy(rows, keys, portOrderValue)
+}
+
+/** The value one key sorts by, and how bigger is better. */
+function containerOrderValue(row: DevicePanelContainerRow, key: ContainerSortKey): string {
+  switch (key) {
+    case 'image': return row.image.toLowerCase()
+    case 'state': return row.state.toLowerCase()
+    default: return row.name.toLowerCase()
+  }
+}
+
+/** The containers, ordered the way the reader asked. */
+export function sortContainerRows(
+  rows: readonly DevicePanelContainerRow[],
+  keys: readonly SortKey<ContainerSortKey>[],
+): readonly DevicePanelContainerRow[] {
+  return orderBy(rows, keys, containerOrderValue)
+}
+
+/** The containers that match what the reader typed. */
+export function filterContainerRows(
+  rows: readonly DevicePanelContainerRow[],
+  query: string,
+): readonly DevicePanelContainerRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return rows
+  return rows.filter(row => row.name.toLowerCase().includes(needle)
+    || row.image.toLowerCase().includes(needle)
+    || row.state.toLowerCase().includes(needle))
 }
 
 /**

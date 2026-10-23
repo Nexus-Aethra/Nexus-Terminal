@@ -84,12 +84,25 @@ describe('the device panel', () => {
     expect(html).toContain('1.50')
   })
 
-  it('offers the three lists, with their counts', () => {
+  it('does not repeat the three lists the top bar already offers', () => {
     const html = draw('overview')
 
-    expect(html).toContain('进程 2')
-    expect(html).toContain('容器 1')
-    expect(html).toContain('监听端口 2')
+    // The counts live on the pages themselves; the overview is the machine and
+    // its load, and a third copy of the navigation is noise.
+    expect(html).not.toContain('进程 2')
+    expect(html).not.toContain('容器 1')
+    expect(html).not.toContain('监听端口 2')
+  })
+
+  it('draws the heads and the rows on ONE grid, so the columns line up', () => {
+    // When the heads and the rows are two layouts, the columns drift apart and
+    // a reader who aims at "CPU" sorts by memory.
+    const html = draw('processes')
+    const columns = '44px minmax(0, 1fr) 50px 50px'
+    const times = html.split(columns).length - 1
+
+    // Once for the heads, once for the row, once for the other row.
+    expect(times).toBeGreaterThanOrEqual(3)
   })
 
   it('draws a filter and sortable columns on the process list', () => {
@@ -103,6 +116,16 @@ describe('the device panel', () => {
     expect(html).toContain('4211')
     expect(html).toContain('node')
     expect(html).toContain('12.5%')
+  })
+
+  it('draws sortable columns on the container list too', () => {
+    const html = draw('containers')
+
+    expect(html).toContain('名称')
+    expect(html).toContain('镜像')
+    expect(html).toContain('状态')
+    expect(html).toContain('web')
+    expect(html).toContain('nginx:latest')
   })
 
   it('draws the port list with the process that holds each port', () => {
