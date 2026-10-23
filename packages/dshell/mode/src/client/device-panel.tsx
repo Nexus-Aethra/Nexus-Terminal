@@ -413,7 +413,9 @@ function SortHead<K extends string>({ label, keys, key, onSort, align }: {
       style={{
         ...styles.head,
         ...(entry === undefined ? {} : styles.headOn),
-        ...(align === 'right' ? { justifySelf: 'end' } : {}),
+        // The head fills its column, so aiming at the column is aiming at the
+        // head; the text inside it is what decides which way the text sits.
+        ...(align === 'right' ? { justifyContent: 'flex-end' } : {}),
       }}
       onClick={(event) => { onSort(key, event.shiftKey) }}
     >
