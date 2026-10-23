@@ -246,6 +246,9 @@ function portMatches(row: DevicePanelPortRow, needle: string): boolean {
   if (needle === '') return true
   return row.address.toLowerCase().includes(needle)
     || row.processName.toLowerCase().includes(needle)
+    // The transport is part of what a reader types ("tcp", "udp"), so it is
+    // part of what they can find.
+    || row.proto.toLowerCase().includes(needle)
     || String(row.port) === needle
     || String(row.processPid ?? '') === needle
 }

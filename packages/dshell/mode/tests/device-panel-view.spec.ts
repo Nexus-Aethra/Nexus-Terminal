@@ -214,6 +214,16 @@ describe('what the reader typed', () => {
     expect(filterPortRows(portRows(), 'sshd')).toHaveLength(1)
   })
 
+  it('narrows the ports by the transport, because readers type it', () => {
+    const rows: DevicePanelPortRow[] = [
+      { proto: 'tcp', port: 22, address: '0.0.0.0', processName: 'sshd', processPid: 1 },
+      { proto: 'udp', port: 53, address: '0.0.0.0', processName: 'resolved', processPid: 2 },
+    ]
+
+    expect(filterPortRows(rows, 'tcp')).toHaveLength(1)
+    expect(filterPortRows(rows, 'udp')).toHaveLength(1)
+  })
+
   it('narrows the ports to one transport when the reader asks', () => {
     const rows: DevicePanelPortRow[] = [
       { proto: 'tcp', port: 22, address: '0.0.0.0', processName: 'sshd', processPid: 1 },

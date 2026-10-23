@@ -245,6 +245,20 @@ const styles = {
   } as CSSProperties,
   dim: { color: 'var(--dsw-alias-label-tertiary)' } as CSSProperties,
   good: { color: 'var(--dsw-alias-state-business-primary)' } as CSSProperties,
+  /** The process holding a socket: a link, because it leads somewhere. */
+  holder: {
+    flex: '0 0 auto',
+    maxWidth: 92,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--dsw-alias-label-primary)',
+    font: 'inherit',
+    padding: 0,
+    cursor: 'pointer',
+  } as CSSProperties,
   /** The container's state, with the dot that says whether it is healthy. */
   stateWrap: {
     display: 'inline-flex',
@@ -491,10 +505,16 @@ function ContainerRow({ name, image, state, last }: {
   )
 }
 
-/** A row of the port list: the transport, the port, and who holds it. */
-function PortRow({ row, last }: {
+/**
+ * A row of the port list: the transport, the port, and who holds it.
+ *
+ * The holder is a LINK, not a word: the first question about a port is who
+ * holds it, and the process list is where the answer is read.
+ */
+function PortRow({ row, last, onHold }: {
   row: DevicePanelPortRow
   last: boolean
+  onHold: (name: string) => void
 }): ReactNode {
   return (
     <div
@@ -504,9 +524,17 @@ function PortRow({ row, last }: {
       <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto', width: 26 }}>{row.proto}</span>
       <span style={{ ...styles.mono, flex: '0 0 auto', minWidth: 42 }}>{String(row.port)}</span>
       <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{row.address}</span>
-      <span style={{ ...styles.mono, flex: '0 0 auto', maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {row.processName === '' ? '—' : row.processName}
-      </span>
+      {row.processName === ''
+        ? <span style={{ ...styles.mono, flex: '0 0 auto', maxWidth: 92, opacity: 0.5 }}>—</span>
+        : (
+          <button
+            type="button"
+            style={{ ...styles.holder, ...styles.mono }}
+            onClick={() => { onHold(row.processName) }}
+          >
+            {row.processName}
+          </button>
+        )}
     </div>
   )
 }
@@ -786,6 +814,15 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                             key={`${row.proto}-${String(row.port)}-${row.address}`}
                             row={row}
                             last={index === shownPorts.length - 1}
+                            onHold={(name) => {
+                              // The first question about a port is who holds
+                              // it, and the process list is where the answer
+                              // is read: so the holder leads there, with the
+                              // list already narrowed to it.
+                              setProcessQuery(name)
+                              setExpandedPid(undefined)
+                              onPage('processes')
+                            }}
                           />
                         ))}
                     </DisclosureRow>
