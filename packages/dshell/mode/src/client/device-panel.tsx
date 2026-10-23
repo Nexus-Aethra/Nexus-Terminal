@@ -84,11 +84,11 @@ const styles = {
     overflowY: 'auto',
     padding: '4px 8px 12px',
   } as CSSProperties,
-  /** The machine block: an eyebrow, the kind, the name, the endpoint. */
+  /** The machine block: the kind, the name, the endpoint. */
   machine: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 2,
+    gap: 3,
     padding: '10px 0 14px',
   } as CSSProperties,
   machineTop: {
@@ -97,6 +97,7 @@ const styles = {
     justifyContent: 'space-between',
     gap: 8,
   } as CSSProperties,
+  /** The label above the name: small, tracked out, quiet. */
   eyebrow: {
     fontSize: 10,
     fontWeight: 700,
@@ -105,6 +106,7 @@ const styles = {
     color: 'var(--dsw-alias-label-tertiary)',
     opacity: 0.6,
   } as CSSProperties,
+  /** The machine's name: the largest thing on the page, and it says so. */
   machineName: {
     fontSize: 20,
     fontWeight: 600,
@@ -116,23 +118,23 @@ const styles = {
     whiteSpace: 'nowrap',
   } as CSSProperties,
   endpoint: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
     fontSize: 12,
     color: 'var(--dsw-alias-label-tertiary)',
   } as CSSProperties,
-  /** The load: three readouts, separated by hairlines rather than boxes. */
+  /** The load: three readouts, framed by the pane's hairlines. */
   load: {
     display: 'grid',
     gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
     gap: 8,
-    padding: '12px 0 14px',
+    padding: '13px 0 15px',
     borderTop: '0.5px solid var(--dsw-alias-border-l3)',
     borderBottom: '0.5px solid var(--dsw-alias-border-l3)',
   } as CSSProperties,
   stat: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 2,
+    gap: 3,
     minWidth: 0,
   } as CSSProperties,
   statLabel: {
@@ -145,6 +147,7 @@ const styles = {
   statValue: {
     fontSize: 16,
     fontWeight: 500,
+    lineHeight: 1.2,
     color: 'var(--dsw-alias-label-primary)',
   } as CSSProperties,
   statDetail: {
@@ -175,7 +178,7 @@ const styles = {
     borderBottom: 'none',
   } as CSSProperties,
   mono: {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
     fontSize: 11,
   } as CSSProperties,
   grow: {
@@ -192,6 +195,18 @@ const styles = {
   } as CSSProperties,
   dim: { color: 'var(--dsw-alias-label-tertiary)' } as CSSProperties,
   good: { color: 'var(--dsw-alias-state-business-primary)' } as CSSProperties,
+  /** The container's state, with the dot that says whether it is healthy. */
+  stateWrap: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+  } as CSSProperties,
+  stateDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    background: 'var(--dsw-alias-state-business-primary)',
+  } as CSSProperties,
   note: {
     display: 'flex',
     alignItems: 'flex-start',
@@ -239,6 +254,26 @@ function Stat({ stat, t }: { stat: DevicePanelStat; t: DevicePanelProps['t'] }):
 }
 
 /**
+ * Row-hover treatment.
+ *
+ * Inline styles cannot express `:hover`, and a highlighted row is most of
+ * what tells a reader which line the pointer is on — so one packaged style
+ * element carries it, scoped to this panel's own data attributes so it cannot
+ * affect stock chrome. The rows' resting background lives here too: a
+ * stylesheet `:hover` rule cannot override an inline declaration.
+ */
+function injectHoverCss(): () => void {
+  const style = document.createElement('style')
+  style.dataset.dshell = 'device-panel'
+  style.textContent = [
+    '[data-dshell-device-row] { background: transparent; transition: background 100ms ease; }',
+    '[data-dshell-device-row]:hover { background: var(--dsw-alias-interactive-bg-hover); }',
+  ].join('\n')
+  document.head.appendChild(style)
+  return () => { style.remove() }
+}
+
+/**
  * A chevron for a row that GOES somewhere.
  *
  * dshell's own icon set has no chevron-right, and a row that switches page is
@@ -262,7 +297,10 @@ function ProcessRow({ pid, command, cpu, memory, last }: {
   last: boolean
 }): ReactNode {
   return (
-    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+    <div
+      data-dshell-device-row="process"
+      style={last ? { ...styles.row, ...styles.rowLast } : styles.row}
+    >
       <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto' }}>{pid}</span>
       <span style={styles.grow}>{command}</span>
       <span style={{ ...styles.mono, ...styles.number }}>{cpu}</span>
@@ -279,10 +317,16 @@ function ContainerRow({ name, image, state, last }: {
   last: boolean
 }): ReactNode {
   return (
-    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+    <div
+      data-dshell-device-row="container"
+      style={last ? { ...styles.row, ...styles.rowLast } : styles.row}
+    >
       <span style={{ ...styles.grow, fontWeight: 500 }}>{name}</span>
       <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{image}</span>
-      <span style={{ ...styles.mono, ...styles.good, flex: '0 0 auto' }}>{state}</span>
+      <span style={{ ...styles.stateWrap, flex: '0 0 auto' }}>
+        <span style={styles.stateDot} />
+        <span style={{ ...styles.mono, ...styles.good }}>{state}</span>
+      </span>
     </div>
   )
 }
@@ -295,9 +339,12 @@ function PortRow({ proto, port, address, last }: {
   last: boolean
 }): ReactNode {
   return (
-    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+    <div
+      data-dshell-device-row="port"
+      style={last ? { ...styles.row, ...styles.rowLast } : styles.row}
+    >
       <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto', width: 26 }}>{proto}</span>
-      <span style={{ ...styles.mono, flex: '0 0 auto' }}>{port}</span>
+      <span style={{ ...styles.mono, flex: '0 0 auto', minWidth: 42 }}>{port}</span>
       <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{address}</span>
     </div>
   )
@@ -332,6 +379,10 @@ export interface DevicePanelBodyProps {
  * @returns the panel's content.
  */
 export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, onRefresh, t }: DevicePanelBodyProps): ReactNode {
+  // The rows' hover lives in a stylesheet, because inline styles cannot say
+  // `:hover`.
+  useEffect(injectHoverCss, [])
+
   const pages = useMemo<readonly [SegmentedTab<DevicePanelPage>, ...SegmentedTab<DevicePanelPage>[]]>(() => ([
     { id: 'overview', value: 'overview', label: t('device.page.overview'), panelId: 'dshell-device-page-overview' },
     { id: 'processes', value: 'processes', label: t('device.page.processes'), panelId: 'dshell-device-page-processes' },
