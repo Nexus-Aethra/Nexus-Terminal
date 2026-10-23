@@ -238,6 +238,9 @@ const styles = {
     minHeight: 24,
     padding: '2px 0',
     borderBottom: '0.5px solid var(--dsw-alias-border-l3)',
+    // A row is a button, not a paragraph: a drag across it should not paint
+    // the text blue.
+    userSelect: 'none',
   } as CSSProperties,
   rowOpen: {
     background: 'var(--dsw-alias-interactive-bg-hover)',
