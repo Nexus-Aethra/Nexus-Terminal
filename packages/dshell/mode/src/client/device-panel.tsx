@@ -26,7 +26,7 @@ import { DisclosureRow, SegmentedTabs, Tag, type SegmentedTab } from '@deepseek-
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { deviceDetailSeat } from './device-detail.js'
 import { deviceMetricsSeat } from './device-metrics.js'
-import { devicePanelView, type DevicePanelPage, type DevicePanelStat } from './device-panel-view.js'
+import { devicePanelView, type DevicePanelPage, type DevicePanelStat, type DevicePanelView } from './device-panel-view.js'
 import { DeviceGlyph } from './device-definition.js'
 import { DEVICE_NOTE_KEYS } from './locales.js'
 import type {} from './locales.js'
@@ -308,35 +308,30 @@ function PortRow({ proto, port, address, last }: {
  * @param props - the tab's runtime props, the session it belongs to, and its copy.
  * @returns the panel.
  */
-export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode {
-  const subscribe = useCallback((listener: () => void) => deviceDetailSeat.subscribe(listener), [])
-  const snapshot = useCallback(() => deviceDetailSeat.getSnapshot(sessionId), [sessionId])
-  const answer = useSyncExternalStore(subscribe, snapshot)
+/** What the panel's body needs, so it can be drawn without a browser. */
+export interface DevicePanelBodyProps {
+  /** What the host said about the session's machine. */
+  readonly view: DevicePanelView | undefined
+  /** The page on screen. */
+  readonly page: DevicePanelPage
+  /** The folded sections, by id. */
+  readonly folded: ReadonlySet<string>
+  /** A page was asked for. */
+  readonly onPage: (page: DevicePanelPage) => void
+  /** A section was folded or unfolded. */
+  readonly onToggle: (id: string) => void
+  /** Ask the host again, now. */
+  readonly onRefresh: () => void
+  /** The reader's copy. */
+  readonly t: DevicePanelProps['t']
+}
 
-  const metrics = useSyncExternalStore(
-    deviceMetricsSeat.subscribe,
-    useCallback(() => deviceMetricsSeat.getSnapshot().get(sessionId), [sessionId]),
-  )
-
-  // The poll follows the reader's own cadence, and only while the panel is on
-  // screen: an idle frame must not spend a round trip on a machine that is not
-  // this one.
-  useEffect(() => deviceDetailSeat.watch(sessionId), [sessionId])
-
-  const [page, setPage] = useState<DevicePanelPage>('overview')
-  /** The folded sections, by id. A section that is not in the set is open. */
-  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set<string>())
-  const toggle = useCallback((id: string): void => {
-    setFolded(previous => {
-      const next = new Set(previous)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  const view = devicePanelView(answer, metrics?.metrics)
-
+/**
+ * The panel's body: the drawing, with everything it draws already decided.
+ * @param props - the view, the state, and the copy.
+ * @returns the panel's content.
+ */
+export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, onRefresh, t }: DevicePanelBodyProps): ReactNode {
   const pages = useMemo<readonly [SegmentedTab<DevicePanelPage>, ...SegmentedTab<DevicePanelPage>[]]>(() => ([
     { id: 'overview', value: 'overview', label: t('device.page.overview'), panelId: 'dshell-device-page-overview' },
     { id: 'processes', value: 'processes', label: t('device.page.processes'), panelId: 'dshell-device-page-processes' },
@@ -359,7 +354,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
           style={styles.iconButton}
           title={t('device.refresh')}
           aria-label={t('device.refresh')}
-          onClick={() => { deviceDetailSeat.refresh(sessionId) }}
+          onClick={() => { onRefresh() }}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" strokeLinecap="round" />
@@ -369,7 +364,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
       </div>
 
       <div style={styles.pages}>
-        <SegmentedTabs items={pages} value={page} onChange={setPage} label={t('device.title')} />
+        <SegmentedTabs items={pages} value={page} onChange={onPage} label={t('device.title')} />
       </div>
 
       <div style={styles.body}>
@@ -411,7 +406,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
                             open={!folded.has('status')}
                             expandable
                             expandOnRowClick
-                            onToggle={() => { toggle('status') }}
+                            onToggle={() => { onToggle('status') }}
                           >
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 0 6px 22px' }}>
                               {notes.map(note => (
@@ -429,25 +424,25 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
                       icon={<ChevronRight />}
                       title={`${t('device.section.processes')} ${String(processes.length)}`}
                       headerAccessory={<span style={styles.hint}>{t('device.hint.pidCmd')}</span>}
-                      open={!folded.has('processes')}
+                      open={false}
                       expandable={false}
-                      onToggle={() => { setPage('processes') }}
+                      onToggle={() => { onPage('processes') }}
                     />
                     <DisclosureRow
                       icon={<ChevronRight />}
                       title={`${t('device.section.containers')} ${String(containers.length)}`}
                       headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
-                      open={!folded.has('containers')}
+                      open={false}
                       expandable={false}
-                      onToggle={() => { setPage('containers') }}
+                      onToggle={() => { onPage('containers') }}
                     />
                     <DisclosureRow
                       icon={<ChevronRight />}
                       title={`${t('device.section.ports')} ${String(ports.length)}`}
                       headerAccessory={<span style={styles.hint}>{t('device.hint.portProto')}</span>}
-                      open={!folded.has('ports')}
+                      open={false}
                       expandable={false}
-                      onToggle={() => { setPage('ports') }}
+                      onToggle={() => { onPage('ports') }}
                     />
                   </div>
                 )
@@ -463,7 +458,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
                       open={!folded.has('processes')}
                       expandable
                       expandOnRowClick
-                      onToggle={() => { toggle('processes') }}
+                      onToggle={() => { onToggle('processes') }}
                     >
                       {processes.length === 0
                         ? <div style={styles.empty}>{t('device.list.empty')}</div>
@@ -492,7 +487,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
                       open={!folded.has('containers')}
                       expandable
                       expandOnRowClick
-                      onToggle={() => { toggle('containers') }}
+                      onToggle={() => { onToggle('containers') }}
                     >
                       {containers.length === 0
                         ? <div style={styles.empty}>{t('device.list.empty')}</div>
@@ -520,7 +515,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
                       open={!folded.has('ports')}
                       expandable
                       expandOnRowClick
-                      onToggle={() => { toggle('ports') }}
+                      onToggle={() => { onToggle('ports') }}
                     >
                       {ports.length === 0
                         ? <div style={styles.empty}>{t('device.list.empty')}</div>
@@ -541,5 +536,52 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
           )}
       </div>
     </div>
+  )
+}
+
+/**
+ * The device panel: the seats, the state, and the body.
+ * @param props - the tab's runtime props, the session it belongs to, and its copy.
+ * @returns the panel.
+ */
+export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode {
+  const subscribe = useCallback((listener: () => void) => deviceDetailSeat.subscribe(listener), [])
+  const snapshot = useCallback(() => deviceDetailSeat.getSnapshot(sessionId), [sessionId])
+  const answer = useSyncExternalStore(subscribe, snapshot)
+
+  const metrics = useSyncExternalStore(
+    deviceMetricsSeat.subscribe,
+    useCallback(() => deviceMetricsSeat.getSnapshot().get(sessionId), [sessionId]),
+  )
+
+  // The poll follows the reader's own cadence, and only while the panel is on
+  // screen: an idle frame must not spend a round trip on a machine that is not
+  // this one.
+  useEffect(() => deviceDetailSeat.watch(sessionId), [sessionId])
+
+  const [page, setPage] = useState<DevicePanelPage>('overview')
+  /** The folded sections, by id. A section that is not in the set is open. */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const toggle = useCallback((id: string): void => {
+    setFolded(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const view = devicePanelView(answer, metrics?.metrics)
+
+  return (
+    <DshellDevicePanelBody
+      view={view}
+      page={page}
+      folded={folded}
+      onPage={setPage}
+      onToggle={toggle}
+      onRefresh={() => { deviceDetailSeat.refresh(sessionId) }}
+      t={t}
+    />
   )
 }
