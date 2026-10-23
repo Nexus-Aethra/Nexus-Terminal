@@ -2,9 +2,9 @@
  * What the device panel shows, as data.
  *
  * The panel is a drawing, and a drawing is hard to argue about: the decisions
- * it makes — which machine, which rows, how many decimals — are the decisions
- * that can be wrong. So they are lifted out of the drawing into a pure
- * function, and what is left is layout.
+ * it makes — which machine, which rows, how many decimals, which number is
+ * the big one — are the decisions that can be wrong. So they are lifted out of
+ * the drawing into a pure function, and what is left is layout.
  *
  * The labels stay in the component: they are words, and the reader's language
  * is not known here. The NUMBERS are language-free, so they are decided here
@@ -14,22 +14,28 @@
 import type { DshellDeviceIdentity, DshellDeviceMetrics, DshellDeviceMetricsResponse } from '../device-metrics-protocol.js'
 import type { DshellDeviceDetailResponse } from '../device-detail-protocol.js'
 import type { DshellDeviceNoteCode } from '../device-detail-protocol.js'
-import { cpuPercent, memoryPair } from './device-metrics.js'
 
-/** One row of the machine section: a label and a value, value optional. */
-export interface DevicePanelField {
-  /** What the field is called, as a locale key the component resolves. */
-  readonly label: 'device.machine.kind' | 'device.machine.name' | 'device.machine.endpoint'
-  /** The value, already formatted. */
-  readonly value: string
+/** The panel's four pages. */
+export type DevicePanelPage = 'overview' | 'processes' | 'containers' | 'ports'
+
+/** The machine a page is about. */
+export interface DevicePanelMachine {
+  /** Whether the session runs on a device or on this machine. */
+  readonly onDevice: boolean
+  /** The name the reader gave the device; absent for this machine. */
+  readonly name: string | undefined
+  /** `user@host:port` for a device; absent for this machine. */
+  readonly endpoint: string | undefined
 }
 
-/** One row of the load section. */
-export interface DevicePanelLoadField {
-  /** What the row is called, as a locale key the component resolves. */
+/** One readout of the load: the big number, and the smaller fact beside it. */
+export interface DevicePanelStat {
+  /** What the readout is called, as a locale key the component resolves. */
   readonly label: 'device.load.cpu' | 'device.load.memory' | 'device.load.load1'
-  /** The value, already formatted; undefined means "not known yet". */
-  readonly value: string | undefined
+  /** The number the panel prints large. */
+  readonly value: string
+  /** The smaller fact under it — the machine's size, so a share means something. */
+  readonly detail: string | undefined
 }
 
 /** One process row. */
@@ -57,11 +63,9 @@ export interface DevicePanelPortRow {
 /** Everything the panel draws, decided. */
 export interface DevicePanelView {
   /** Which machine the session runs on. */
-  readonly onDevice: boolean
-  /** The machine's rows. */
-  readonly machine: readonly DevicePanelField[]
-  /** The load rows; a row without a value is drawn as "not known". */
-  readonly load: readonly DevicePanelLoadField[]
+  readonly machine: DevicePanelMachine
+  /** The load, as three readouts. */
+  readonly load: readonly DevicePanelStat[]
   /** The busiest processes. */
   readonly processes: readonly DevicePanelProcessRow[]
   /** The containers the runtime reports. */
@@ -75,42 +79,41 @@ export interface DevicePanelView {
 }
 
 /**
- * The machine's rows.
+ * The load, as the panel prints it.
  *
- * The kind is the first row because it is the one that decides what the rest
- * of the panel is about: a device's processes are the device's, and this
- * machine's are this machine's.
+ * The three readouts are SHARES, because shares are comparable: a percentage
+ * of one machine says nothing about how much of it there is, so the machine's
+ * size rides along underneath. The load average is already a share of itself
+ * and needs no second line.
  */
-function machineFields(device: DshellDeviceIdentity): readonly DevicePanelField[] {
-  const fields: DevicePanelField[] = []
-  fields.push({ label: 'device.machine.kind', value: device.kind })
-  if (device.name !== undefined) {
-    fields.push({ label: 'device.machine.name', value: device.name })
-  }
-  if (device.endpoint !== undefined) {
-    fields.push({ label: 'device.machine.endpoint', value: device.endpoint })
-  }
-  return fields
-}
-
-/**
- * The load rows, from the seat the status chip already keeps.
- *
- * The load is NOT asked for again: the chip polls it, the panel reads the same
- * answer, and two readers of one machine cost one round trip.
- */
-function loadFields(metrics: DshellDeviceMetrics | undefined): readonly DevicePanelLoadField[] {
+function loadStats(metrics: DshellDeviceMetrics | undefined): readonly DevicePanelStat[] {
   if (metrics === undefined) {
     return [
-      { label: 'device.load.cpu', value: undefined },
-      { label: 'device.load.memory', value: undefined },
-      { label: 'device.load.load1', value: undefined },
+      { label: 'device.load.cpu', value: '—', detail: undefined },
+      { label: 'device.load.memory', value: '—', detail: undefined },
+      { label: 'device.load.load1', value: '—', detail: undefined },
     ]
   }
+  const memoryTotal = metrics.memory.total
+  const memoryPercent = memoryTotal > 0 ? Math.round(metrics.memory.used / memoryTotal * 100) : undefined
   return [
-    { label: 'device.load.cpu', value: cpuPercent(metrics.cpu) },
-    { label: 'device.load.memory', value: memoryPair(metrics.memory) },
-    { label: 'device.load.load1', value: metrics.cpu.load1 === undefined ? undefined : metrics.cpu.load1.toFixed(2) },
+    {
+      label: 'device.load.cpu',
+      value: metrics.cpu.used === undefined ? '—' : `${String(Math.round(metrics.cpu.used * 100))}%`,
+      // The core COUNT, without its unit: "核" is a word, and this module does
+      // not know the reader's language.
+      detail: String(metrics.cpu.cores),
+    },
+    {
+      label: 'device.load.memory',
+      value: memoryPercent === undefined ? '—' : `${String(memoryPercent)}%`,
+      detail: `${(metrics.memory.used / 1024 ** 3).toFixed(1)} / ${(metrics.memory.total / 1024 ** 3).toFixed(1)} GB`,
+    },
+    {
+      label: 'device.load.load1',
+      value: metrics.cpu.load1 === undefined ? '—' : metrics.cpu.load1.toFixed(2),
+      detail: undefined,
+    },
   ]
 }
 
@@ -129,9 +132,8 @@ export function devicePanelView(
   const detail = answer.detail
   if (detail === undefined) {
     return {
-      onDevice: false,
-      machine: [],
-      load: loadFields(metrics),
+      machine: { onDevice: false, name: undefined, endpoint: undefined },
+      load: loadStats(metrics),
       processes: [],
       containers: [],
       ports: [],
@@ -139,10 +141,14 @@ export function devicePanelView(
       error: answer.error,
     }
   }
-  return {
+  const machine: DevicePanelMachine = {
     onDevice: detail.device.kind === 'device',
-    machine: machineFields(detail.device),
-    load: loadFields(metrics),
+    name: detail.device.name,
+    endpoint: detail.device.endpoint,
+  }
+  return {
+    machine,
+    load: loadStats(metrics),
     processes: detail.processes.map(process => ({
       pid: String(process.pid),
       command: process.command,
@@ -167,4 +173,13 @@ export function devicePanelView(
 /** The load reading of one session, as the seat holds it. */
 export function metricsOf(answer: DshellDeviceMetricsResponse | undefined): DshellDeviceMetrics | undefined {
   return answer?.metrics
+}
+
+/** The identity of the machine, as the panel prints it. */
+export function machineIdentity(device: DshellDeviceIdentity): DevicePanelMachine {
+  return {
+    onDevice: device.kind === 'device',
+    name: device.name,
+    endpoint: device.endpoint,
+  }
 }

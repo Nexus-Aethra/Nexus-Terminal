@@ -1,30 +1,33 @@
 /**
  * The device panel: what is running on the machine this session is bound to.
  *
- * The panel answers one question in five rows: the machine, how loaded it is,
- * its processes, its containers, its sockets. The first two are the machine's
- * identity and its load — the load comes from the seat the status chip already
- * keeps, so the panel does not ask a second time for it. The last three are
- * what the host asked the device for, in ONE round trip, and they are the
- * seed the port forwarding will grow from: a forward needs the ports, and the
- * ports are the first thing a panel can show.
+ * Four pages, because a reader opens the panel for one question and the other
+ * three lists are noise until asked for: 概览 (the machine and its load),
+ * 进程, 容器, 监听端口. Every section folds, because a machine with forty
+ * processes and thirty-two sockets is a strip, not a page.
  *
- * Every list says what it could not read. A machine with no container runtime
- * has no containers, and a reader must be able to tell that from a machine
- * whose containers were never asked for.
+ * The overview is a summary first — the machine's name is the largest thing
+ * on it, the load is three numbers side by side, and the three lists wait
+ * below as folded rows that carry their own counts. The list pages are the
+ * opposite: flat rows, monospace identifiers, numbers in their own column.
+ *
+ * The load is NOT asked for again: the status chip polls it, the panel reads
+ * the same answer, and two readers of one machine cost one round trip.
  *
  * What is drawn is decided elsewhere ({@link devicePanelView}): this file is
  * layout, and the decisions it would otherwise make are the ones that can be
  * wrong.
  */
 
-import { useCallback, useEffect, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { DisclosureRow, SegmentedTabs, Tag, type SegmentedTab } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the right-Sidebar SlotMap merge (the tab-body seat + its hooks).
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { deviceDetailSeat } from './device-detail.js'
 import { deviceMetricsSeat } from './device-metrics.js'
-import { devicePanelView } from './device-panel-view.js'
+import { devicePanelView, type DevicePanelPage, type DevicePanelStat } from './device-panel-view.js'
+import { DeviceGlyph } from './device-definition.js'
 import { DEVICE_NOTE_KEYS } from './locales.js'
 import type {} from './locales.js'
 
@@ -37,88 +40,265 @@ const styles = {
   root: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 14,
-    padding: '10px 12px',
-    fontSize: 12,
-    lineHeight: 1.5,
+    minHeight: 0,
+    flex: 1,
+    overflow: 'hidden',
+    fontSize: 13,
+    lineHeight: 1.4,
   } as CSSProperties,
   header: {
     display: 'flex',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: 8,
+    alignItems: 'center',
+    gap: 6,
+    height: 28,
+    padding: '2px 8px',
+    flex: '0 0 auto',
   } as CSSProperties,
-  title: {
-    fontWeight: 600,
-    fontSize: 13,
+  headerGlyph: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    color: 'var(--dsw-alias-label-secondary)',
   } as CSSProperties,
-  button: {
+  headerSpacer: { flex: '1 1 auto' } as CSSProperties,
+  iconButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    padding: 0,
+    border: 'none',
+    borderRadius: 5,
     background: 'transparent',
-    border: '1px solid currentColor',
-    borderRadius: 6,
     color: 'inherit',
     cursor: 'pointer',
-    font: 'inherit',
-    opacity: 0.7,
-    padding: '2px 8px',
+    opacity: 0.8,
   } as CSSProperties,
-  section: {
+  pages: {
+    padding: '8px 8px 4px',
+    flex: '0 0 auto',
+  } as CSSProperties,
+  body: {
+    flex: '1 1 auto',
+    minHeight: 0,
+    overflowY: 'auto',
+    padding: '4px 8px 12px',
+  } as CSSProperties,
+  /** The machine block: an eyebrow, the kind, the name, the endpoint. */
+  machine: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 4,
+    gap: 2,
+    padding: '10px 0 14px',
   } as CSSProperties,
-  sectionTitle: {
+  machineTop: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  } as CSSProperties,
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    color: 'var(--dsw-alias-label-tertiary)',
+    opacity: 0.6,
+  } as CSSProperties,
+  machineName: {
+    fontSize: 20,
     fontWeight: 600,
-    opacity: 0.75,
+    lineHeight: 1.15,
+    letterSpacing: -0.4,
+    color: 'var(--dsw-alias-label-primary)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   } as CSSProperties,
+  endpoint: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 12,
+    color: 'var(--dsw-alias-label-tertiary)',
+  } as CSSProperties,
+  /** The load: three readouts, separated by hairlines rather than boxes. */
+  load: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: 8,
+    padding: '12px 0 14px',
+    borderTop: '0.5px solid var(--dsw-alias-border-l3)',
+    borderBottom: '0.5px solid var(--dsw-alias-border-l3)',
+  } as CSSProperties,
+  stat: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    minWidth: 0,
+  } as CSSProperties,
+  statLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    color: 'var(--dsw-alias-label-tertiary)',
+  } as CSSProperties,
+  statValue: {
+    fontSize: 16,
+    fontWeight: 500,
+    color: 'var(--dsw-alias-label-primary)',
+  } as CSSProperties,
+  statDetail: {
+    fontSize: 10,
+    color: 'var(--dsw-alias-label-quaternary)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  } as CSSProperties,
+  /** A group of rows: a foldable header, then the rows themselves. */
+  group: { marginTop: 10 } as CSSProperties,
+  hint: {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 10,
+    letterSpacing: 0.4,
+    color: 'var(--dsw-alias-label-quaternary)',
+  } as CSSProperties,
+  /** One row of a list: flat, a hairline under it, 24px tall. */
   row: {
     display: 'flex',
+    alignItems: 'center',
     gap: 8,
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
+    minHeight: 24,
+    padding: '2px 0',
+    borderBottom: '0.5px solid var(--dsw-alias-border-l3)',
   } as CSSProperties,
-  /** A row of columns rather than of two ends: the cells are read left to right. */
-  listRow: {
-    display: 'flex',
-    gap: 10,
-    alignItems: 'baseline',
-  } as CSSProperties,
-  /** The first cell of a list row, given a width so the columns line up. */
-  listCell: {
-    minWidth: 54,
-    flexShrink: 0,
+  rowLast: {
+    borderBottom: 'none',
   } as CSSProperties,
   mono: {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 11,
   } as CSSProperties,
+  grow: {
+    flex: '1 1 auto',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  } as CSSProperties,
+  number: {
+    textAlign: 'right',
+    flex: '0 0 auto',
+    minWidth: 42,
+  } as CSSProperties,
+  dim: { color: 'var(--dsw-alias-label-tertiary)' } as CSSProperties,
+  good: { color: 'var(--dsw-alias-state-business-primary)' } as CSSProperties,
   note: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 6,
+    fontSize: 12,
+    color: 'var(--dsw-alias-label-secondary)',
+    opacity: 0.7,
+  } as CSSProperties,
+  noteDot: {
+    flex: '0 0 auto',
+    marginTop: 6,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    background: 'var(--dsw-alias-label-quaternary)',
+  } as CSSProperties,
+  empty: {
+    padding: '8px 0',
+    fontSize: 12,
+    color: 'var(--dsw-alias-label-tertiary)',
     opacity: 0.6,
   } as CSSProperties,
   error: {
-    opacity: 0.85,
-  } as CSSProperties,
-  empty: {
-    opacity: 0.5,
+    padding: '6px 0',
+    fontSize: 12,
+    color: 'var(--dsw-alias-state-error-primary)',
   } as CSSProperties,
 }
 
-/** One section's rows, or the reason it has none. */
-function Section({ title, children }: { title: string; children: ReactNode }): ReactNode {
+/** One readout of the load: a label, a number, the fact underneath. */
+function Stat({ stat, t }: { stat: DevicePanelStat; t: DevicePanelProps['t'] }): ReactNode {
   return (
-    <div style={styles.section}>
-      <div style={styles.sectionTitle}>{title}</div>
-      {children}
+    <div style={styles.stat}>
+      <span style={styles.statLabel}>{t(stat.label)}</span>
+      <span style={styles.statValue}>{stat.value}</span>
+      {stat.detail === undefined
+        ? null
+        : (
+          <span style={styles.statDetail}>
+            {stat.label === 'device.load.cpu' ? `${stat.detail} ${t('device.load.cores')}` : stat.detail}
+          </span>
+        )}
     </div>
   )
 }
 
-/** A row: a label on the left, a value on the right. */
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }): ReactNode {
+/**
+ * A chevron for a row that GOES somewhere.
+ *
+ * dshell's own icon set has no chevron-right, and a row that switches page is
+ * not a disclosure — so it carries a mark of its own, drawn in the same 1px
+ * stroke as the rest of the panel's artwork.
+ */
+function ChevronRight({ size = 14 }: { size?: number }): ReactNode {
   return (
-    <div style={styles.row}>
-      <span style={mono === true ? styles.mono : undefined}>{label}</span>
-      <span style={mono === true ? styles.mono : undefined}>{value}</span>
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3.5L10.5 8L6 12.5" />
+    </svg>
+  )
+}
+
+/** A row of the process list: pid, command, and the two shares. */
+function ProcessRow({ pid, command, cpu, memory, last }: {
+  pid: string
+  command: string
+  cpu: string
+  memory: string
+  last: boolean
+}): ReactNode {
+  return (
+    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+      <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto' }}>{pid}</span>
+      <span style={styles.grow}>{command}</span>
+      <span style={{ ...styles.mono, ...styles.number }}>{cpu}</span>
+      <span style={{ ...styles.mono, ...styles.number, ...styles.dim }}>{memory}</span>
+    </div>
+  )
+}
+
+/** A row of the container list: name, image, and the runtime's own word. */
+function ContainerRow({ name, image, state, last }: {
+  name: string
+  image: string
+  state: string
+  last: boolean
+}): ReactNode {
+  return (
+    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+      <span style={{ ...styles.grow, fontWeight: 500 }}>{name}</span>
+      <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{image}</span>
+      <span style={{ ...styles.mono, ...styles.good, flex: '0 0 auto' }}>{state}</span>
+    </div>
+  )
+}
+
+/** A row of the port list: the transport, the port, the address it is bound to. */
+function PortRow({ proto, port, address, last }: {
+  proto: string
+  port: string
+  address: string
+  last: boolean
+}): ReactNode {
+  return (
+    <div style={last ? { ...styles.row, ...styles.rowLast } : styles.row}>
+      <span style={{ ...styles.mono, ...styles.dim, flex: '0 0 auto', width: 26 }}>{proto}</span>
+      <span style={{ ...styles.mono, flex: '0 0 auto' }}>{port}</span>
+      <span style={{ ...styles.mono, ...styles.dim, ...styles.grow }}>{address}</span>
     </div>
   )
 }
@@ -143,99 +323,223 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
   // this one.
   useEffect(() => deviceDetailSeat.watch(sessionId), [sessionId])
 
+  const [page, setPage] = useState<DevicePanelPage>('overview')
+  /** The folded sections, by id. A section that is not in the set is open. */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const toggle = useCallback((id: string): void => {
+    setFolded(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
   const view = devicePanelView(answer, metrics?.metrics)
+
+  const pages = useMemo<readonly [SegmentedTab<DevicePanelPage>, ...SegmentedTab<DevicePanelPage>[]]>(() => ([
+    { id: 'overview', value: 'overview', label: t('device.page.overview'), panelId: 'dshell-device-page-overview' },
+    { id: 'processes', value: 'processes', label: t('device.page.processes'), panelId: 'dshell-device-page-processes' },
+    { id: 'containers', value: 'containers', label: t('device.page.containers'), panelId: 'dshell-device-page-containers' },
+    { id: 'ports', value: 'ports', label: t('device.page.ports'), panelId: 'dshell-device-page-ports' },
+  ]), [t])
+
+  const processes = view?.processes ?? []
+  const containers = view?.containers ?? []
+  const ports = view?.ports ?? []
+  const notes = view?.notes ?? []
 
   return (
     <div style={styles.root}>
       <div style={styles.header}>
-        <span style={styles.title}>{t('device.title')}</span>
+        <span style={styles.headerGlyph}><DeviceGlyph size={16} /></span>
+        <span style={styles.headerSpacer} />
         <button
           type="button"
-          style={styles.button}
+          style={styles.iconButton}
+          title={t('device.refresh')}
+          aria-label={t('device.refresh')}
           onClick={() => { deviceDetailSeat.refresh(sessionId) }}
         >
-          {t('device.refresh')}
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" strokeLinecap="round" />
+            <path d="M13.5 2.5V5H11" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </button>
       </div>
 
-      {view?.error !== undefined
-        ? <div style={styles.error}>{view.error}</div>
-        : null}
+      <div style={styles.pages}>
+        <SegmentedTabs items={pages} value={page} onChange={setPage} label={t('device.title')} />
+      </div>
 
-      {view === undefined
-        ? <div style={styles.empty}>{t('device.pending')}</div>
-        : (
-          <>
-            <Section title={t('device.section.machine')}>
-              {view.machine.map(field => (
-                <Row
-                  key={field.label}
-                  label={t(field.label)}
-                  value={field.label === 'device.machine.kind'
-                    ? (view.onDevice ? t('device.machine.device') : t('device.machine.local'))
-                    : field.value}
-                  mono={field.label === 'device.machine.endpoint'}
-                />
-              ))}
-            </Section>
+      <div style={styles.body}>
+        {view?.error !== undefined
+          ? <div style={styles.error}>{view.error}</div>
+          : null}
 
-            <Section title={t('device.section.load')}>
-              {view.load.map(field => (
-                <Row
-                  key={field.label}
-                  label={t(field.label)}
-                  value={field.value ?? t('device.load.pending')}
-                />
-              ))}
-            </Section>
+        {view === undefined
+          ? <div style={styles.empty}>{t('device.pending')}</div>
+          : (
+            <>
+              {page === 'overview'
+                ? (
+                  <div id="dshell-device-page-overview">
+                    <div style={styles.machine}>
+                      <div style={styles.machineTop}>
+                        <span style={styles.eyebrow}>{t('device.section.machine')}</span>
+                        <Tag tone="outline">
+                          {view.machine.onDevice ? t('device.machine.device') : t('device.machine.local')}
+                        </Tag>
+                      </div>
+                      <div style={styles.machineName}>{view.machine.name ?? t('device.machine.local')}</div>
+                      {view.machine.endpoint === undefined
+                        ? null
+                        : <div style={styles.endpoint}>{view.machine.endpoint}</div>}
+                    </div>
 
-            <Section title={t('device.section.processes')}>
-              {view.processes.length === 0
-                ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                : view.processes.map(process => (
-                  <div key={process.pid} style={styles.listRow}>
-                    <span style={{ ...styles.mono, ...styles.listCell }}>{process.pid}</span>
-                    <span style={styles.mono}>{process.command}</span>
-                    <span style={styles.mono}>{process.cpu}</span>
-                    <span style={styles.mono}>{process.memory}</span>
+                    <div style={styles.load}>
+                      {view.load.map(stat => <Stat key={stat.label} stat={stat} t={t} />)}
+                    </div>
+
+                    {notes.length === 0
+                      ? null
+                      : (
+                        <div style={styles.group}>
+                          <DisclosureRow
+                            icon={null}
+                            title={t('device.section.status')}
+                            open={!folded.has('status')}
+                            expandable
+                            expandOnRowClick
+                            onToggle={() => { toggle('status') }}
+                          >
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 0 6px 22px' }}>
+                              {notes.map(note => (
+                                <div key={note} style={styles.note}>
+                                  <span style={styles.noteDot} />
+                                  <span>{t(DEVICE_NOTE_KEYS[note])}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </DisclosureRow>
+                        </div>
+                      )}
+
+                    <DisclosureRow
+                      icon={<ChevronRight />}
+                      title={`${t('device.section.processes')} ${String(processes.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.pidCmd')}</span>}
+                      open={!folded.has('processes')}
+                      expandable={false}
+                      onToggle={() => { setPage('processes') }}
+                    />
+                    <DisclosureRow
+                      icon={<ChevronRight />}
+                      title={`${t('device.section.containers')} ${String(containers.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
+                      open={!folded.has('containers')}
+                      expandable={false}
+                      onToggle={() => { setPage('containers') }}
+                    />
+                    <DisclosureRow
+                      icon={<ChevronRight />}
+                      title={`${t('device.section.ports')} ${String(ports.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.portProto')}</span>}
+                      open={!folded.has('ports')}
+                      expandable={false}
+                      onToggle={() => { setPage('ports') }}
+                    />
                   </div>
-                ))}
-            </Section>
+                )
+                : null}
 
-            <Section title={t('device.section.containers')}>
-              {view.containers.length === 0
-                ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                : view.containers.map(container => (
-                  <div key={`${container.name}-${container.image}`} style={styles.listRow}>
-                    <span style={{ ...styles.mono, ...styles.listCell }}>{container.name}</span>
-                    <span style={styles.mono}>{container.image}</span>
-                    <span style={styles.mono}>{container.state}</span>
+              {page === 'processes'
+                ? (
+                  <div id="dshell-device-page-processes" style={styles.group}>
+                    <DisclosureRow
+                      icon={null}
+                      title={`${t('device.section.processes')} ${String(processes.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.pidCmd')}</span>}
+                      open={!folded.has('processes')}
+                      expandable
+                      expandOnRowClick
+                      onToggle={() => { toggle('processes') }}
+                    >
+                      {processes.length === 0
+                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                        : processes.map((process, index) => (
+                          <ProcessRow
+                            key={process.pid}
+                            pid={process.pid}
+                            command={process.command}
+                            cpu={process.cpu}
+                            memory={process.memory}
+                            last={index === processes.length - 1}
+                          />
+                        ))}
+                    </DisclosureRow>
                   </div>
-                ))}
-            </Section>
+                )
+                : null}
 
-            <Section title={t('device.section.ports')}>
-              {view.ports.length === 0
-                ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                : view.ports.map(port => (
-                  // The address is part of the key: a machine may listen on the
-                  // same port on several addresses, and those are different
-                  // sockets.
-                  <div key={`${port.proto}-${port.port}-${port.address}`} style={styles.listRow}>
-                    <span style={{ ...styles.mono, ...styles.listCell }}>{port.proto}</span>
-                    <span style={styles.mono}>{port.port}</span>
-                    <span style={styles.mono}>{port.address}</span>
+              {page === 'containers'
+                ? (
+                  <div id="dshell-device-page-containers" style={styles.group}>
+                    <DisclosureRow
+                      icon={null}
+                      title={`${t('device.section.containers')} ${String(containers.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
+                      open={!folded.has('containers')}
+                      expandable
+                      expandOnRowClick
+                      onToggle={() => { toggle('containers') }}
+                    >
+                      {containers.length === 0
+                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                        : containers.map((container, index) => (
+                          <ContainerRow
+                            key={container.name}
+                            name={container.name}
+                            image={container.image}
+                            state={container.state}
+                            last={index === containers.length - 1}
+                          />
+                        ))}
+                    </DisclosureRow>
                   </div>
-                ))}
-            </Section>
+                )
+                : null}
 
-            {view.notes.length === 0
-              ? null
-              : view.notes.map(note => (
-                <div key={note} style={styles.note}>{t(DEVICE_NOTE_KEYS[note])}</div>
-              ))}
-          </>
-        )}
+              {page === 'ports'
+                ? (
+                  <div id="dshell-device-page-ports" style={styles.group}>
+                    <DisclosureRow
+                      icon={null}
+                      title={`${t('device.section.ports')} ${String(ports.length)}`}
+                      headerAccessory={<span style={styles.hint}>{t('device.hint.portProto')}</span>}
+                      open={!folded.has('ports')}
+                      expandable
+                      expandOnRowClick
+                      onToggle={() => { toggle('ports') }}
+                    >
+                      {ports.length === 0
+                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                        : ports.map((port, index) => (
+                          <PortRow
+                            key={`${port.proto}-${port.port}-${port.address}`}
+                            proto={port.proto}
+                            port={port.port}
+                            address={port.address}
+                            last={index === ports.length - 1}
+                          />
+                        ))}
+                    </DisclosureRow>
+                  </div>
+                )
+                : null}
+            </>
+          )}
+      </div>
     </div>
   )
 }

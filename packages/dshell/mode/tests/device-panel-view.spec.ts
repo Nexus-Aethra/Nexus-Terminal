@@ -45,12 +45,11 @@ describe('a device answer', () => {
   it('names the machine it describes', () => {
     const view = devicePanelView(DETAIL, undefined)
 
-    expect(view?.onDevice).toBe(true)
-    expect(view?.machine).toEqual([
-      { label: 'device.machine.kind', value: 'device' },
-      { label: 'device.machine.name', value: 'build-box' },
-      { label: 'device.machine.endpoint', value: 'dev@10.0.0.9:22' },
-    ])
+    expect(view?.machine).toEqual({
+      onDevice: true,
+      name: 'build-box',
+      endpoint: 'dev@10.0.0.9:22',
+    })
   })
 
   it('lists the processes with their share of the machine', () => {
@@ -96,8 +95,9 @@ describe('a session that runs on this machine', () => {
       },
     }, undefined)
 
-    expect(view?.onDevice).toBe(false)
-    expect(view?.machine).toEqual([{ label: 'device.machine.kind', value: 'local' }])
+    expect(view?.machine.onDevice).toBe(false)
+    expect(view?.machine.name).toBeUndefined()
+    expect(view?.machine.endpoint).toBeUndefined()
   })
 })
 
@@ -121,10 +121,13 @@ describe('the load', () => {
   it('is read from the seat the chip already keeps', () => {
     const view = devicePanelView(DETAIL, METRICS)
 
+    // The three readouts are SHARES, and the machine's size rides along
+    // underneath: a percentage of one machine says nothing about how much of
+    // it there is.
     expect(view?.load).toEqual([
-      { label: 'device.load.cpu', value: '25%' },
-      { label: 'device.load.memory', value: '4.0 GB / 16.0 GB' },
-      { label: 'device.load.load1', value: '1.50' },
+      { label: 'device.load.cpu', value: '25%', detail: '8' },
+      { label: 'device.load.memory', value: '25%', detail: '4.0 / 16.0 GB' },
+      { label: 'device.load.load1', value: '1.50', detail: undefined },
     ])
   })
 
@@ -132,9 +135,9 @@ describe('the load', () => {
     const view = devicePanelView(DETAIL, undefined)
 
     expect(view?.load).toEqual([
-      { label: 'device.load.cpu', value: undefined },
-      { label: 'device.load.memory', value: undefined },
-      { label: 'device.load.load1', value: undefined },
+      { label: 'device.load.cpu', value: '—', detail: undefined },
+      { label: 'device.load.memory', value: '—', detail: undefined },
+      { label: 'device.load.load1', value: '—', detail: undefined },
     ])
   })
 })
@@ -157,6 +160,27 @@ describe('a note the host can send', () => {
       expect(key, code).toBeDefined()
       expect(zh[key], code).not.toBe('')
       expect(en[key], code).not.toBe('')
+    }
+  })
+})
+
+describe('the pages the panel is cut into', () => {
+  it('all have a name in every language', () => {
+    // The four pages are the panel's whole shape: a name that is missing in
+    // one language is a tab with no label in it.
+    const keys = [
+      'device.page.overview',
+      'device.page.processes',
+      'device.page.containers',
+      'device.page.ports',
+      'device.section.status',
+      'device.hint.pidCmd',
+      'device.hint.nameState',
+      'device.hint.portProto',
+    ] as const
+    for (const key of keys) {
+      expect(zh[key], key).not.toBe('')
+      expect(en[key], key).not.toBe('')
     }
   })
 })
