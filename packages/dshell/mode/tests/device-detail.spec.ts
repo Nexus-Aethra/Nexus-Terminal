@@ -116,15 +116,15 @@ async function call(
 /** A device that reports one of everything. */
 const FULL_REPORT = [
   'begin processes',
-  'proc 4211 1 12.5 3.4 node',
-  'proc 4212 4211 0.5 0.2 bash',
+  'proc 4211|1|root|S|1200|12.5|3.4|node|node server.js --port 8080',
+  'proc 4212|4211|root|R|600|0.5|0.2|bash|bash',
   'end processes',
   'begin containers',
   'ctr 9f2ab1|nginx:latest|web|Up 3 hours',
   'end containers',
   'begin ports',
-  'port tcp 0.0.0.0:22',
-  'port tcp 127.0.0.1:8080',
+  'port tcp|0.0.0.0:22|sshd|812',
+  'port tcp|127.0.0.1:8080|nginx|4242',
   'end ports',
 ].join('\n')
 
@@ -133,24 +133,61 @@ describe('what a machine says about itself', () => {
     const parsed = parseDeviceDetail(FULL_REPORT)
 
     expect(parsed.processes).toEqual([
-      { pid: 4211, ppid: 1, cpu: 12.5, memory: 3.4, command: 'node' },
-      { pid: 4212, ppid: 4211, cpu: 0.5, memory: 0.2, command: 'bash' },
+      {
+        pid: 4211,
+        ppid: 1,
+        cpu: 12.5,
+        memory: 3.4,
+        command: 'node',
+        user: 'root',
+        state: 'S',
+        elapsedSeconds: 1200,
+        args: 'node server.js --port 8080',
+      },
+      {
+        pid: 4212,
+        ppid: 4211,
+        cpu: 0.5,
+        memory: 0.2,
+        command: 'bash',
+        user: 'root',
+        state: 'R',
+        elapsedSeconds: 600,
+        args: 'bash',
+      },
     ])
     expect(parsed.containers).toEqual([
       { id: '9f2ab1', image: 'nginx:latest', name: 'web', state: 'Up 3 hours' },
     ])
     expect(parsed.ports).toEqual([
-      { proto: 'tcp', port: 22, address: '0.0.0.0' },
-      { proto: 'tcp', port: 8080, address: '127.0.0.1' },
+      { proto: 'tcp', port: 22, address: '0.0.0.0', processName: 'sshd', processPid: 812 },
+      { proto: 'tcp', port: 8080, address: '127.0.0.1', processName: 'nginx', processPid: 4242 },
     ])
     expect(parsed.notes).toEqual([])
+  })
+
+  it('says who holds a port, and which process it is', () => {
+    // A port with no owner is a port nobody can forward, so the owner belongs
+    // in the answer.
+    const parsed = parseDeviceDetail('begin ports\nport tcp|0.0.0.0:443|nginx|99\nend ports\n')
+
+    expect(parsed.ports[0]?.processName).toBe('nginx')
+    expect(parsed.ports[0]?.processPid).toBe(99)
+  })
+
+  it('keeps a port whose owner the platform would not say', () => {
+    const parsed = parseDeviceDetail('begin ports\nport udp|127.0.0.1:68||\nend ports\n')
+
+    expect(parsed.ports).toHaveLength(1)
+    expect(parsed.ports[0]?.processName).toBeUndefined()
+    expect(parsed.ports[0]?.processPid).toBeUndefined()
   })
 
   it('drops a row it cannot read, rather than reporting zeros', () => {
     const parsed = parseDeviceDetail([
       'begin processes',
-      'proc not-a-pid 1 0.5 0.2 node',
-      'proc 42 1 0.5 0.2 node',
+      'proc not-a-pid|1|root|S|10|0.5|0.2|node|node',
+      'proc 42|1|root|S|10|0.5|0.2|node|node',
       'end processes',
     ].join('\n'))
 
@@ -185,16 +222,16 @@ describe('what a machine says about itself', () => {
   })
 
   it('reads an IPv6 socket, whose address carries colons of its own', () => {
-    const parsed = parseDeviceDetail('begin ports\nport tcp [::]:8080\nend ports\n')
+    const parsed = parseDeviceDetail('begin ports\nport tcp|[::]:8080\nend ports\n')
 
-    expect(parsed.ports).toEqual([{ proto: 'tcp', port: 8080, address: '::' }])
+    expect(parsed.ports).toEqual([{ proto: 'tcp', port: 8080, address: '::', processName: undefined, processPid: undefined }])
   })
 
   it('reads a scoped IPv6 socket, whose interface sits after the bracket', () => {
     // `ss` prints `[fe80::c22:feff:fefe:ad52]%vethc180014:123`: the brackets
     // are notation and the scope is part of the address, so the address is
     // neither "[...]%veth" (unclosed) nor "...]%veth" (a broken address).
-    const parsed = parseDeviceDetail('begin ports\nport udp [fe80::c22:feff:fefe:ad52]%vethc180014:123\nend ports\n')
+    const parsed = parseDeviceDetail('begin ports\nport udp|[fe80::c22:feff:fefe:ad52]%vethc180014:123\nend ports\n')
 
     expect(parsed.ports).toEqual([
       { proto: 'udp', port: 123, address: 'fe80::c22:feff:fefe:ad52%vethc180014' },
@@ -219,12 +256,22 @@ describe('what a machine says about itself', () => {
   it('reads a process whose command name carries a space', () => {
     const parsed = parseDeviceDetail([
       'begin processes',
-      'proc 4211 1 12.5 3.4 Web Content',
+      'proc 4211|1|root|S|10|12.5|3.4|Web Content|/Applications/Web Content.app/Contents/MacOS/Web Content',
       'end processes',
     ].join('\n'))
 
     expect(parsed.processes).toEqual([
-      { pid: 4211, ppid: 1, cpu: 12.5, memory: 3.4, command: 'Web Content' },
+      {
+        pid: 4211,
+        ppid: 1,
+        cpu: 12.5,
+        memory: 3.4,
+        command: 'Web Content',
+        user: 'root',
+        state: 'S',
+        elapsedSeconds: 10,
+        args: '/Applications/Web Content.app/Contents/MacOS/Web Content',
+      },
     ])
   })
 })

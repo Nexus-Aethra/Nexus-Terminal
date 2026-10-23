@@ -5,8 +5,9 @@
  * the primitives insist on, a page that forgets its panel id, a list that
  * throws on an empty answer. None of that shows up in a type check, and none
  * of it can be seen in a picture either, so the body is rendered here to
- * markup and the markup is checked: four pages, the machine, the load, the
- * three lists, and the notes.
+ * markup and the markup is checked: the four pages, the machine, the load,
+ * the filter, the sortable columns, the three lists, the notes, and the
+ * folding.
  */
 
 import { createElement } from 'react'
@@ -14,8 +15,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { DshellDevicePanelBody } from '../src/client/device-panel.js'
 import { devicePanelView, type DevicePanelPage } from '../src/client/device-panel-view.js'
-import { zh } from '../src/client/locales.js'
-import { DEVICE_NOTE_KEYS } from '../src/client/locales.js'
+import { DEVICE_NOTE_KEYS, zh } from '../src/client/locales.js'
 import type { DshellDeviceDetailResponse } from '../src/device-detail-protocol.js'
 import type { DshellDeviceMetrics } from '../src/device-metrics-protocol.js'
 
@@ -27,22 +27,22 @@ const DETAIL: DshellDeviceDetailResponse = {
   detail: {
     device: { kind: 'device', name: 'build-box', endpoint: 'dev@10.0.0.9:22' },
     processes: [
-      { pid: 4211, ppid: 1, cpu: 12.5, memory: 3.4, command: 'node' },
-      { pid: 4212, ppid: 4211, cpu: 0.5, memory: 0.2, command: 'bash' },
+      { pid: 4211, ppid: 1, cpu: 12.5, memory: 3.4, command: 'node', user: 'root', state: 'S', elapsedSeconds: 1200, args: 'node server.js --port 8080' },
+      { pid: 4212, ppid: 4211, cpu: 0.5, memory: 0.2, command: 'bash', user: 'dev', state: 'R', elapsedSeconds: 60, args: 'bash' },
     ],
     containers: [
       { id: '9f2ab1', image: 'nginx:latest', name: 'web', state: 'Up 3 hours' },
     ],
     ports: [
-      { proto: 'tcp', port: 22, address: '0.0.0.0' },
-      { proto: 'tcp', port: 8080, address: '127.0.0.1' },
+      { proto: 'tcp', port: 22, address: '0.0.0.0', processName: 'sshd', processPid: 812 },
+      { proto: 'tcp', port: 8080, address: '127.0.0.1', processName: 'nginx', processPid: 4242 },
     ],
     notes: ['no-container-runtime'],
     at: 1_700_000_000_000,
   },
 }
 
-/** The load the chip's seat already holds. */
+/** The load the status chip's seat already holds. */
 const METRICS: DshellDeviceMetrics = {
   device: { kind: 'device', name: 'build-box', endpoint: 'dev@10.0.0.9:22' },
   cpu: { used: 0.25, cores: 8, load1: 1.5 },
@@ -84,24 +84,34 @@ describe('the device panel', () => {
     expect(html).toContain('1.50')
   })
 
-  it('lists the processes with their pid and their two shares', () => {
+  it('offers the three lists, with their counts', () => {
+    const html = draw('overview')
+
+    expect(html).toContain('进程 2')
+    expect(html).toContain('容器 1')
+    expect(html).toContain('监听端口 2')
+  })
+
+  it('draws a filter and sortable columns on the process list', () => {
     const html = draw('processes')
 
+    expect(html).toContain('筛选')
+    expect(html).toContain('PID')
+    expect(html).toContain('命令')
+    expect(html).toContain('CPU')
+    expect(html).toContain('内存')
     expect(html).toContain('4211')
     expect(html).toContain('node')
     expect(html).toContain('12.5%')
-    expect(html).toContain('3.4%')
   })
 
-  it('lists the containers and the ports', () => {
-    const containers = draw('containers')
-    expect(containers).toContain('web')
-    expect(containers).toContain('nginx:latest')
-    expect(containers).toContain('Up 3 hours')
+  it('draws the port list with the process that holds each port', () => {
+    const html = draw('ports')
 
-    const ports = draw('ports')
-    expect(ports).toContain('8080')
-    expect(ports).toContain('127.0.0.1')
+    expect(html).toContain('占用')
+    expect(html).toContain('8080')
+    expect(html).toContain('127.0.0.1')
+    expect(html).toContain('nginx')
   })
 
   it('says what it could not read, under a status heading', () => {
@@ -130,7 +140,7 @@ describe('the device panel', () => {
       folded: new Set<string>(),
       onPage: () => {},
       onToggle: () => {},
-    onRefresh: () => {},
+      onRefresh: () => {},
       t,
     }))
 

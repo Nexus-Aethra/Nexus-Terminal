@@ -33,6 +33,14 @@ export interface DshellProcessInfo {
   readonly memory: number
   /** The command name, without its arguments. */
   readonly command: string
+  /** The owner of the process; absent when the platform did not say. */
+  readonly user?: string | undefined
+  /** The process state, `ps` style: `R` running, `S` sleeping, `D` waiting on IO. */
+  readonly state?: string | undefined
+  /** How long the process has been alive, in seconds. */
+  readonly elapsedSeconds?: number | undefined
+  /** The whole command line, arguments and all. */
+  readonly args?: string | undefined
 }
 
 /** One container. */
@@ -55,6 +63,10 @@ export interface DshellPortInfo {
   readonly port: number
   /** The address it is bound to; `0.0.0.0` means every interface. */
   readonly address: string
+  /** The name of the process holding the socket; absent when the platform would not say. */
+  readonly processName?: string | undefined
+  /** The pid of the process holding the socket. */
+  readonly processPid?: number | undefined
 }
 
 /**

@@ -40,10 +40,22 @@ export interface DevicePanelStat {
 
 /** One process row. */
 export interface DevicePanelProcessRow {
-  readonly pid: string
+  readonly pid: number
+  readonly ppid: number
+  /** The command name, without its arguments. */
   readonly command: string
-  readonly cpu: string
-  readonly memory: string
+  /** The whole command line, arguments and all. */
+  readonly args: string
+  /** The owner of the process. */
+  readonly user: string
+  /** The process state, `ps` style. */
+  readonly state: string
+  /** How long the process has been alive, in seconds; undefined when unknown. */
+  readonly elapsedSeconds: number | undefined
+  /** Share of one core, in percent. */
+  readonly cpu: number
+  /** Share of the machine's memory, in percent. */
+  readonly memory: number
 }
 
 /** One container row. */
@@ -56,9 +68,35 @@ export interface DevicePanelContainerRow {
 /** One listening socket row. */
 export interface DevicePanelPortRow {
   readonly proto: string
-  readonly port: string
+  readonly port: number
   readonly address: string
+  /** The name of the process holding the socket. */
+  readonly processName: string
+  /** The pid of the process holding the socket. */
+  readonly processPid: number | undefined
 }
+
+/**
+ * How a list is ordered.
+ *
+ * The keys are in order: the first is the one that decides, the second breaks
+ * its ties, and so on. That is what "sort by CPU, then by memory" means, and
+ * it is why the keys are a list and not a single field.
+ */
+export type ProcessSortKey = 'cpu' | 'memory' | 'pid' | 'name' | 'user' | 'elapsed'
+export type PortSortKey = 'port' | 'proto' | 'address' | 'process'
+
+/** The direction one key is sorted in. */
+export type SortDirection = 'asc' | 'desc'
+
+/** One key, with the direction it is sorted in. */
+export interface SortKey<K extends string> {
+  readonly key: K
+  readonly direction: SortDirection
+}
+
+/** The transport a port list is narrowed to. */
+export type PortProtocol = 'all' | 'tcp' | 'udp'
 
 /** Everything the panel draws, decided. */
 export interface DevicePanelView {
@@ -150,10 +188,15 @@ export function devicePanelView(
     machine,
     load: loadStats(metrics),
     processes: detail.processes.map(process => ({
-      pid: String(process.pid),
+      pid: process.pid,
+      ppid: process.ppid,
       command: process.command,
-      cpu: `${process.cpu.toFixed(1)}%`,
-      memory: `${process.memory.toFixed(1)}%`,
+      args: process.args ?? process.command,
+      user: process.user ?? '',
+      state: process.state ?? '',
+      elapsedSeconds: process.elapsedSeconds,
+      cpu: process.cpu,
+      memory: process.memory,
     })),
     containers: detail.containers.map(container => ({
       name: container.name,
@@ -162,12 +205,157 @@ export function devicePanelView(
     })),
     ports: detail.ports.map(port => ({
       proto: port.proto,
-      port: String(port.port),
+      port: port.port,
       address: port.address,
+      processName: port.processName ?? '',
+      processPid: port.processPid,
     })),
     notes: detail.notes,
     error: answer.error,
   }
+}
+
+/** Whether a process row matches what the reader typed. */
+function processMatches(row: DevicePanelProcessRow, needle: string): boolean {
+  if (needle === '') return true
+  return row.command.toLowerCase().includes(needle)
+    || row.args.toLowerCase().includes(needle)
+    || row.user.toLowerCase().includes(needle)
+    || String(row.pid) === needle
+}
+
+/**
+ * The processes that match what the reader typed.
+ *
+ * The needle is matched against the command name, the whole command line, the
+ * owner and the pid: a reader looking for "that node" is looking for a name
+ * AND a line of arguments, and a reader looking for pid 812 is looking for a
+ * number, not for a word.
+ */
+export function filterProcessRows(
+  rows: readonly DevicePanelProcessRow[],
+  query: string,
+): readonly DevicePanelProcessRow[] {
+  const needle = query.trim().toLowerCase()
+  if (needle === '') return rows
+  return rows.filter(row => processMatches(row, needle))
+}
+
+/** Whether a port row matches what the reader typed. */
+function portMatches(row: DevicePanelPortRow, needle: string): boolean {
+  if (needle === '') return true
+  return row.address.toLowerCase().includes(needle)
+    || row.processName.toLowerCase().includes(needle)
+    || String(row.port) === needle
+    || String(row.processPid ?? '') === needle
+}
+
+/**
+ * The ports that match what the reader typed, and the transport they asked
+ * for.
+ */
+export function filterPortRows(
+  rows: readonly DevicePanelPortRow[],
+  query: string,
+  protocol: PortProtocol = 'all',
+): readonly DevicePanelPortRow[] {
+  const needle = query.trim().toLowerCase()
+  return rows.filter(row => {
+    if (protocol !== 'all' && row.proto !== protocol) return false
+    return portMatches(row, needle)
+  })
+}
+
+/** The value one key sorts by, and how bigger is better. */
+function processOrderValue(row: DevicePanelProcessRow, key: ProcessSortKey): number | string {
+  switch (key) {
+    case 'cpu': return row.cpu
+    case 'memory': return row.memory
+    case 'pid': return row.pid
+    case 'elapsed': return row.elapsedSeconds ?? -1
+    case 'name': return row.command.toLowerCase()
+    case 'user': return row.user.toLowerCase()
+    default: return 0
+  }
+}
+
+/** The value one key sorts by, and how bigger is better. */
+function portOrderValue(row: DevicePanelPortRow, key: PortSortKey): number | string {
+  switch (key) {
+    case 'port': return row.port
+    case 'proto': return row.proto
+    case 'address': return row.address
+    case 'process': return row.processName.toLowerCase()
+    default: return 0
+  }
+}
+
+/**
+ * Order the rows by a list of keys.
+ *
+ * The first key decides; the next ones break its ties. A number sorts by its
+ * value and a string by its text, and a missing value sorts as the smallest
+ * one — a process that has not been around long enough to say is at the
+ * bottom, not the top.
+ */
+function orderBy<K extends string, R>(
+  rows: readonly R[],
+  keys: readonly SortKey<K>[],
+  value: (row: R, key: K) => number | string,
+): readonly R[] {
+  if (keys.length === 0) return rows
+  return [...rows].sort((left, right) => {
+    for (const { key, direction } of keys) {
+      const a = value(left, key)
+      const b = value(right, key)
+      if (a === b) continue
+      const less = a < b
+      return direction === 'asc' ? (less ? -1 : 1) : (less ? 1 : -1)
+    }
+    return 0
+  })
+}
+
+/** The processes, ordered the way the reader asked. */
+export function sortProcessRows(
+  rows: readonly DevicePanelProcessRow[],
+  keys: readonly SortKey<ProcessSortKey>[],
+): readonly DevicePanelProcessRow[] {
+  return orderBy(rows, keys, processOrderValue)
+}
+
+/** The ports, ordered the way the reader asked. */
+export function sortPortRows(
+  rows: readonly DevicePanelPortRow[],
+  keys: readonly SortKey<PortSortKey>[],
+): readonly DevicePanelPortRow[] {
+  return orderBy(rows, keys, portOrderValue)
+}
+
+/**
+ * What clicking a column header does.
+ *
+ * A plain click makes that column the one that decides — the way a table
+ * behaves when you click a head. Holding shift puts the column AFTER the ones
+ * already there, so it only breaks their ties, and that is how a second
+ * column is added. At most three keys are kept: past that the order stops
+ * being something a reader can hold in their head.
+ */
+export function nextSort<K extends string>(
+  keys: readonly SortKey<K>[],
+  key: K,
+  shift: boolean,
+): readonly SortKey<K>[] {
+  const current = keys.find(entry => entry.key === key)
+  const flipped: SortKey<K> = current === undefined
+    ? { key, direction: 'desc' }
+    : { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+  const rest = keys.filter(entry => entry.key !== key)
+  if (shift) {
+    const appended = [...rest, flipped]
+    return appended.length > 3 ? appended.slice(appended.length - 3) : appended
+  }
+  return [flipped]
 }
 
 /** The load reading of one session, as the seat holds it. */

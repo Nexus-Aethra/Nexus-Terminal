@@ -61,10 +61,11 @@ const PROBE_STDOUT_BYTES = 24 * 1024
  */
 const DEVICE_DETAIL_PROBE = [
   "echo 'begin processes'",
-  "rows=$(ps -eo pid=,ppid=,pcpu=,pmem=,comm= --sort=-pcpu 2>/dev/null); rc=$?",
-  // The command name is printed LAST and takes the rest of the line: a name
-  // may hold spaces ("Web Content"), and a fixed field count would drop them.
-  "if [ $rc -ne 0 ] || [ -z \"$rows\" ]; then echo 'note no-ps'; else printf '%s\\n' \"$rows\" | head -n 40 | awk '{c=$5; for(i=6;i<=NF;i++) c=c\" \"$i; printf \"proc %s %s %s %s %s\\n\", $1, $2, $3, $4, c}'; fi",
+  // Nine fields, and the last one takes the rest of the line: the whole command
+  // line is the one field that may hold spaces, and a fixed field count would
+  // cut it in half.
+  "rows=$(ps -eo pid=,ppid=,user=,stat=,etimes=,pcpu=,pmem=,comm=,args= 2>/dev/null); rc=$?",
+  "if [ $rc -ne 0 ] || [ -z \"$rows\" ]; then echo 'note no-ps'; else printf '%s\\n' \"$rows\" | head -n 200 | awk '{a=\"\"; for(i=9;i<=NF;i++) a=a (i>9?\" \":\"\") $i; printf \"proc %s|%s|%s|%s|%s|%s|%s|%s|%s\\n\", $1, $2, $3, $4, $5, $6, $7, $8, a}'; fi",
   "echo 'end processes'",
   "echo 'begin containers'",
   "rows=$(docker ps --format '{{.ID}}|{{.Image}}|{{.Names}}|{{.Status}}' 2>/dev/null); rc=$?",
@@ -72,11 +73,14 @@ const DEVICE_DETAIL_PROBE = [
   "if [ $rc -ne 0 ]; then echo 'note no-container-runtime'; else printf '%s\\n' \"$rows\" | head -n 40 | awk -F'|' '{printf \"ctr %s|%s|%s|%s\\n\", $1, $2, $3, $4}'; fi",
   "echo 'end containers'",
   "echo 'begin ports'",
-  // `ss` and `netstat` print the local address in different columns, so the
-  // column is a variable the reader sets when it picks the tool.
-  "rows=$(ss -tulnH 2>/dev/null); rc=$?; col=5",
-  "if [ $rc -ne 0 ]; then rows=$(netstat -tuln 2>/dev/null); rc=$?; if [ $rc -eq 0 ]; then rows=$(printf '%s\\n' \"$rows\" | tail -n +3); col=4; fi; fi",
-  "if [ $rc -ne 0 ]; then echo 'note no-socket-tool'; else printf '%s\\n' \"$rows\" | head -n 40 | awk -v c=$col '{printf \"port %s %s\\n\", $1, $c}'; fi",
+  // `-p` is what says WHO holds a socket: a port with no owner is a port
+  // nobody can forward, so the owner belongs in the answer.
+  "rows=$(ss -tulnpH 2>/dev/null); rc=$?; tool=ss",
+  "if [ $rc -ne 0 ]; then rows=$(netstat -tulnp 2>/dev/null); rc=$?; tool=netstat; fi",
+  "if [ $rc -ne 0 ]; then rows=$(netstat -tuln 2>/dev/null); rc=$?; tool=netstat; fi",
+  // `ss` and `netstat` put the local address in different columns and the owner
+  // in a different shape, so each tool gets its own reading of its own line.
+  "if [ $rc -ne 0 ]; then echo 'note no-socket-tool'; elif [ \"$tool\" = ss ]; then printf '%s\\n' \"$rows\" | head -n 200 | awk '{n=\"\"; p=\"\"; if (match($7, /\\(\"[^\"]+\"/)) n=substr($7, RSTART+2, RLENGTH-3); if (match($7, /pid=[0-9]+/)) p=substr($7, RSTART+4, RLENGTH-4); printf \"port %s|%s|%s|%s\\n\", $1, $5, n, p}'; else printf '%s\\n' \"$rows\" | head -n 200 | awk 'NR>2 {n=\"\"; p=\"\"; if (NF>=7) { split($7, a, \"/\"); p=a[1]; n=(a[2]!=\"\"?a[2]:\"\") } printf \"port %s|%s|%s|%s\\n\", $1, $4, n, p}'; fi",
   "echo 'end ports'",
 ].join('; ')
 
@@ -112,7 +116,9 @@ export interface DshellDeviceDetailSections {
 
 /** A number, or undefined when the field is not one. */
 function num(text: string | undefined): number | undefined {
-  if (text === undefined) return undefined
+  // An EMPTY field is not a zero: `Number('')` is 0, and a port with no owner
+  // would be reported as owned by process 0.
+  if (text === undefined || text.trim() === '') return undefined
   const value = Number(text)
   return Number.isFinite(value) ? value : undefined
 }
@@ -172,14 +178,27 @@ export function parseDeviceDetail(text: string): DshellDeviceDetailSections {
         seen.add(rest)
         break
       case 'proc': {
-        const parts = rest.split(/\s+/u)
-        if (parts.length < 5) break
+        // Nine fields, the last of which is the whole command line: it may
+        // hold a separator of its own, so it takes the rest of the record.
+        const parts = rest.split('|')
+        if (parts.length < 9) break
         const pid = num(parts[0])
         const ppid = num(parts[1])
-        const cpu = num(parts[2])
-        const memory = num(parts[3])
+        const cpu = num(parts[5])
+        const memory = num(parts[6])
         if (pid === undefined || ppid === undefined || cpu === undefined || memory === undefined) break
-        processes.push({ pid, ppid, cpu, memory, command: parts.slice(4).join(' ') })
+        const elapsed = num(parts[4])
+        processes.push({
+          pid,
+          ppid,
+          cpu,
+          memory,
+          command: parts[7] ?? '',
+          user: parts[2] === '' ? undefined : parts[2],
+          state: parts[3] === '' ? undefined : parts[3],
+          elapsedSeconds: elapsed,
+          args: parts.slice(8).join('|'),
+        })
         break
       }
       case 'ctr': {
@@ -197,10 +216,17 @@ export function parseDeviceDetail(text: string): DshellDeviceDetailSections {
         break
       }
       case 'port': {
-        const parts = rest.split(/\s+/u)
+        // proto | address | owner-name | owner-pid
+        const parts = rest.split('|')
         if (parts.length < 2) break
-        const port = parsePort(parts[0] ?? '', parts[1] ?? '')
-        if (port !== undefined) ports.push(port)
+        const parsed = parsePort(parts[0] ?? '', parts[1] ?? '')
+        if (parsed === undefined) break
+        const ownerPid = num(parts[3])
+        ports.push({
+          ...parsed,
+          processName: parts[2] === undefined || parts[2] === '' ? undefined : parts[2],
+          processPid: ownerPid,
+        })
         break
       }
       case 'note': {
