@@ -10,6 +10,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the `sidebar.brand.*` SlotMap so `sidebar.brand.name` is
 // accepted as a registration name string.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+// Type-only: pulls the right-Sidebar service merge (ctx.sidebarRightTabs) and
+// the slot keys the right pane dispatches on.
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 // Type-only: pulls the settings SlotMap and the ctx.configForms merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the Plugins-panel SlotMap (`plugins.row.config`).
@@ -82,7 +85,16 @@ const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bind
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
-export const inject = ['slots', 'locale', 'sessions', 'dshellPtyStream', 'modelDirectories', 'uiConversation', 'configForms'] as const
+/**
+ * Required browser services.
+ *
+ * `sidebarRightTabs` is the right pane's type registry, and the device panel
+ * is a type in it: Cordis gates every service property behind the inject
+ * declaration, so reading `ctx.sidebarRightTabs` without declaring it throws
+ * "cannot get property \"sidebarRightTabs\" without inject" — on the device
+ * path, which is the path that needs it.
+ */
+export const inject = ['slots', 'locale', 'sidebarRightTabs', 'sessions', 'dshellPtyStream', 'modelDirectories', 'uiConversation', 'configForms'] as const
 
 /** This package's copy namespace. */
 const NS = 'dshellMode'
