@@ -126,21 +126,35 @@ npm as `0.1.14` and needs dsh `0.2.1-rc.2`.
 
 ---
 
+## dsh `0.2.1-rc.3`
+
+dsh published `0.2.1-rc.3`, and dshell's peer ranges now admit it. **The published `0.1.14` does
+not**: dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and
+refuses the whole install, so on a `0.2.1-rc.3` dsh the `0.1.14` plugins are not installed at
+all. The line in this checkout is the one that supports it.
+
+| | What changed | What you notice |
+|---|---|---|
+| **dsh `0.2.1-rc.3` is supported** | Every dsh peer range dshell declares now includes it | The plugin installs on a `0.2.1-rc.3` dsh |
+
+---
+
 ## Getting started
 
 Two ways in: install the published plugins into a dsh you already have, or build from this checkout.
 
 ### Install into dsh
 
-Prerequisites: **dsh** `0.2.1-rc.2` — either the desktop app, or the CLI
+Prerequisites: **dsh** `0.2.1-rc.3` — either the desktop app, or the CLI
 (`npm install -g @deepseek-ai/dsh@next`) — and **Node 24.21.0** with **pnpm 9.15.0** on `PATH`
-(`dsh plugin` forwards to pnpm). On npm, `0.2.1-rc.2` is the `next` tag and `0.2.0-rc.2` is `latest`.
+(`dsh plugin` forwards to pnpm). On npm, `0.2.1-rc.3` is the `next` tag and `0.2.0-rc.2` is `latest`.
 
 Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.2` | ****`0.1.14`** — the npm `latest` dist-tag |
+| `0.2.1-rc.3` | **the line in this checkout** — the published `0.1.14` does not install on it |
+| `0.2.1-rc.2` | **`0.1.14`** — the npm `latest` dist-tag |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** — the npm `latest` dist-tag |
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
