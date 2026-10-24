@@ -981,6 +981,20 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
 
   const [page, setPage] = useState<DevicePanelPage>('overview')
 
+  /**
+   * The load is watched too, and only on the page that shows it.
+   *
+   * The seat is refcounted, so the status chip and this panel cost ONE poll
+   * between them — but a poll is an `ssh` round trip on a device, and the
+   * panel reads the seat without watching it, the load was only ever as fresh
+   * as whatever else happened to be watching. Open the panel on a session
+   * whose chip is not on screen, and the load stayed a dash forever.
+   */
+  useEffect(
+    () => (page === 'overview' ? deviceMetricsSeat.watch(sessionId) : undefined),
+    [sessionId, page],
+  )
+
   const view = devicePanelView(answer, metrics?.metrics)
 
   return (
