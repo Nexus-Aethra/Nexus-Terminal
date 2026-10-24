@@ -264,4 +264,19 @@ describe('a column head', () => {
       expect(usage).toMatch(/\bcolumn="[a-z]+"/u)
     }
   })
+
+  it('watches both readings it draws', () => {
+    // The panel reads the detail seat AND the load seat, and it has to keep
+    // both fresh: the seats are refcounted, so watching one costs nothing the
+    // status chip is not already paying. A panel that reads without watching
+    // draws whatever the last reader left behind - and on a session whose chip
+    // is not on screen, that is a dash that never fills in.
+    const source = readFileSync(
+      fileURLToPath(new URL('../src/client/device-panel.tsx', import.meta.url)),
+      'utf8',
+    )
+
+    expect(source).toMatch(/deviceDetailSeat\.watch\(sessionId\)/u)
+    expect(source).toMatch(/deviceMetricsSeat\.watch\(sessionId\)/u)
+  })
 })
