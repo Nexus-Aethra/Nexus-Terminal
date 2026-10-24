@@ -15,6 +15,7 @@ import {
   devicePanelView,
   filterPortRows,
   filterProcessRows,
+  flipSort,
   nextSort,
   sortPortRows,
   sortProcessRows,
@@ -310,6 +311,46 @@ describe('what clicking a column head does', () => {
 
     expect(keys).toHaveLength(3)
     expect(keys.map(entry => entry.key)).toEqual(['memory', 'pid', 'name'])
+  })
+})
+
+describe('what clicking a direction control does', () => {
+  it('turns that column around', () => {
+    const keys = flipSort([{ key: 'cpu', direction: 'desc' }], 'cpu', 'desc')
+
+    expect(keys[0]?.key).toBe('cpu')
+    expect(keys[0]?.direction).toBe('asc')
+  })
+
+  it('leaves the other columns where they are', () => {
+    // The reader pointed at a direction, not at a new question: the tie-break
+    // they set up is not what they asked to throw away.
+    const keys = flipSort(
+      [{ key: 'cpu', direction: 'desc' }, { key: 'memory', direction: 'desc' }],
+      'cpu',
+      'desc',
+    )
+
+    expect(keys.map(entry => entry.key)).toEqual(['cpu', 'memory'])
+    expect(keys[1]?.direction).toBe('desc')
+  })
+
+  it('puts a column that was not sorted yet at the front, keeping the rest', () => {
+    const keys = flipSort([{ key: 'cpu', direction: 'desc' }], 'memory', 'desc')
+
+    expect(keys.map(entry => entry.key)).toEqual(['memory', 'cpu'])
+    expect(keys[0]?.direction).toBe('desc')
+  })
+
+  it('keeps at most three keys', () => {
+    const keys = flipSort(
+      [{ key: 'cpu', direction: 'desc' }, { key: 'memory', direction: 'desc' }, { key: 'pid', direction: 'asc' }],
+      'name',
+      'asc',
+    )
+
+    expect(keys).toHaveLength(3)
+    expect(keys.map(entry => entry.key)).toEqual(['name', 'cpu', 'memory'])
   })
 })
 

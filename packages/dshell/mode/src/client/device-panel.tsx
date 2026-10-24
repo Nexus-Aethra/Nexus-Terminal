@@ -25,7 +25,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { DisclosureRow, Input, SegmentedTabs, Tag, type SegmentedTab } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input, SegmentedTabs, Tag, type SegmentedTab } from '@deepseek-ai/dsh-client-ui-primitives'
 // Type-only: pulls the right-Sidebar SlotMap merge (the tab-body seat + its hooks).
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { deviceDetailSeat } from './device-detail.js'
@@ -35,6 +35,7 @@ import {
   filterContainerRows,
   filterPortRows,
   filterProcessRows,
+  flipSort,
   nextSort,
   sortContainerRows,
   sortPortRows,
@@ -47,6 +48,7 @@ import {
   type DevicePanelStat,
   type PortSortKey,
   type ProcessSortKey,
+  type SortDirection,
   type SortKey,
 } from './device-panel-view.js'
 import { DeviceGlyph } from './device-definition.js'
@@ -63,10 +65,48 @@ export type DevicePanelProps =
  *
  * The heads and the rows share it, so a column is where its head says it is
  * and a click on the head reaches the column it names.
+ *
+ * The numeric columns are wide enough for their head AND its direction
+ * control: a head that has to be clipped is a head that cannot be read.
  */
-const PROCESS_COLUMNS = '44px minmax(0, 1fr) 50px 50px'
-const PORT_COLUMNS = '38px 48px minmax(0, 1fr) minmax(0, 110px)'
+const PROCESS_COLUMNS = '44px minmax(0, 1fr) 58px 58px'
+const PORT_COLUMNS = '44px 48px minmax(0, 1fr) minmax(0, 110px)'
 const CONTAINER_COLUMNS = 'minmax(0, 1fr) minmax(0, 1fr) minmax(0, auto)'
+
+/**
+ * The room a head's direction control takes, and the gap before it.
+ *
+ * A right-aligned value lines up under its head's NAME, not under the control
+ * that sits beside the name — so the value gives the control's room back.
+ */
+const HEAD_CONTROL = 21
+
+/**
+ * The direction a column joins the order in.
+ *
+ * A number reads best from the top down — the busiest process first — and a
+ * name from the top up. A column that has never been sorted still has to
+ * start somewhere, and this is where.
+ */
+const PROCESS_FALLBACK: Readonly<Record<ProcessSortKey, SortDirection>> = {
+  cpu: 'desc',
+  memory: 'desc',
+  pid: 'asc',
+  name: 'asc',
+  user: 'asc',
+  elapsed: 'desc',
+}
+const PORT_FALLBACK: Readonly<Record<PortSortKey, SortDirection>> = {
+  port: 'asc',
+  proto: 'asc',
+  address: 'asc',
+  process: 'asc',
+}
+const CONTAINER_FALLBACK: Readonly<Record<ContainerSortKey, SortDirection>> = {
+  name: 'asc',
+  image: 'asc',
+  state: 'asc',
+}
 
 const styles = {
   root: {
@@ -204,6 +244,13 @@ const styles = {
     gap: 6,
     padding: '6px 0 4px',
   } as CSSProperties,
+  /** How many rows the list has, beside the filter that narrows it. */
+  count: {
+    fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+    fontSize: 11,
+    color: 'var(--dsw-alias-label-tertiary)',
+    whiteSpace: 'nowrap',
+  } as CSSProperties,
   /** The column heads: what the list can be ordered by. */
   heads: {
     display: 'grid',
@@ -215,6 +262,20 @@ const styles = {
     textTransform: 'uppercase',
     color: 'var(--dsw-alias-label-quaternary)',
   } as CSSProperties,
+  /** One head: the column's name and the control that turns it around. */
+  headCell: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 3,
+    minWidth: 0,
+  } as CSSProperties,
+  headCellRight: { justifyContent: 'flex-end' } as CSSProperties,
+  /**
+   * The column's NAME: clicking it sorts by this column.
+   *
+   * Its colour is not set here — the stylesheet owns the resting, sorted and
+   * hovered states, because an inline colour cannot be hovered.
+   */
   head: {
     border: 'none',
     background: 'transparent',
@@ -228,8 +289,37 @@ const styles = {
     alignItems: 'center',
     gap: 3,
     minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   } as CSSProperties,
-  headOn: { color: 'var(--dsw-alias-label-secondary)' } as CSSProperties,
+  headLabel: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' } as CSSProperties,
+  /** Which key this column is in the order, when there is more than one. */
+  headRank: {
+    fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+    fontSize: 9,
+    opacity: 0.75,
+  } as CSSProperties,
+  /**
+   * The direction control: its own button, beside the name it belongs to.
+   *
+   * It is a button of its own because it answers a different question than
+   * the name does — WHICH WAY — and it keeps the rest of the order.
+   */
+  headArrow: {
+    flex: '0 0 auto',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    width: 18,
+    height: 14,
+    padding: 0,
+    border: 'none',
+    borderRadius: 3,
+    background: 'transparent',
+    cursor: 'pointer',
+  } as CSSProperties,
   /** One row of a list: flat, a hairline under it, 24px tall. */
   row: {
     display: 'grid',
@@ -260,6 +350,9 @@ const styles = {
   } as CSSProperties,
   number: {
     textAlign: 'right',
+    // The value sits under its head's name, and the name has the direction
+    // control beside it.
+    paddingRight: HEAD_CONTROL,
   } as CSSProperties,
   dim: { color: 'var(--dsw-alias-label-tertiary)' } as CSSProperties,
   good: { color: 'var(--dsw-alias-state-business-primary)' } as CSSProperties,
@@ -272,6 +365,7 @@ const styles = {
     padding: 0,
     cursor: 'pointer',
     textAlign: 'right',
+    paddingRight: HEAD_CONTROL,
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -283,6 +377,7 @@ const styles = {
     alignItems: 'center',
     gap: 5,
     justifyContent: 'flex-end',
+    paddingRight: HEAD_CONTROL,
     minWidth: 0,
   } as CSSProperties,
   stateDot: {
@@ -346,13 +441,17 @@ const styles = {
 }
 
 /**
- * Row-hover treatment.
+ * Row-hover treatment, and the states of the column heads.
  *
  * Inline styles cannot express `:hover`, and a highlighted row is most of
  * what tells a reader which line the pointer is on — so one packaged style
  * element carries it, scoped to this panel's own data attributes so it cannot
  * affect stock chrome. The rows' resting background lives here too: a
  * stylesheet `:hover` rule cannot override an inline declaration.
+ *
+ * The heads live here for the same reason, and for one more: the colour of a
+ * head says whether the column is sorted and whether the pointer is on it, and
+ * an inline colour cannot be either.
  */
 function injectHoverCss(): () => void {
   const style = document.createElement('style')
@@ -360,6 +459,16 @@ function injectHoverCss(): () => void {
   style.textContent = [
     '[data-dshell-device-row] { background: transparent; transition: background 100ms ease; }',
     '[data-dshell-device-row]:hover { background: var(--dsw-alias-interactive-bg-hover); }',
+    // A column's name: quiet until it is used, brighter when it is sorted,
+    // brightest when the pointer is on it.
+    '[data-dshell-device-head] { color: var(--dsw-alias-label-quaternary); transition: color 100ms ease; }',
+    '[data-dshell-device-head][data-sorted="true"] { color: var(--dsw-alias-label-secondary); }',
+    '[data-dshell-device-head]:hover { color: var(--dsw-alias-label-primary); }',
+    // The direction control: always there, so every column reads as sortable,
+    // and unmistakable when it is the one that is doing the sorting.
+    '[data-dshell-device-arrow] { color: var(--dsw-alias-label-quaternary); opacity: 0.4; transition: opacity 100ms ease, color 100ms ease; }',
+    '[data-dshell-device-arrow][data-sorted="true"] { color: var(--dsw-alias-label-primary); opacity: 1; }',
+    '[data-dshell-device-arrow]:hover { opacity: 1; color: var(--dsw-alias-label-primary); }',
   ].join('\n')
   document.head.appendChild(style)
   return () => { style.remove() }
@@ -395,41 +504,89 @@ function SearchGlyph(): ReactNode {
 /**
  * A column head that sorts.
  *
- * The order is shown on the head itself: the first key is marked `1`, the one
- * breaking its ties `2`, and the arrow says which way that key runs.
+ * TWO controls, because they answer two different questions. The NAME asks
+ * "sort by this column" and replaces the order; the CONTROL asks "which way",
+ * and turns this column around WITHOUT throwing away the tie-break the reader
+ * set up beside it.
+ *
+ * The column's key is NOT called `key`. React reserves that name, eats it out
+ * of the props before the component is ever called, and hands the component
+ * nothing — which is how every head came to sort by nothing at all, and how
+ * four heads could end up wearing the same "1" badge.
+ *
+ * @param props - the column, the order it is in, and what to ask for.
+ * @returns the head: a name and a direction control.
  */
-function SortHead<K extends string>({ label, keys, key, onSort, align }: {
+export function SortHead<K extends string>({ label, sorts, column, onSort, onFlip, align, fallback, t }: {
   label: string
-  keys: readonly SortKey<K>[]
-  key: K
-  onSort: (key: K, shift: boolean) => void
+  /** The order as it is now: the first key decides, the rest break its ties. */
+  sorts: readonly SortKey<K>[]
+  /** The column this head belongs to. NOT `key` — React would eat that. */
+  column: K
+  /** The reader asked for this column to decide. */
+  onSort: (column: K, shift: boolean) => void
+  /** The reader asked for this column to turn around. */
+  onFlip: (column: K) => void
+  /** Which way the values sit in the column. */
   align?: 'right' | undefined
+  /** The direction this column joins the order in. */
+  fallback: SortDirection
+  /** The reader's copy. */
+  t: DevicePanelProps['t']
 }): ReactNode {
-  const index = keys.findIndex(entry => entry.key === key)
-  const entry = index === -1 ? undefined : keys[index]
+  const index = sorts.findIndex(entry => entry.key === column)
+  const entry = index === -1 ? undefined : sorts[index]
+  const sorted = entry !== undefined
+  const direction = entry?.direction ?? fallback
+  // The rank is only worth printing when there is a rank to be: one key is
+  // always the first one, and saying so is noise.
+  const rank = sorts.length > 1 && sorted ? String(index + 1) : undefined
   return (
-    <button
-      type="button"
+    <div
       style={{
-        ...styles.head,
-        ...(entry === undefined ? {} : styles.headOn),
-        // The head fills its column, so aiming at the column is aiming at the
-        // head; the text inside it is what decides which way the text sits.
-        ...(align === 'right' ? { justifyContent: 'flex-end' } : {}),
+        ...styles.headCell,
+        ...(align === 'right' ? styles.headCellRight : {}),
       }}
-      onClick={(event) => { onSort(key, event.shiftKey) }}
     >
-      <span>{label}</span>
-      {entry === undefined
-        ? null
-        : (
-          <>
-            <span style={styles.hint}>{String(index + 1)}</span>
-            <span>{entry.direction === 'asc' ? '↑' : '↓'}</span>
-          </>
-        )}
-    </button>
+      <button
+        type="button"
+        data-dshell-device-head={column}
+        data-sorted={sorted ? 'true' : 'false'}
+        style={styles.head}
+        title={t('device.head.sort', { column: label })}
+        onClick={(event) => { onSort(column, event.shiftKey) }}
+      >
+        <span style={styles.headLabel}>{label}</span>
+      </button>
+      <button
+        type="button"
+        data-dshell-device-arrow={column}
+        data-sorted={sorted ? 'true' : 'false'}
+        style={styles.headArrow}
+        title={t('device.head.flip', { column: label })}
+        aria-label={t('device.head.flip', { column: label })}
+        onClick={() => { onFlip(column) }}
+      >
+        {rank === undefined ? null : <span style={styles.headRank}>{rank}</span>}
+        <svg width="7" height="7" viewBox="0 0 8 8" aria-hidden="true" focusable="false">
+          <path
+            d={direction === 'asc' ? 'M4 1 L7 6.5 L1 6.5 Z' : 'M4 7 L7 1.5 L1 1.5 Z'}
+            fill="currentColor"
+          />
+        </svg>
+      </button>
+    </div>
   )
+}
+
+/**
+ * How many rows a list has, printed beside the filter that narrows it.
+ *
+ * A filter hides rows, and a reader who cannot see how many are left cannot
+ * tell a short list from a narrow one — so when the two differ, both are said.
+ */
+function countText(shown: number, total: number, t: DevicePanelProps['t']): string {
+  return shown === total ? String(total) : t('device.list.count', { shown, total })
 }
 
 /** How long a process has been running, in the reader's language. */
@@ -564,12 +721,8 @@ export interface DevicePanelBodyProps {
   readonly view: import('./device-panel-view.js').DevicePanelView | undefined
   /** The page on screen. */
   readonly page: DevicePanelPage
-  /** The folded sections, by id. */
-  readonly folded: ReadonlySet<string>
   /** A page was asked for. */
   readonly onPage: (page: DevicePanelPage) => void
-  /** A section was folded or unfolded. */
-  readonly onToggle: (id: string) => void
   /** Ask the host again, now. */
   readonly onRefresh: () => void
   /** The reader's copy. */
@@ -581,7 +734,7 @@ export interface DevicePanelBodyProps {
  * @param props - the view, the state, and the copy.
  * @returns the panel's content.
  */
-export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, onRefresh, t }: DevicePanelBodyProps): ReactNode {
+export function DshellDevicePanelBody({ view, page, onPage, onRefresh, t }: DevicePanelBodyProps): ReactNode {
   // The rows' hover lives in a stylesheet, because inline styles cannot say
   // `:hover`.
   useEffect(injectHoverCss, [])
@@ -678,23 +831,15 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                       ? null
                       : (
                         <div style={styles.group}>
-                          <DisclosureRow
-                            icon={null}
-                            title={t('device.section.status')}
-                            open={!folded.has('status')}
-                            expandable
-                            expandOnRowClick
-                            onToggle={() => { onToggle('status') }}
-                          >
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 0 6px 22px' }}>
-                              {notes.map(note => (
-                                <div key={note} style={styles.note}>
-                                  <span style={styles.noteDot} />
-                                  <span>{t(DEVICE_NOTE_KEYS[note])}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </DisclosureRow>
+                          <div style={styles.eyebrow}>{t('device.section.status')}</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0 0' }}>
+                            {notes.map(note => (
+                              <div key={note} style={styles.note}>
+                                <span style={styles.noteDot} />
+                                <span>{t(DEVICE_NOTE_KEYS[note])}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                   </div>
@@ -712,35 +857,26 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                         aria-label={t('device.filter.placeholder')}
                         onChange={(event) => { setProcessQuery(event.target.value) }}
                       />
+                      <span data-dshell-device-count="processes" style={styles.count}>{countText(shownProcesses.length, processes.length, t)}</span>
                     </div>
-                    <DisclosureRow
-                      icon={null}
-                      title={`${t('device.section.processes')} ${String(processes.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.pidCmd')}</span>}
-                      open={!folded.has('processes')}
-                      expandable
-                      expandOnRowClick
-                      onToggle={() => { onToggle('processes') }}
-                    >
-                      <div style={{ ...styles.heads, gridTemplateColumns: PROCESS_COLUMNS }}>
-                        <SortHead label={t('device.column.pid')} keys={processSort} key="pid" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
-                        <SortHead label={t('device.column.command')} keys={processSort} key="name" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
-                        <SortHead label={t('device.column.cpu')} keys={processSort} key="cpu" align="right" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
-                        <SortHead label={t('device.column.memory')} keys={processSort} key="memory" align="right" onSort={(key, shift) => { setProcessSort(nextSort(processSort, key, shift)) }} />
-                      </div>
-                      {shownProcesses.length === 0
-                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                        : shownProcesses.map((row, index) => (
-                          <ProcessRow
-                            key={String(row.pid)}
-                            row={row}
-                            open={expandedPid === row.pid}
-                            onOpen={(pid) => { setExpandedPid(current => current === pid ? undefined : pid) }}
-                            last={index === shownProcesses.length - 1}
-                            t={t}
-                          />
-                        ))}
-                    </DisclosureRow>
+                    <div style={{ ...styles.heads, gridTemplateColumns: PROCESS_COLUMNS }}>
+                      <SortHead label={t('device.column.pid')} sorts={processSort} column="pid" fallback={PROCESS_FALLBACK.pid} onSort={(column, shift) => { setProcessSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setProcessSort(sorts => flipSort(sorts, column, PROCESS_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.command')} sorts={processSort} column="name" fallback={PROCESS_FALLBACK.name} onSort={(column, shift) => { setProcessSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setProcessSort(sorts => flipSort(sorts, column, PROCESS_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.cpu')} sorts={processSort} column="cpu" fallback={PROCESS_FALLBACK.cpu} align="right" onSort={(column, shift) => { setProcessSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setProcessSort(sorts => flipSort(sorts, column, PROCESS_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.memory')} sorts={processSort} column="memory" fallback={PROCESS_FALLBACK.memory} align="right" onSort={(column, shift) => { setProcessSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setProcessSort(sorts => flipSort(sorts, column, PROCESS_FALLBACK[column])) }} t={t} />
+                    </div>
+                    {shownProcesses.length === 0
+                      ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                      : shownProcesses.map((row, index) => (
+                        <ProcessRow
+                          key={String(row.pid)}
+                          row={row}
+                          open={expandedPid === row.pid}
+                          onOpen={(pid) => { setExpandedPid(current => current === pid ? undefined : pid) }}
+                          last={index === shownProcesses.length - 1}
+                          t={t}
+                        />
+                      ))}
                   </div>
                 )
                 : null}
@@ -756,31 +892,22 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                         aria-label={t('device.filter.placeholder')}
                         onChange={(event) => { setContainerQuery(event.target.value) }}
                       />
+                      <span data-dshell-device-count="containers" style={styles.count}>{countText(shownContainers.length, containers.length, t)}</span>
                     </div>
-                    <DisclosureRow
-                      icon={null}
-                      title={`${t('device.section.containers')} ${String(containers.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.nameState')}</span>}
-                      open={!folded.has('containers')}
-                      expandable
-                      expandOnRowClick
-                      onToggle={() => { onToggle('containers') }}
-                    >
-                      <div style={{ ...styles.heads, gridTemplateColumns: CONTAINER_COLUMNS }}>
-                        <SortHead label={t('device.column.name')} keys={containerSort} key="name" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
-                        <SortHead label={t('device.column.image')} keys={containerSort} key="image" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
-                        <SortHead label={t('device.column.state')} keys={containerSort} key="state" align="right" onSort={(key, shift) => { setContainerSort(nextSort(containerSort, key, shift)) }} />
-                      </div>
-                      {shownContainers.length === 0
-                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                        : shownContainers.map((container, index) => (
-                          <ContainerRow
-                            key={container.name}
-                            row={container}
-                            last={index === shownContainers.length - 1}
-                          />
-                        ))}
-                    </DisclosureRow>
+                    <div style={{ ...styles.heads, gridTemplateColumns: CONTAINER_COLUMNS }}>
+                      <SortHead label={t('device.column.name')} sorts={containerSort} column="name" fallback={CONTAINER_FALLBACK.name} onSort={(column, shift) => { setContainerSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setContainerSort(sorts => flipSort(sorts, column, CONTAINER_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.image')} sorts={containerSort} column="image" fallback={CONTAINER_FALLBACK.image} onSort={(column, shift) => { setContainerSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setContainerSort(sorts => flipSort(sorts, column, CONTAINER_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.state')} sorts={containerSort} column="state" fallback={CONTAINER_FALLBACK.state} align="right" onSort={(column, shift) => { setContainerSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setContainerSort(sorts => flipSort(sorts, column, CONTAINER_FALLBACK[column])) }} t={t} />
+                    </div>
+                    {shownContainers.length === 0
+                      ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                      : shownContainers.map((container, index) => (
+                        <ContainerRow
+                          key={container.name}
+                          row={container}
+                          last={index === shownContainers.length - 1}
+                        />
+                      ))}
                   </div>
                 )
                 : null}
@@ -796,41 +923,32 @@ export function DshellDevicePanelBody({ view, page, folded, onPage, onToggle, on
                         aria-label={t('device.filter.placeholder')}
                         onChange={(event) => { setPortQuery(event.target.value) }}
                       />
+                      <span data-dshell-device-count="ports" style={styles.count}>{countText(shownPorts.length, ports.length, t)}</span>
                     </div>
-                    <DisclosureRow
-                      icon={null}
-                      title={`${t('device.section.ports')} ${String(ports.length)}`}
-                      headerAccessory={<span style={styles.hint}>{t('device.hint.portProto')}</span>}
-                      open={!folded.has('ports')}
-                      expandable
-                      expandOnRowClick
-                      onToggle={() => { onToggle('ports') }}
-                    >
-                      <div style={{ ...styles.heads, gridTemplateColumns: PORT_COLUMNS }}>
-                        <SortHead label={t('device.column.proto')} keys={portSort} key="proto" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
-                        <SortHead label={t('device.column.port')} keys={portSort} key="port" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
-                        <SortHead label={t('device.column.address')} keys={portSort} key="address" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
-                        <SortHead label={t('device.column.process')} keys={portSort} key="process" align="right" onSort={(key, shift) => { setPortSort(nextSort(portSort, key, shift)) }} />
-                      </div>
-                      {shownPorts.length === 0
-                        ? <div style={styles.empty}>{t('device.list.empty')}</div>
-                        : shownPorts.map((row, index) => (
-                          <PortRow
-                            key={`${row.proto}-${String(row.port)}-${row.address}`}
-                            row={row}
-                            last={index === shownPorts.length - 1}
-                            onHold={(name) => {
-                              // The first question about a port is who holds
-                              // it, and the process list is where the answer
-                              // is read: so the holder leads there, with the
-                              // list already narrowed to it.
-                              setProcessQuery(name)
-                              setExpandedPid(undefined)
-                              onPage('processes')
-                            }}
-                          />
-                        ))}
-                    </DisclosureRow>
+                    <div style={{ ...styles.heads, gridTemplateColumns: PORT_COLUMNS }}>
+                      <SortHead label={t('device.column.proto')} sorts={portSort} column="proto" fallback={PORT_FALLBACK.proto} onSort={(column, shift) => { setPortSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setPortSort(sorts => flipSort(sorts, column, PORT_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.port')} sorts={portSort} column="port" fallback={PORT_FALLBACK.port} onSort={(column, shift) => { setPortSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setPortSort(sorts => flipSort(sorts, column, PORT_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.address')} sorts={portSort} column="address" fallback={PORT_FALLBACK.address} onSort={(column, shift) => { setPortSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setPortSort(sorts => flipSort(sorts, column, PORT_FALLBACK[column])) }} t={t} />
+                      <SortHead label={t('device.column.process')} sorts={portSort} column="process" fallback={PORT_FALLBACK.process} align="right" onSort={(column, shift) => { setPortSort(sorts => nextSort(sorts, column, shift)) }} onFlip={(column) => { setPortSort(sorts => flipSort(sorts, column, PORT_FALLBACK[column])) }} t={t} />
+                    </div>
+                    {shownPorts.length === 0
+                      ? <div style={styles.empty}>{t('device.list.empty')}</div>
+                      : shownPorts.map((row, index) => (
+                        <PortRow
+                          key={`${row.proto}-${String(row.port)}-${row.address}`}
+                          row={row}
+                          last={index === shownPorts.length - 1}
+                          onHold={(name) => {
+                            // The first question about a port is who holds
+                            // it, and the process list is where the answer
+                            // is read: so the holder leads there, with the
+                            // list already narrowed to it.
+                            setProcessQuery(name)
+                            setExpandedPid(undefined)
+                            onPage('processes')
+                          }}
+                        />
+                      ))}
                   </div>
                 )
                 : null}
@@ -862,16 +980,6 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
   useEffect(() => deviceDetailSeat.watch(sessionId), [sessionId])
 
   const [page, setPage] = useState<DevicePanelPage>('overview')
-  /** The folded sections, by id. A section that is not in the set is open. */
-  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set<string>())
-  const toggle = useCallback((id: string): void => {
-    setFolded(previous => {
-      const next = new Set(previous)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
 
   const view = devicePanelView(answer, metrics?.metrics)
 
@@ -882,9 +990,7 @@ export function DshellDevicePanel({ sessionId, t }: DevicePanelProps): ReactNode
       key={sessionId}
       view={view}
       page={page}
-      folded={folded}
       onPage={setPage}
-      onToggle={toggle}
       onRefresh={() => { deviceDetailSeat.refresh(sessionId) }}
       t={t}
     />

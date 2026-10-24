@@ -391,6 +391,40 @@ export function nextSort<K extends string>(
   return [flipped]
 }
 
+/**
+ * What the direction control does: turn ONE column around, and leave the rest
+ * of the order alone.
+ *
+ * This is deliberately not {@link nextSort}: clicking a column's NAME replaces
+ * the whole order, because the reader is choosing a new question ("sort by
+ * this"), while clicking the ARROW answers a different one ("which way?"), and
+ * the tie-break the reader set up a moment ago is not what they asked to throw
+ * away.
+ *
+ * A column that is not sorted yet becomes the primary key — the reader pointed
+ * at it — and every other key keeps its place behind it.
+ *
+ * @param keys - the order as it is now.
+ * @param key - the column the control belongs to.
+ * @param fallback - the direction a column starts in when it joins the order.
+ * @returns the new order.
+ */
+export function flipSort<K extends string>(
+  keys: readonly SortKey<K>[],
+  key: K,
+  fallback: SortDirection = 'asc',
+): readonly SortKey<K>[] {
+  const current = keys.find(entry => entry.key === key)
+  if (current === undefined) {
+    // The same cap as the name click: past three keys the order stops being
+    // something a reader can hold in their head.
+    return [{ key, direction: fallback }, ...keys].slice(0, 3) as readonly SortKey<K>[]
+  }
+  return keys.map(entry => entry.key === key
+    ? { key, direction: entry.direction === 'asc' ? 'desc' : 'asc' }
+    : entry)
+}
+
 /** The load reading of one session, as the seat holds it. */
 export function metricsOf(answer: DshellDeviceMetricsResponse | undefined): DshellDeviceMetrics | undefined {
   return answer?.metrics
