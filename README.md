@@ -141,7 +141,8 @@ Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.3` | **`0.1.15`** — the npm `latest` dist-tag |
+| `0.2.1-rc.3` **and every other 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.16-alpha.1`** — the npm `alpha` dist-tag |
+| `0.2.1-rc.3` only | **`0.1.15`** — the npm `latest` dist-tag |
 | `0.2.1-rc.2` | **`0.1.14`** |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** |
 
@@ -158,9 +159,16 @@ the profile's `compatibility.json`.
 # One package: the bundle is the patch layer, it depends on the other ten dshell
 # packages, and dshell-ssh carries the one dsh package a stock profile does not
 # ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.15
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@latest
 
 dsh web
+```
+
+For the alpha — the one that accepts every dsh on the 0.2.1 line rather than `0.2.1-rc.3` alone —
+the version has to be named, because `alpha` is a separate dist-tag:
+
+```sh
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.16-alpha.1
 ```
 
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.

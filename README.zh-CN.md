@@ -134,7 +134,8 @@ npm 上 `0.2.1-rc.3` 是 `next` 标签，`latest` 是 `0.2.0-rc.2`。
 
 | dsh | dshell |
 |---|---|
-| `0.2.1-rc.3` | **`0.1.15`**——npm 的 `latest` 标签 |
+| `0.2.1-rc.3` **以及其他所有 0.2.1 版本**，再加 `0.2.0`、`0.1.7`、`0.1.6`、`0.1.5` | **`0.1.16-alpha.1`**——npm 的 `alpha` 标签 |
+| 仅 `0.2.1-rc.3` | **`0.1.15`**——npm 的 `latest` 标签 |
 | `0.2.1-rc.2` | **`0.1.14`** |
 | `0.2.0-rc.2`、`0.2.0-rc.1`、`0.1.7-rc.2`、`0.1.6-alpha.2`、`0.1.5-rc.2` | **`0.1.13`** |
 
@@ -148,9 +149,16 @@ bundle 被跳过**，所以 dshell 声明它支持哪些 dsh 版本。这个声�
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，
 # dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
-dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.15
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@latest
 
 dsh web
+```
+
+要装 alpha（接受 0.2.1 整条线上的 dsh，而不只是 `0.2.1-rc.3`），必须点名版本，
+因为 `alpha` 是另一个 dist-tag：
+
+```sh
+dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@0.1.16-alpha.1
 ```
 
 dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
