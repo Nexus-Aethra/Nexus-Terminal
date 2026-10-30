@@ -756,12 +756,27 @@ build outputs: `tsc -b` writes the declarations its `types` entry points at
 `exports` point at (`lib/index.js`). The type check produces the first and not
 the second, so a suite that imports a dsh package fails with *Failed to resolve
 entry for package* — a message about packaging, arriving where a reader
-expects a message about code. The CI step now runs both, which is the Host
-face of dsh's own build; `build:lib:host` is the same two commands followed by
-the desktop bundle, and no gate here reads that.
+expects a message about code. The CI step now runs both.
+
+**And a fifth: both faces, not one.** dsh is two builds — a Host face and a
+Client face — and this repository needs both. Its `files` package reads the
+browser half of a client package, so a Host-only build leaves the type check
+reading a module that was never emitted (*Cannot find module
+`@deepseek-ai/dsh-client-ui-sidebar-right/client`*). The step now builds Host
+and Client, each with its `tsc -b` and its `tsdown` pass.
+
+**And a sixth: the budget a test is given.** The two surface specs walk the whole
+upstream checkout — 358 packages of source — and parse four catalogs out of it.
+That is a filesystem walk of a size the default five-second budget does not
+cover: the seven tests together take about twelve seconds on a developer
+machine, and a CI runner is slower than that. Upstream raises the same budget
+for its own equivalent checks (`DSH_COVERAGE_TEST_TIMEOUT_MS`), for the same
+reason; this repository now does the same, in `vitest.config.ts`.
 
 **Acceptance:** the suite is green at **707 passed / 44 skipped** with every
-dsh package's `lib/index.js` present.
+dsh package's `lib/index.js` present, and the whole sequence was verified on a
+tree whose 358 `lib/` directories had been deleted first — the state a fresh
+clone is in.
 
 ### T3 — Host-side integration for our routes
 

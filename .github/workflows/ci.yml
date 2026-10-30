@@ -60,14 +60,17 @@ jobs:
       # suite that imports a dsh package then fails with "Failed to resolve
       # entry for package" rather than with anything about the code.
       #
-      # This is the Host face of dsh's own build: `build:lib:host` is the same
-      # two commands followed by the desktop bundle, which no gate below
-      # reads.
+      # Both faces are needed: dshell's `files` package reads the browser half
+      # of a client package, so the client build is not optional for this
+      # repository's type check. dsh's own `build:lib:host` is the host half of
+      # this plus the desktop bundle, which no gate below reads.
       - name: build dsh packages
         working-directory: dsh
         run: |
           corepack pnpm exec tsc -b tsconfig.host.json
           corepack pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE host
+          corepack pnpm exec tsc -b tsconfig.client.json
+          corepack pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE client
 
       # The node-pty override resolves through the dsh checkout, so this step
       # has to follow the dsh install above.
