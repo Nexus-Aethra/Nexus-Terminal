@@ -803,6 +803,15 @@ dsh package's `lib/index.js` present, and the whole sequence was verified on a
 tree whose 358 `lib/` directories had been deleted first — the state a fresh
 clone is in.
 
+**One more, found while verifying the above rather than by CI, and worth
+writing down because it is silent.** Deleting a package's `lib/` without
+deleting its `tsbuildinfo` makes `tsc` believe it has nothing to do: the
+build exits 0, the directory stays empty, and the next package that imports it
+fails with *Cannot find module '@nexus-aethra/dshell-std'*. The two are one
+thing — `tsc -b` treats the build-info file as the record of what it emitted —
+so a build that deletes one has to delete the other. A fresh clone has neither,
+which is why CI never sees it.
+
 ### T3 — Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against
