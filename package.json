@@ -21,7 +21,10 @@
     "package:linux:dir": "node scripts/package-linux.mjs --dir",
     "package:linux:prepare": "node scripts/package-linux.mjs --prepare-only",
     "check:upstream": "vitest run scripts/tests/upstream-surface.spec.ts scripts/tests/upstream-surface-bites.spec.ts",
-    "lint": "echo 'lint deferred: dshell packages do not yet carry oxlint config; copy dsh/.oxlintrc.json when ready'"
+    "lint": "echo 'lint deferred: dshell packages do not yet carry oxlint config; copy dsh/.oxlintrc.json when ready'",
+    "sync:host-range": "node scripts/sync-host-range.mjs",
+    "sync:host-range:check": "node scripts/sync-host-range.mjs --check",
+    "fetch:upstream": "node scripts/fetch-upstream.mjs"
   },
   "devDependencies": {
     "@types/node": "^24",

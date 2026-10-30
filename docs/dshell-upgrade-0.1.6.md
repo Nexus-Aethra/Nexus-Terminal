@@ -18,7 +18,7 @@ its evidence in place; A2 is next.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); **T2 done 2026-10-30** (`scripts/upstream-surface.ts` + 16 cases, `pnpm run check:upstream`); A3–A6 and T3–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); **T2 done 2026-10-30** (`scripts/upstream-surface.ts` + 16 cases, `pnpm run check:upstream`); **T2.1 done 2026-10-30** (supported host window `>=0.1.5-rc.2 <0.2.2-0` written from `dsh-upstream.json` by `scripts/sync-host-range.mjs`, 213 sites collapsed to one value, `includePrerelease` mismatch in the manifest spec fixed, first CI in `.github/workflows/ci.yml`); A3–A6 and T3–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -627,6 +627,59 @@ walk that finds nothing.
 service reads, 9 slots, 4 events, 13 routes) and the reader;
 `scripts/tests/upstream-surface.spec.ts` asserts it green and pins that the
 browser-side half is populated at all. 16 cases, `pnpm typecheck` clean.
+
+### T2.1 — The supported host window, and the CI that grades it
+
+The gate above answers "does the surface still exist". It does not answer the
+question users actually hit: *may I install this*. dsh decides that from the
+`@deepseek-ai/dsh-*` peers a plugin declares, and it evaluates them with
+`includePrerelease` set. Those peers used to name **exact versions**, which makes
+every dsh release a dshell release: a patch or release candidate on a line we
+already ran on matched no range, the bundle was skipped whole, and the fix was to
+edit a string in eleven manifests. Nothing was broken. The pin was.
+
+Measured before the change: **213 declaration sites across 11 manifests, and
+exactly one distinct value** (106 peers, 106 devDependencies, 1 dependency). A fact
+about the repository stored 213 times by hand is the defect, not the string in it.
+
+The window is now `>=0.1.5-rc.2 <0.2.2-0`, written from one place —
+`support.range` in `dsh-upstream.json` — and the seven versions this repository has
+actually run against are kept as `support.verified`, because a range that silently
+drops a tested host is worse than one that is too narrow.
+
+- **Accepted today**, so a user upgrades without a dshell release: every `0.2.1`
+  prerelease (`rc.4`, `rc.5`, …) and `0.2.1` final.
+- **Accepted, already tested**: the seven `verified` versions.
+- **Refused on purpose**: `0.2.2` and later. A new minor line is a surface review,
+  which is what T2 and this section exist for; `^0.2.1-rc.3` would have admitted
+  `0.2.9` and `0.3.0` instead.
+
+`scripts/sync-host-range.mjs` writes the range; `--check` reports drift. It parses
+and re-serializes each manifest, which is byte-identical here (CRLF and two-space
+indent both survive, verified on all 11) rather than editing lines, and the
+devDependencies half is written with the peer half so the two cannot disagree.
+
+**Two things this found that were already wrong:**
+
+1. `manifest-contract.spec.ts` graded those ranges *without* `includePrerelease`,
+   i.e. with a stricter rule than the gate that decides, so a correct window range
+   fails our own suite. Fixed to pass the flag, matching
+   `plugin-compatibility.ts:52`.
+2. There was no CI at all, so nothing graded a release. `.github/workflows/ci.yml`
+   now does: fetch the pinned upstream tag, build its declarations, then
+   `sync-host-range --check`, `typecheck`, `test`, `check:upstream`.
+
+**Acceptance:** the range guard bites. Done — corrupting one of the 213 sites
+(`<0.2.2-0` → `<0.2.1-rc.4` in `conversation`) fails two specs, and the sync script
+restores it; the suite is green at **706 passed / 44 skipped** with the lockfile
+untouched.
+
+**The residual risk, stated rather than hidden.** A window admits versions this
+repository has not run against, and dsh's pre-stable APIs mean *presence* can
+change without a version bump (`T2` exists because of that). The honest position is
+that the window removes the release coupling for a line we already test, not the
+need to review a new minor line: the fence at `0.2.2-0` is where that review is due,
+and T2 plus this section are the review.
 
 ### T3 — Host-side integration for our routes
 

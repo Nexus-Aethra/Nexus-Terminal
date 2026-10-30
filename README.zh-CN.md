@@ -139,9 +139,11 @@ npm 上 `0.2.1-rc.3` 是 `next` 标签，`latest` 是 `0.2.0-rc.2`。
 | `0.2.0-rc.2`、`0.2.0-rc.1`、`0.1.7-rc.2`、`0.1.6-alpha.2`、`0.1.5-rc.2` | **`0.1.13`** |
 
 dsh 会拿插件声明的每个 `@deepseek-ai/dsh-*` peer 去校验自己的版本，只要有一个不匹配就**整个
-bundle 被跳过**，所以 dshell 的每个发布都点名它支持的确切 dsh 版本。硬要跑某一版：
-`dsh plugin --profile <名字> allow-version <包名@版本> --dsh-version <确切版本> --accept-risk`，
-豁免会记在 profile 的 `compatibility.json` 里。
+bundle 被跳过**，所以 dshell 声明它支持哪些 dsh 版本。这个声明是一个**范围**而不是一串精确版本，
+因此同一个次版本线上的新补丁或新预发布版可以**直接装上，不用等 dshell 发版**。这个范围只存在
+一个地方：`dsh-upstream.json` 的 `support.range`，每份清单都带同一份值。要跑超出这个窗口的更新
+次版本，才需要 `dsh plugin --profile <名字> allow-version <包名@版本> --dsh-version <确切版本>
+--accept-risk`，豁免会记在 profile 的 `compatibility.json` 里。
 
 ```sh
 # 只装一个包：bundle 就是 patch 层，另外十个 dshell 包由它依赖带入，

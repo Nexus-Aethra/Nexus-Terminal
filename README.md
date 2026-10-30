@@ -146,9 +146,13 @@ Which dshell release you want depends on which dsh you have:
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** |
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
-whole bundle when one does not match, so a dshell release names the exact dsh versions it supports.
-To run one anyway: `dsh plugin --profile <name> allow-version <package@version> --dsh-version
-<exact> --accept-risk`, which records the grant in the profile's `compatibility.json`.
+whole bundle when one does not match, so a dshell release declares the dsh versions it supports.
+That declaration is a range, not a list of exact versions, so a dsh patch or release candidate on
+a line dshell already runs on installs without waiting for a dshell release. The window is one
+file, `dsh-upstream.json` (`support.range`), and every manifest carries it: installing a dsh from
+a newer minor line than that window is what `allow-version` is for — `dsh plugin --profile <name>
+allow-version <package@version> --dsh-version <exact> --accept-risk`, which records the grant in
+the profile's `compatibility.json`.
 
 ```sh
 # One package: the bundle is the patch layer, it depends on the other ten dshell

@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      # The repo builds against an upstream dsh checkout that is git-ignored here,
+      # so every gate below resolves `@deepseek-ai/dsh-*` through a directory this
+      # checkout does not contain. The tag comes from dsh-upstream.json rather than
+      # from whatever a local mirror happens to hold.
+      - name: fetch the pinned dsh checkout
+        run: node scripts/fetch-upstream.mjs
+      - name: verify the checkout matches the pin
+        run: node scripts/fetch-upstream.mjs --check
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # dsh is a pnpm workspace of its own. Its packages resolve types through
+      # `lib/types`, which is build output: a fresh clone has `src/` only, so the
+      # host program has to be built before anything here can typecheck against it.
+      - name: install dsh
+        working-directory: dsh
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm run typecheck` in dsh compiles the Host program and writes its
+      # declarations without bundling, which is exactly what is needed here:
+      # `lib/types` is where every dsh package's `types` entry points, and it is
+      # build output, so a fresh clone has `src/` only. `build:lib:host` would also
+      # bundle the desktop app, which no gate below reads.
+      - name: build dsh declarations
+        working-directory: dsh
+        run: pnpm run typecheck
+
+      - name: install dshell
+        run: pnpm install --frozen-lockfile
+
+      # The range dsh peers are graded by lives in one file; a manifest carrying a
+      # different one is the failure mode that silently disables rows in a profile.
+      - name: host range matches the pin
+        run: node scripts/sync-host-range.mjs --check
+      - name: typecheck
+        run: pnpm run typecheck
+      - name: test
+        run: pnpm test
+
+      # Consumes the upstream source tree directly (service catalog, browser
+      # context merges, slot catalog), so it runs last: it is the check that says
+      # the surface dshell uses still exists upstream.
+      - name: upstream surface
+        run: pnpm run check:upstream

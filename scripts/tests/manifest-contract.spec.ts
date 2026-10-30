@@ -92,8 +92,10 @@ const HOST_VERSION = readJson(join(DSH_ROOT, 'package.json')).version!
 
 /** semver as the desktop validator sees it — same package, same graph. */
 const semver = createRequire(join(DSH_ROOT, 'apps/desktop/package.json'))('semver') as {
-  satisfies: (version: string, range: string) => boolean
+  satisfies: (version: string, range: string, options?: { includePrerelease?: boolean }) => boolean
   valid: (version: string) => string | null
+  validRange: (range: string) => string | null
+  minVersion: (range: string) => { version: string } | null
 }
 
 describe('the dshell manifests', () => {
@@ -183,10 +185,53 @@ describe('the dshell manifests', () => {
     for (const pkg of DSHell_PACKAGES) {
       for (const [name, range] of declared(manifestOf(pkg).peerDependencies)) {
         if (!name.startsWith('@deepseek-ai/dsh-')) continue
-        if (!semver.satisfies(HOST_VERSION, range)) rejected.push(`${pkg}: ${name}@${range} does not accept ${HOST_VERSION}`)
+        // `includePrerelease` is not optional here: dsh evaluates a plugin's
+        // requirements with it set, and a window range whose lower bound is a
+        // prerelease rejects its own floor when the flag is missing. Grading the
+        // manifests with a stricter rule than the gate they are graded by would
+        // fail a correct range, so the two have to agree.
+        if (!semver.satisfies(HOST_VERSION, range, { includePrerelease: true })) {
+          rejected.push(`${pkg}: ${name}@${range} does not accept ${HOST_VERSION}`)
+        }
       }
     }
     expect(rejected).toEqual([])
+  })
+
+  it('declares one host range, and it is the one dsh-upstream.json publishes', () => {
+    // The range is a fact about the repository, not about a package: 213
+    // declaration sites have to agree, or a profile activates the rows of one
+    // package and silently disables another's. `scripts/sync-host-range.mjs`
+    // writes the value; this is the check that a hand edit cannot get past.
+    //
+    // A window range rather than a list of exact versions is what keeps a dsh
+    // patch or release candidate from requiring a dshell release: the supported
+    // minor line is accepted as a set, and the next minor still has to be
+    // reviewed on purpose.
+    const pin = readJson(join(REPO_ROOT, 'dsh-upstream.json')) as {
+      support?: { range?: string; verified?: readonly string[] }
+    }
+    const range = pin.support?.range
+    expect(range).toBeTypeOf('string')
+    expect(semver.validRange(range!)).not.toBeNull()
+
+    // The range has to accept every version this repository has actually run
+    // against, including the checkout in front of it.
+    for (const version of [...(pin.support?.verified ?? []), HOST_VERSION]) {
+      expect(semver.satisfies(version, range!, { includePrerelease: true }), `${version} is no longer accepted by ${range}`).toBe(true)
+    }
+
+    const values = new Set<string>()
+    for (const pkg of DSHell_PACKAGES) {
+      const manifest = manifestOf(pkg)
+      for (const map of [manifest.dependencies, manifest.peerDependencies, manifest.devDependencies, manifest.optionalDependencies]) {
+        for (const [name, range] of declared(map)) {
+          if (!name.startsWith('@deepseek-ai/dsh-')) continue
+          values.add(range)
+        }
+      }
+    }
+    expect([...values]).toEqual([range])
   })
 })
 
