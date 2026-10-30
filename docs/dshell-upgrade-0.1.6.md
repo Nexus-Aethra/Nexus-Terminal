@@ -18,7 +18,7 @@ its evidence in place; A2 is next.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); A3–A6 and T2–T5 open; **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); A3–A6 and T2–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); **T2 done 2026-10-30** (`scripts/upstream-surface.ts` + 16 cases, `pnpm run check:upstream`); **T2.1 done 2026-10-30** (supported host window `>=0.1.5-rc.2 <0.2.2-0` written from `dsh-upstream.json` by `scripts/sync-host-range.mjs`, 213 sites collapsed to one value, `includePrerelease` mismatch in the manifest spec fixed, first CI in `.github/workflows/ci.yml`); A3–A6 and T3–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -593,16 +593,224 @@ The fourth proof came free, twice over:
 
 Suite: 12 files, 172 cases (was 9 files, 147).
 
-### T2 — Compile-time host contract
+### T2 — The upstream surface gate
 
-A type-only spec that asserts the service keys, slot ids and event names dshell
-uses exist in the installed dsh types. `pnpm typecheck` already covers the
-*shapes* of what we call; this covers *presence*, which is what upstream deletes
-and renames. Cheap, and it turns "the feature silently stopped working" into a
-build error.
+A spec that asserts the service keys, slot ids and event names dshell uses still
+exist in the checkout in front of it. `pnpm typecheck` covers the *shapes* of what
+we call; this covers *presence*, which is what upstream deletes and renames, and
+which no version range can see: dsh's public APIs are pre-stable, so a release may
+drop a name while every peer range still admits that release. Without this the
+plugin installs cleanly, boots cleanly, and leaves one dshell surface silently dead.
 
-**Acceptance:** deleting a name from a local stub of the type (or pointing the
-spec at a frozen copy of an older surface) fails the build.
+The spec reads the checkout rather than a frozen copy, for the reason
+`host-rows.spec.ts` does: the thing worth watching is the dsh in front of us.
+Two sources feed it, because dsh declares services in two places —
+
+- the generated catalogs it maintains for its own `doc-sync`
+  (`SERVICE_API`, the client slot catalog, `KNOWN_SESSION_EVENT_TYPES`);
+- the `declare module '@deepseek-ai/cordis'` blocks that merge `Context`, which is
+  how every *browser* service is declared (`slots`, `uiConversation`, `locale`).
+
+The second source is why the gate cannot simply read a catalog: an implementation
+that only read `SERVICE_API` would leave every client-side claim unguarded while
+every host claim still passed.
+
+Run it with `pnpm run check:upstream`.
+
+**Acceptance:** each claim is proven to bite by removing the name from a checkout
+and seeing red. Done — `scripts/tests/upstream-surface-bites.spec.ts` removes one
+service, one slot and one event from an in-memory copy of the real checkout, and
+also pins the two quiet failures: a catalog the reader cannot parse, and a context
+walk that finds nothing.
+
+**Done** (2026-10-30). `scripts/upstream-surface.ts` holds the claim (31 dshell
+service reads, 9 slots, 4 events, 13 routes) and the reader;
+`scripts/tests/upstream-surface.spec.ts` asserts it green and pins that the
+browser-side half is populated at all. 16 cases, `pnpm typecheck` clean.
+
+### T2.1 — The supported host window, and the CI that grades it
+
+The gate above answers "does the surface still exist". It does not answer the
+question users actually hit: *may I install this*. dsh decides that from the
+`@deepseek-ai/dsh-*` peers a plugin declares, and it evaluates them with
+`includePrerelease` set. Those peers used to name **exact versions**, which makes
+every dsh release a dshell release: a patch or release candidate on a line we
+already ran on matched no range, the bundle was skipped whole, and the fix was to
+edit a string in eleven manifests. Nothing was broken. The pin was.
+
+Measured before the change: **213 declaration sites across 11 manifests, and
+exactly one distinct value** (106 peers, 106 devDependencies, 1 dependency). A fact
+about the repository stored 213 times by hand is the defect, not the string in it.
+
+The range is written from one place — `support.range` in `dsh-upstream.json` —
+and the seven versions this repository has actually run against are kept as
+`support.verified`, because a range that silently drops a tested host is worse
+than one that is too narrow.
+
+The range **cannot be a plain window**, and the first attempt here proved it by
+shipping and failing to install. npm resolves peer ranges **without**
+`includePrerelease`, while dsh's gate (`plugin-compatibility.ts:52`) resolves them
+**with** it. Under npm's rules `>=0.1.5-rc.2 <0.2.2-0` accepts only `0.1.5-rc.2`
+and `0.2.1` itself — a prerelease above the floor matches nothing — so
+`npm install` answered `ETARGET: no matching version found`, and the published
+`0.1.16-alpha.1` could not be installed at all. Both sides have to accept the same
+set, which means naming the older prereleases explicitly and using a range only
+where it is unambiguous:
+
+```
+0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.2-0
+```
+
+`>=0.2.1-rc.2 <0.2.2-0` admits every `0.2.1-*` prerelease and `0.2.1` final under
+both rules, because a range whose lower bound names a prerelease of a version also
+admits that version's prereleases.
+
+- **Accepted**, so a user upgrades without a dshell release: every `0.2.1`
+  prerelease (`rc.4`, `rc.5`, …) and `0.2.1` final.
+- **Accepted, already tested**: the seven `verified` versions.
+- **Refused on purpose**: `0.2.2` and later. A new minor line is a surface review,
+  which is what T2 and this section exist for; `^0.2.1-rc.3` would have admitted
+  `0.2.9` and `0.3.0` instead.
+
+`scripts/sync-host-range.mjs` writes the range; `--check` reports drift. It parses
+and re-serializes each manifest, which is byte-identical here (CRLF and two-space
+indent both survive, verified on all 11) rather than editing lines, and the
+devDependencies half is written with the peer half so the two cannot disagree.
+
+**Two things this found that were already wrong:**
+
+1. `manifest-contract.spec.ts` graded those ranges *without* `includePrerelease`,
+   i.e. with a stricter rule than the gate that decides, so a correct window range
+   fails our own suite. Fixed to pass the flag, matching
+   `plugin-compatibility.ts:52`.
+2. There was no CI at all, so nothing graded a release. `.github/workflows/ci.yml`
+   now does: fetch the pinned upstream tag, build its declarations, then
+   `sync-host-range --check`, `typecheck`, `test`, `check:upstream`.
+
+**Acceptance:** the range guard bites. Done — corrupting one of the 213 sites fails
+two specs, and the sync script restores it; the suite is green at **706 passed / 44
+skipped** with the lockfile untouched.
+
+**Accepted by actually installing it.** `0.1.16` was installed from npmjs into an
+empty directory: 179 packages, exit 0, and the resolved `@deepseek-ai/dsh-*` tree
+came down at **`0.2.1-rc.5`** — the version whose users the published `0.1.15`
+refused outright. That is the whole point of this section: they install now without
+a dshell release.
+
+**The residual risk, stated rather than hidden.** A window admits versions this
+repository has not run against, and dsh's pre-stable APIs mean *presence* can
+change without a version bump (`T2` exists because of that). The honest position is
+that the window removes the release coupling for a line we already test, not the
+need to review a new minor line: the fence at `0.2.2-0` is where that review is due,
+and T2 plus this section are the review.
+
+### T2.2 — What the first CI run found
+
+The CI above was written on a machine that already had the upstream checkout
+installed, and it passed there. On a clean runner it failed before a single gate
+ran, and the three failures are worth keeping, because each one is a class of
+problem a local checkout hides.
+
+**1. Two pnpm versions, one PATH.** This repository pins `pnpm@9.15.0`; the dsh
+checkout pins `pnpm@11.28.5`. They are not interchangeable. pnpm 10 moved
+`overrides` out of `package.json` into `pnpm-workspace.yaml`, so pnpm 9 reads
+dsh's override list as *empty* while dsh's own lockfile records three, and
+`pnpm install --frozen-lockfile` answers `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+Locally this never appeared, because `corepack pnpm` resolves the version from
+the nearest `packageManager` field — 9.15.0 in the repository, 11.28.5 inside
+`dsh/` — while CI had pinned one version for the whole job. CI now lets corepack
+resolve it too, and calls `corepack pnpm` in the dsh steps so the version they
+get is the one dsh declares.
+
+**2. A lockfile that stopped matching its manifests.** The range change rewrote
+213 dependency specifiers and the root `pnpm-lock.yaml` was never regenerated,
+so `--frozen-lockfile` refused to install: `ERR_PNPM_OUTDATED_LOCKFILE`. The
+lockfile is part of the change now.
+
+**3. An override that named a path inside the package store.** The `node-pty`
+override pointed at `dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=…`,
+which is a *pnpm 9* spelling: pnpm 11 shortens the same directory to
+`node-pty@1.2.0-beta.15_patc_…`. The override had been written when dsh was
+installed with pnpm 9 and had been failing to resolve ever since dsh moved to
+pnpm 11 — the local checkout simply had not been reinstalled to show it. The
+override now points at the checkout's own link,
+`dsh/packages/subprocess/subprocess-local/node_modules/node-pty`, which is pnpm's
+to maintain and follows the store whatever it is called. The patched package is
+the same one it pointed at before (the `DSH_NODE_PTY_SPAWN_HELPER` patch is
+applied).
+
+The third one is the general lesson, so it is now a rule rather than a fix: a
+tracked override may point into the checkout, but never into the store. The
+store's directory names carry a hash that pnpm has changed before and will
+change again, and a stale one reads as a missing package rather than as a stale
+path. `manifest-contract.spec.ts` fails an override that names `/.pnpm/`.
+
+**Acceptance:** the store-path guard bites — reverting the override to the old
+pnpm 9 spelling fails two specs and names the offending override — and the
+suite is green at **707 passed / 44 skipped**.
+
+**A fourth one, in the step that was supposed to be the safe one.** Building
+dsh's *declarations* is not the same as building dsh. Every dsh package has two
+build outputs: `tsc -b` writes the declarations its `types` entry points at
+(`lib/types`), and `tsdown` writes the runnable JavaScript its `main` and
+`exports` point at (`lib/index.js`). The type check produces the first and not
+the second, so a suite that imports a dsh package fails with *Failed to resolve
+entry for package* — a message about packaging, arriving where a reader
+expects a message about code. The CI step now runs both.
+
+**And a fifth: both faces, not one.** dsh is two builds — a Host face and a
+Client face — and this repository needs both. Its `files` package reads the
+browser half of a client package, so a Host-only build leaves the type check
+reading a module that was never emitted (*Cannot find module
+`@deepseek-ai/dsh-client-ui-sidebar-right/client`*). The step now builds Host
+and Client, each with its `tsc -b` and its `tsdown` pass.
+
+**And a sixth: the budget a test is given.** The two surface specs walk the whole
+upstream checkout — 358 packages of source — and parse four catalogs out of it.
+That is a filesystem walk of a size the default five-second budget does not
+cover: the seven tests together take about twelve seconds on a developer
+machine, and a CI runner is slower than that. Upstream raises the same budget
+for its own equivalent checks (`DSH_COVERAGE_TEST_TIMEOUT_MS`), for the same
+reason; this repository now does the same, in `vitest.config.ts`.
+
+**And a seventh, in this repository's own specs — three of them, all of them
+platform or build artefacts rather than logic.**
+
+1. *dshell's own packages need building too.* The device helper is a bundle
+   (`packages/dshell/ssh/lib/helper.js`), and the helper-artifact spec opens the
+   file to check it. On CI it was missing, so the spec failed on a missing file —
+   and it said so: *run "pnpm build" before "pnpm test"*. The CI now builds
+   dshell's packages as well as dsh's.
+
+2. *A path that only the machine's owner can read.* Three cases in
+   `ambient-scope-routing.spec.ts` assert that the read was answered by **this
+   machine**, so they really read the file they name — and the file they named
+   was `/root/.bashrc`. A CI runner does not run as root, so the read failed with
+   `EACCES` and the case said nothing about routing. They now name a file that
+   the test creates in its own temporary directory.
+
+3. *A host path that is only a host path on Windows.* The device's protocol
+   admits an absolute POSIX path and nothing else, so a Windows path is refused
+   on the spot — that is the whole mechanism `remote-fs-paths.spec.ts` is about.
+   On a POSIX host there is no such spelling: every absolute path already looks
+   like a device path, and a host path outside the mount cannot be told apart
+   from a device path by anything but the mapping. So the case cannot hold there,
+   and the spec now says so and skips those three cases off Windows, which is
+   the convention the rest of this repository already follows.
+
+**Acceptance:** the suite is green at **707 passed / 44 skipped** with every
+dsh package's `lib/index.js` present, and the whole sequence was verified on a
+tree whose 358 `lib/` directories had been deleted first — the state a fresh
+clone is in.
+
+**One more, found while verifying the above rather than by CI, and worth
+writing down because it is silent.** Deleting a package's `lib/` without
+deleting its `tsbuildinfo` makes `tsc` believe it has nothing to do: the
+build exits 0, the directory stays empty, and the next package that imports it
+fails with *Cannot find module '@nexus-aethra/dshell-std'*. The two are one
+thing — `tsc -b` treats the build-info file as the record of what it emitted —
+so a build that deletes one has to delete the other. A fresh clone has neither,
+which is why CI never sees it.
 
 ### T3 — Host-side integration for our routes
 
