@@ -6,7 +6,7 @@ kind verifiable instead of remembered. Read it when the harness is about to move
 a version; read the testing half whenever a new phase needs a gate.
 
 Nothing here has been executed except A1. The tag is fetched, the surfaces are
-measured, and this document is the plan â€” the phases below are the sequence, and
+measured, and this document is the plan â€?the phases below are the sequence, and
 each one ends with the check that says it is done. A1 landed on 2026-09-17 with
 its evidence in place; A2 is next.
 
@@ -17,7 +17,7 @@ its evidence in place; A2 is next.
 | Target | `dsh-v0.1.6-alpha.2` = `ddefc45fbc`, published 2026-09-17T13:30Z (alpha.1 was `0a15e36e`, 2026-09-15) |
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
-| Delta | 3942 files, +784k/âˆ’47k, eighteen new packages and two deleted |
+| Delta | 3942 files, +784k/âˆ?7k, eighteen new packages and two deleted |
 | Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); **T2 done 2026-10-30** (`scripts/upstream-surface.ts` + 16 cases, `pnpm run check:upstream`); **T2.1 done 2026-10-30** (supported host window `>=0.1.5-rc.2 <0.2.2-0` written from `dsh-upstream.json` by `scripts/sync-host-range.mjs`, 213 sites collapsed to one value, `includePrerelease` mismatch in the manifest spec fixed, first CI in `.github/workflows/ci.yml`); A3â€“A6 and T3â€“T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
@@ -25,7 +25,7 @@ Four decisions this roadmap takes, each reversible by editing this section:
 1. **Compatibility first, then the host.** The peer ranges widen to accept both
    hosts before `dsh/` moves, so `main` stays installable and publishable while
    the migration is in flight (A1).
-2. **Scope is "make it work, plus the two migrations that pay for themselves"** â€”
+2. **Scope is "make it work, plus the two migrations that pay for themselves"** â€?
    upstream's ssh/fs stack and its client terminal model (A4). A4.1 was falsified
    on contact with the host and is now a recorded dead end; A4.2 survives. The
    other new capabilities are listed and deferred (A6).
@@ -37,9 +37,9 @@ Four decisions this roadmap takes, each reversible by editing this section:
 
 Two labels matter throughout, because they are different kinds of knowledge:
 
-- **Measured** â€” a number this document produced by reading the published
+- **Measured** â€?a number this document produced by reading the published
   artifacts or the trees (type-surface comparisons, pin counts, import checks).
-- **Read** â€” a rule or a change found in the new tag's source but not executed
+- **Read** â€?a rule or a change found in the new tag's source but not executed
   against our own install (the desktop validator, the packaging pipeline).
 
 ### The alpha.2 pass (2026-09-19, second run of A1/A2)
@@ -48,11 +48,11 @@ Run again on the next prerelease, which is what Â§1.1 says this roadmap is for.
 What the second run cost, with the parts that were mechanical left out:
 
 - **The pins** (A1/A2): 226 peer and dev lines across ten manifests moved
-  `0.1.5-rc.2 || 0.1.6-alpha.1` â†’ `0.1.5-rc.2 || 0.1.6-alpha.2`. The union keeps
+  `0.1.5-rc.2 || 0.1.6-alpha.1` â†?`0.1.5-rc.2 || 0.1.6-alpha.2`. The union keeps
   rc.2 because that is still what `latest`/`next` publish and what the desktop
   profile's core is built from.
 - **The host**: checked out, `pnpm install`, then `pnpm run build:lib &&
-  pnpm run build:web` â€” the second step matters, because the profile links every
+  pnpm run build:web` â€?the second step matters, because the profile links every
   package and loads its `lib/`, so a stale build is a mixed tree, not a slow one.
 - **The profile** needed the five new upstream packages the alpha.2 preset names
   (`dsh-office-to-pdf`, `dsh-client-ui-sidebar-browser`,
@@ -61,12 +61,12 @@ What the second run cost, with the parts that were mechanical left out:
   Without them the boot reports five entries that did not activate.
 - **Three face changes**, all in the client and all caught by the compiler or the
   first boot rather than by reading the release notes:
-  1. `sessions.open(id)` â†’ a RETENTION (`retain(target, { source: 'mainView' })`,
+  1. `sessions.open(id)` â†?a RETENTION (`retain(target, { source: 'mainView' })`,
      releasing the previous claim). "Which Session is on screen" stopped being a
      list field (`sessions.list.current`, gone) and became the row whose
-     `mainView` count is positive â€” read once in `dshell-std/src/session-view.ts`,
+     `mainView` count is positive â€?read once in `dshell-std/src/session-view.ts`,
      because four dshell packages need the same answer.
-  2. `settings.plugin.item` â†’ `settings.plugins.tab`: the Plugins settings section
+  2. `settings.plugin.item` â†?`settings.plugins.tab`: the Plugins settings section
      became a tabbed page, so dshell's three cards register tabs with their own id
      and localized label instead of being dispatched by the namespace they edit.
   3. `sessions.openSubagent(address)` is gone, and `snapshot.queue` with it:
@@ -79,15 +79,15 @@ What the second run cost, with the parts that were mechanical left out:
 
 **Acceptance, measured**: `pnpm typecheck` clean; `pnpm test` 301 pass; all faces
 build; the profile boots with no inactive entry; and the block view renders on
-alpha.2 â€” timeline regions, the mode chip and the full-screen button present, no
+alpha.2 â€?timeline regions, the mode chip and the full-screen button present, no
 plugin-failure overlay.
 
 ## 1. The baseline (A0)
 
 ### 1.1 The version and its shape
 
-`0.1.6-alpha.1` is an alpha on upstream's usual path (0.1.5 went alpha.1 â†’
-alpha.2 â†’ rc.1 â†’ rc.2), so this roadmap is written to be run again nearly
+`0.1.6-alpha.1` is an alpha on upstream's usual path (0.1.5 went alpha.1 â†?
+alpha.2 â†?rc.1 â†?rc.2), so this roadmap is written to be run again nearly
 unchanged when an `rc` or a final appears. Domain-model changes worth knowing
 before reading the diffs: `e2b` and `code-runtime-worker-thread` are **gone**;
 ssh is upstream's remote-execution backend now; and the client gained a
@@ -95,8 +95,8 @@ first-party terminal stack (see Â§1.4).
 
 ### 1.2 Break surfaces
 
-**The pins â€” measured.** 211 exact `"0.1.5-rc.2"` lines in the nine manifests
-that carry them (`std` and `storage` carry none), each name twice â€” once in
+**The pins â€?measured.** 211 exact `"0.1.5-rc.2"` lines in the nine manifests
+that carry them (`std` and `storage` carry none), each name twice â€?once in
 `peerDependencies`, once in `devDependencies`:
 
 | Package | `@deepseek-ai/*` pins | Package | `@deepseek-ai/*` pins |
@@ -108,29 +108,29 @@ that carry them (`std` and `storage` carry none), each name twice â€” once in
 | `conversation` | 6 | `std`, `storage` | 0 each |
 
 The version strings are not the whole story: the same name set appears in the
-root `pnpm.overrides` (`package.json:33â€“78`, 45 names plus a `node-pty` `link:`
-whose store path is version-sensitive), in `pnpm-lock.yaml:8â€“52`, and â€” a third
-copy â€” as `neverBundle` platform modules in `tsdown.dshell.preset.ts:89â€“96`. A
+root `pnpm.overrides` (`package.json:33â€?8`, 45 names plus a `node-pty` `link:`
+whose store path is version-sensitive), in `pnpm-lock.yaml:8â€?2`, and â€?a third
+copy â€?as `neverBundle` platform modules in `tsdown.dshell.preset.ts:89â€?6`. A
 *version-only* bump touches those nine manifests; a name-set change touches all
 four places, and one of them (`std`) carries no pins at all while another
-(`storage`) was added after the last bump â€” so "the roadmap said 190 pins" is
+(`storage`) was added after the last bump â€?so "the roadmap said 190 pins" is
 stale, and so is "80 specs" from Phase 10.26 (today: 147).
 
-**The desktop profile validator â€” read, and this is the item that changes the
+**The desktop profile validator â€?read, and this is the item that changes the
 shape of the work.** `0.1.5-rc.2` has no `apps/desktop/src/profile-packages.ts`;
-`0.1.6-alpha.1` does, and `project-manager.ts:305â€“306` runs it over every bundle
+`0.1.6-alpha.1` does, and `project-manager.ts:305â€?06` runs it over every bundle
 in `dsh.profile.bundles` after the two built-ins. It validates the plugin graph
-against the desktop runtime's **shared inventory** â€” the first-party closure
+against the desktop runtime's **shared inventory** â€?the first-party closure
 rooted at `@deepseek-ai/dsh` and `@deepseek-ai/dsh-desktop-host` over
 `dependencies`/`peerDependencies`/`optionalDependencies`, 250 names at this tag.
 Two rules hit us:
 
-- `profile-packages.ts:239â€“244` â€” any inventory name declared in a plugin's
+- `profile-packages.ts:239â€?44` â€?any inventory name declared in a plugin's
   `dependencies` (or `optionalDependencies`) throws
   `must declare <name> as a peer dependency`. **We violate it in two files**:
   `@deepseek-ai/schemastery` sits in `dependencies` at `mode:43` and `ssh:46`.
   `@deepseek-ai/schemastery` *is* in the inventory (3.18.2), so the rule applies.
-- `profile-packages.ts:245â€“249` â€” every inventory name declared as a peer must
+- `profile-packages.ts:245â€?49` â€?every inventory name declared as a peer must
   satisfy the runtime's version: `satisfies(host.version, range)`. Our exact
   pins fail on the new host, and the obvious repair does not work either:
   **`^0.1.5-rc.2` does not satisfy `0.1.6-alpha.1`**, because node-semver refuses
@@ -138,34 +138,34 @@ Two rules hit us:
   to name both (`0.1.5-rc.2 || 0.1.6-alpha.1`) or move to the new one.
 
 Eighteen of the peer lines point at five names that are **not** in the inventory
-â€” `@deepseek-ai/dsh-client-store`, `-client-ui-dockkit`, `-client-ui-primitives`,
-`-client-ui-slots`, `-dsh-tool-terminal` â€” and those are exactly the five the
+â€?`@deepseek-ai/dsh-client-store`, `-client-ui-dockkit`, `-client-ui-primitives`,
+`-client-ui-slots`, `-dsh-tool-terminal` â€?and those are exactly the five the
 desktop seed omits, which the install recipe already places into the profile by
 hand (with `autoInstallPeers: false`, nothing else will). They are exempt from
 the shared-host rules but still must resolve inside the profile, or the separate
 `requires missing` guard (`profile-packages.ts:253`) fires.
 
-**Compile-time breaks â€” measured.** Three, all small: the sidebar-right tab
+**Compile-time breaks â€?measured.** Three, all small: the sidebar-right tab
 registry now requires an `id` on a guide entry (and throws on duplicates), and
 `packages/dshell/files/src/client/definition.ts:44` registers the one id-less
 entry dshell owns; `SubprocessHandle.control` is a new required member; and
 `ShellExecutor.start` / `SandboxProvider.confine` became `async`. The last two
-only bite a plugin that implements those seams â€” dshell's SSH layer overrides
-`resolve` and monkey-patches `spawn` (`ssh/src/spawn-routing.ts:57â€“95`) rather
+only bite a plugin that implements those seams â€?dshell's SSH layer overrides
+`resolve` and monkey-patches `spawn` (`ssh/src/spawn-routing.ts:57â€?5`) rather
 than extending them, so today it is a type-level affair, but any future
 `spawnTerminal` wrapper inherits `terminalEnvironment` and the `terminalType`
 argument.
 
-**Behavioral changes that need a decision, not a rename â€” read.**
+**Behavioral changes that need a decision, not a rename â€?read.**
 
 - **Startup became best-effort** (`packages/boot/app-boot/README.md`): a failing
   *optional* plugin now warns and startup continues; only a fixed list of
   required entries (`agent-loop`, `webserver`, `modules`, `connection`,
   `headless-runner`, `acp`, `sdk-jsonrpc-server`) aborts the process. dshell's
   rows are inserts, so a broken dshell row now yields a half-wired app and a
-  warning line â€” we lose "it did not boot" as our implicit smoke test and have to
+  warning line â€?we lose "it did not boot" as our implicit smoke test and have to
   assert our own rows are live.
-- **Bundle-patch rows were renamed** (`workflow-worker-thread` â†’
+- **Bundle-patch rows were renamed** (`workflow-worker-thread` â†?
   `workflow-ptc`, `code-runtime` removed; new `image-offload`, `mcp-resources`,
   `ptc-runtime`, `terminal-controller`, `ui-sidebar-terminal`,
   `ui-settings-unarchive-sessions`). Every id our patch targets
@@ -174,7 +174,7 @@ argument.
   `packages/dshell/bundle/cordis.patch.yml`) survived, and an unmatched id only
   warns (`vendor/include/src/index.ts`), which is the failure mode to test for
   rather than discover. `workspace-controller` was on that list and has since
-  been RE-ENABLED on purpose â€” it is what serves the archive set (Phase 10.43),
+  been RE-ENABLED on purpose â€?it is what serves the archive set (Phase 10.43),
   so the patch no longer targets it.
 - **`fs-local` path display changed**: a new `localDisplayPath` preserves the
   physical spelling for `..`-containing paths, and parent traversal across a
@@ -185,34 +185,34 @@ argument.
   `serial` now and carries `source: 'startup' | 'resume' | 'clear' | 'compact'`,
   and a throwing listener fails agent creation instead of being fire-and-forget.
   dshell listens on `agent/disposed` / `agent/pre-step` today
-  (`mode/src/index.ts:274â€“275`, `buffer/src/service.ts:213`), so nothing breaks â€”
+  (`mode/src/index.ts:274â€?75`, `buffer/src/service.ts:213`), so nothing breaks â€?
   but any future per-session bootstrap goes on `agent/created` and branches on
   `source`.
 - **Message projections**: `SessionStore.registerMessageProjection` and
   `MESSAGE_PROJECTION_EVENT_TYPES` (`image/offload`) mean a session log carrying
   a message-rewriting event now *throws* when folded without its interpreter.
   `dsh-base` ships `compaction-image-offload`, so those events are normal in
-  0.1.6 â€” we must not append such an event without registering a projection.
+  0.1.6 â€?we must not append such an event without registering a projection.
 
-**What did not change â€” measured**, and worth stating so nobody re-audits it:
+**What did not change â€?measured**, and worth stating so nobody re-audits it:
 settings namespaces and their persistence are byte-identical (an existing
 `~/.dsh/settings.yaml` `dshell:` section loads unchanged); the core client slot
 contract in `packages/client/ui-slots` has no diff (the churn is the
 sidebar-right registry layered on top); `SESSION_FORMAT_VERSION` is still `3`;
 the webserver and index injection are unchanged; the `cordis.patch.yml` dialect
-and `dsh.bundle.patch` contract are unchanged; and the agent PTY path we ride â€”
-`dsh-terminal`, `terminal-bash`'s `shell` type, `tool-terminal`'s six tools â€” has
+and `dsh.bundle.patch` contract are unchanged; and the agent PTY path we ride â€?
+`dsh-terminal`, `terminal-bash`'s `shell` type, `tool-terminal`'s six tools â€?has
 no signature change at all.
 
-**The client contract was reorganized, but not where we touch it â€” measured.**
+**The client contract was reorganized, but not where we touch it â€?measured.**
 `ui-conversation` moved `TokenSpan`/`ReferenceInsert`/`ArbitrateKey`/
 `ComposerKeyboard`/`EditSelection` from `contract/input` to a new
-`contract/draft-editor`, and renamed `context-provenance` â†’ `context-producer`
-(`ContextProvenanceView` â†’ `ContextProducerView`, `AssistantProvenanceView` â†’
+`contract/draft-editor`, and renamed `context-provenance` â†?`context-producer`
+(`ContextProvenanceView` â†?`ContextProducerView`, `AssistantProvenanceView` â†?
 `AssistantProviderMetadataView`). `ui-primitives` still exports `Switch` (the one
 symbol dshell imports from it); its changes are `ConnectionIndicator` losing
 `disconnectedLabel`, new `JsonTree`/`CodeBlock` props, and icon renames
-(`IconSendOutline16` â†’ `IconPaperPlaneOutline14`, and a new shield/plan/compact
+(`IconSendOutline16` â†?`IconPaperPlaneOutline14`, and a new shield/plan/compact
 set). Checking every named symbol dshell imports from 25 first-party packages
 against the published `0.1.6-alpha.1` types found **zero that exist at `0.1.5-rc.2`
 and not at `0.1.6-alpha.1`**. A raw diff count is not that check: "175 removed
@@ -241,7 +241,7 @@ point, in the order this roadmap would take them:
 
 Each phase names what it does, the check that ends it, and how to back out.
 
-### A1 â€” Two hosts, one manifest set (no host change)
+### A1 â€?Two hosts, one manifest set (no host change)
 
 Move `@deepseek-ai/schemastery` out of `dependencies` into `peerDependencies` in
 `mode` and `ssh` (range `^3.18.2` is satisfiable by the 3.18.2 in the inventory,
@@ -270,10 +270,10 @@ moved in `mode` and `ssh` only.
 | Types | `pnpm typecheck` | clean, both programs |
 | Build | `pnpm build` | all faces emit |
 | Pure specs | `pnpm test` | 12 files, 172 tests pass (T1 closed) |
-| Range semantics | `semver.satisfies(host, range)` per host | `0.1.5-rc.2` **and** `0.1.6-alpha.1` both true; the trap is real â€” `^0.1.5-rc.2` rejects `0.1.6-alpha.1` |
+| Range semantics | `semver.satisfies(host, range)` per host | `0.1.5-rc.2` **and** `0.1.6-alpha.1` both true; the trap is real â€?`^0.1.5-rc.2` rejects `0.1.6-alpha.1` |
 | Published shape | `pnpm pack` in `packages/dshell/mode` | 19 dsh peers, every one the union; `schemastery` in peers and absent from `dependencies`; workspace edges rewritten to `^0.1.1` |
 | Packaging | `pnpm package:linux -- --from=builder` | fresh `deepseek-harness-0.1.5-rc.2-linux-amd64.deb` (186 MB) |
-| Host regression | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first: `pnpm run build` inside `dsh/`) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200 (`dirs`/`files` are POST-only, so their GET form is a 404 by design). The boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions`. Each client bundle's only module-table imports are still `react`, `dsh-client-store` and `dsh-client-ui-primitives` â€” the three `neverBundle` names |
+| Host regression | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first: `pnpm run build` inside `dsh/`) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200 (`dirs`/`files` are POST-only, so their GET form is a 404 by design). The boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions`. Each client bundle's only module-table imports are still `react`, `dsh-client-store` and `dsh-client-ui-primitives` â€?the three `neverBundle` names |
 
 Two facts behind "the `dependencies` rule is cleared", both read from the tag
 rather than inferred: `@deepseek-ai/schemastery` is one of the 241 entries in
@@ -283,10 +283,10 @@ build's `seed/desktop-packages/`), and
 plugin declares as a dependency. The old manifests would therefore have failed
 the desktop profile outright rather than warned.
 
-### A2 â€” Move the host
+### A2 â€?Move the host
 
 Check out `dsh-v0.1.6-alpha.1` in `dsh/` (the tag is already fetched; a plain
-`git fetch --tags` fails on this network â€” a single-ref shallow fetch works).
+`git fetch --tags` fails on this network â€?a single-ref shallow fetch works).
 `pnpm install` (the `node-pty` override path is version-sensitive), then fix the
 compile-time breaks of Â§1.2: give the guide entry an id, satisfy the required
 subprocess members, and adjust anything the async seams surface.
@@ -309,7 +309,7 @@ Both now point at the patch-hash store directory (roadmap 10.35 carries the
 corrected record; an earlier revision of this paragraph named a
 `dsh/node_modules/node-pty` link that does not exist in this checkout).
 
-**The "three breaks do not bite" claim below was wrong â€” `pnpm build` was red.**
+**The "three breaks do not bite" claim below was wrong â€?`pnpm build` was red.**
 `typecheck`, `build` and `test` were all recorded green above, but at HEAD only
 `typecheck` and `test` were. Three client implementations no longer satisfied
 their upstream interface:
@@ -317,8 +317,8 @@ their upstream interface:
 | Site | Break | Fix |
 |---|---|---|
 | `packages/dshell/workspace/src/client/index.ts` | `IWorkspaces` and `UiWorkspace` gained a required `unarchiveSession` (TS2420) | both stand-ins delegate to the panel client's existing `unarchive`, which this package's own `/api/dshell/sessions` route already handles (`workspace/src/route.ts:98`) |
-| `packages/dshell/files/src/client/definition.ts` | `SidebarRightGuideEntry` gained a required `id` (TS2741) | `id: 'files'` on the single entry â€” Â§1.2 predicted this one would not bite because the type lives in `ui-sidebar-right`, but dshell *does* register a guide entry |
-| `packages/dshell/mode/src/client/index.ts` | `CommandClaim` gained a required `name` (TS2741) | `name: next`, the canonical mode name â€” the key the composer's per-command copy is looked up under |
+| `packages/dshell/files/src/client/definition.ts` | `SidebarRightGuideEntry` gained a required `id` (TS2741) | `id: 'files'` on the single entry â€?Â§1.2 predicted this one would not bite because the type lives in `ui-sidebar-right`, but dshell *does* register a guide entry |
+| `packages/dshell/mode/src/client/index.ts` | `CommandClaim` gained a required `name` (TS2741) | `name: next`, the canonical mode name â€?the key the composer's per-command copy is looked up under |
 
 The `SubprocessHandle.control` and async `start`/`confine` items did not bite, as
 Â§1.2 predicted.
@@ -329,14 +329,14 @@ over `tsconfig.host.json` / `tsconfig.client.json`, which trusts each project's
 `*.tsbuildinfo`; `build` runs `tsc -p` per package. `.tsbuildinfo` is gitignored
 (`.gitignore:20`), so its freshness is a property of one working copy rather than
 of the commit, which makes "`pnpm typecheck` is green" a weaker statement than it
-reads. The mechanism was not pinned down; the disagreement is certain â€” observed
-on the merge commit â€” and `build` is the gate that caught the truth. That is now
+reads. The mechanism was not pinned down; the disagreement is certain â€?observed
+on the merge commit â€?and `build` is the gate that caught the truth. That is now
 recorded as a T-roadmap item rather than a mystery.
 
 | Check | Command | Result |
 | --- | --- | --- |
 | Install | `pnpm install` (root) | clean, after the `node-pty` override and symlink were updated to the new store path |
-| Types | `pnpm typecheck` | clean, both programs â€” but see the gate-disagreement note above: this was clean at HEAD while `build` was red, so it is not on its own a compile gate |
+| Types | `pnpm typecheck` | clean, both programs â€?but see the gate-disagreement note above: this was clean at HEAD while `build` was red, so it is not on its own a compile gate |
 | Build | `pnpm build` | all 11 packages emit. **Not** clean at HEAD: it failed on the three client rows above and needed the fixes recorded there; green only after them |
 | Pure specs | `pnpm test` | 12 files, 172 tests pass, including `host-rows.spec.ts` against the 0.1.6 patch inventory and `manifest-contract.spec.ts` with the dual ranges now matching the host |
 | Harness | `pnpm dsh web --no-open --port 3080` from `dsh/` (host built first) | boots with no warning; `GET /` 401 without the cookie, then `/api/dshell/{sessions,buffer,ssh}` 200 and `POST /api/dshell/{dirs,files}` 200. Boot payload names all seven dshell client faces **and** three faces that did not exist on rc.2: `@deepseek-ai/dsh-api-terminal-controller`, `@deepseek-ai/dsh-client-ui-sidebar-terminal`, `@deepseek-ai/dsh-client-ui-settings-unarchive-sessions` |
@@ -344,7 +344,7 @@ recorded as a T-roadmap item rather than a mystery.
 **Rollback:** `git -C dsh checkout dsh-v0.1.5-rc.2` plus a `pnpm install`; the
 branch is discarded.
 
-### A3 â€” Behavioral adaptation
+### A3 â€?Behavioral adaptation
 
 The six items of Â§1.2, each with its own observation: assert our own rows are
 live now that startup is best-effort; compare our patch's ids against 0.1.6's
@@ -356,7 +356,7 @@ projection obligation where the next person will need them.
 green run; the "rows are live" assertion is one of them, not a copy of a boot log.
 
 **Evidence** (2026-09-17, host at `0.1.6-alpha.1`). The web harness boot log
-contains **zero** row-activation warnings â€” no `did not activate`, no
+contains **zero** row-activation warnings â€?no `did not activate`, no
 `inactive` entries, no `required startup failure`. The `/api/dshell/sessions`
 route answers with the dshell workspace shape (`{"archived":[â€¦],"pendingPurge":[]}`),
 and the boot payload names all seven dshell client faces plus the three new
@@ -366,23 +366,23 @@ already locked by T1 (`host-rows.spec.ts`), and they still hold on 0.1.6.
 
 **Rollback:** per item; nothing here is structural.
 
-### A4 â€” The two migrations that pay for themselves
+### A4 â€?The two migrations that pay for themselves
 
 Two independent steps. **Step 1 was falsified on `0.1.6-alpha.1` before any code
 landed**; step 2 survives with a narrower claim than first made.
 
-#### A4.1 â€” SSH on the upstream seam: falsified, re-scoped
+#### A4.1 â€?SSH on the upstream seam: falsified, re-scoped
 
 The plan was to let `ctx.ssh` + `SshFileSystem` carry remote fs, exec and sandbox
 *for a bound device*, demoting the mount directory and the per-tool seams to a
 compatibility path. That shape is not expressible in this host.
 
 - **`ctx.ssh` is one connection, not a device set.** Its `Config.host` is a
-  scalar â€” "OpenSSH host alias, including its existing user, key and known-host
-  configuration" (`dsh/packages/ssh/ssh/src/index.ts:18`) â€” and the service is a
-  single `SshConnection` registered as `ssh` (`â€¦/ssh/src/index.ts:47`, `:73`).
+  scalar â€?"OpenSSH host alias, including its existing user, key and known-host
+  configuration" (`dsh/packages/ssh/ssh/src/index.ts:18`) â€?and the service is a
+  single `SshConnection` registered as `ssh` (`â€?ssh/src/index.ts:47`, `:73`).
   The transfer method takes no host: `request(method, params, result, signal,
-  wait)` (`â€¦/ssh/src/index.ts:115`).
+  wait)` (`â€?ssh/src/index.ts:115`).
 - **Its consumers claim capability services once per context.**
   `SshFileSystem extends FileSystem` with `inject = ['ssh', 'sandboxPolicy']`
   (`dsh/packages/ssh/fs-ssh/src/index.ts:20-21`), `SshSubprocessRuntime extends
@@ -390,7 +390,7 @@ compatibility path. That shape is not expressible in this host.
   (`dsh/packages/ssh/subprocess-ssh/src/index.ts:229-230`), and
   `SshSandboxProvider extends SandboxProvider` with `inject = ['ssh']`
   (`dsh/packages/ssh/sandbox-ssh/src/index.ts:10-11`). The shell service states
-  the invariant outright: "a host composes exactly one provider of `ctx.shell` â€¦
+  the invariant outright: "a host composes exactly one provider of `ctx.shell` â€?
   mounting both fails loud on a duplicate service registration"
   (`dsh/packages/shell/shell/src/index.ts:13-17`), and the duplicate is rejected
   at `dsh/vendor/cordis/src/reflect.ts:290`.
@@ -398,7 +398,7 @@ compatibility path. That shape is not expressible in this host.
 Mounting the upstream family next to dshell's `bash-local`/`fs-local` rows
 therefore does not give a bound session a remote world: it fails as a duplicate
 registration, and were it accepted it would move **every** session onto that one
-device â€” the opposite of a per-session binding.
+device â€?the opposite of a per-session binding.
 
 Per-session isolation does exist as a primitive. `ctx.isolate(name, label?)`
 creates a child context with its own realm for one service name
@@ -424,11 +424,11 @@ helper session per device, and it keeps the device registry because the connecti
 count stays dshell's business.
 
 Two things were decided by measurement rather than by argument, on the throwaway
-rig (`127.0.0.1:2222`, remote node v24.21.0) â€” see 10.39 for the numbers:
+rig (`127.0.0.1:2222`, remote node v24.21.0) â€?see 10.39 for the numbers:
 
 - **We write the helper; we reuse their framing.** Their helper cannot be
   extended: an unknown method is a hard `throw new Error('Unknown SSH helper
-  operation: â€¦')` (`dsh/packages/ssh/ssh/src/helper.ts:239`), and `dsh/` is
+  operation: â€?)` (`dsh/packages/ssh/ssh/src/helper.ts:239`), and `dsh/` is
   read-only for us. A helper of ours answered their `SshRpcPeer` handshake and
   served a `dshell.*` method of our own on the same connection.
 - **Deployment can be one file.** Their helper still imports eight first-party
@@ -442,7 +442,7 @@ The one piece the single-file story does **not** cover is the remote PTY, which
 needs a native allocation path (node-pty's prebuilt, or `ssh -tt` as today). That
 is 10.39's open decision, not a settled one.
 
-#### A4.2 â€” Client terminals on `ctx.webTerminals`: survives, narrower
+#### A4.2 â€?Client terminals on `ctx.webTerminals`: survives, narrower
 
 `ctx.webTerminals` is real and **is** keyed by session, which is why it is the one
 piece of 0.1.6's terminal work that fits dshell's shape: `view(sessionId, key,
@@ -457,7 +457,7 @@ The claim to correct: this is not "replace our xterm wiring". dshell's terminal 
 the *agent's* own PTY, with a claim hook that unifies the model's `bash` with it;
 `webTerminals` models a **sidebar terminal** per session. Reuse therefore means
 adopting the recovery/attach and shell-discovery semantics, not the sidebar's tab
-ownership â€” `ui-sidebar-terminal` already owns the `terminal` tab kind, so
+ownership â€?`ui-sidebar-terminal` already owns the `terminal` tab kind, so
 dshell's surface can only be an extension.
 
 Size, so the next phase can be scoped honestly: `dshell-terminal-bridge` is about
@@ -475,13 +475,13 @@ the next milestone: the device filesystem moves to the same RPC, replacing the
 `stat -c`/`find -printf`/`LC_ALL=C` shell text with structured fields and
 typed errors.
 
-### A5 â€” Desktop and release
+### A5 â€?Desktop and release
 
 Re-derive the seed-omission list against the new runtime (the closure moved; the
 bundles gained six first-party packages and lost two), update
 `docs/dshell-setup.md`'s install recipe, rebuild the `.deb`, install dshell into
-a desktop profile from the new runtime, and â€” if `main` keeps shipping during the
-alpha â€” publish dshell `0.1.2` carrying the widened ranges.
+a desktop profile from the new runtime, and â€?if `main` keeps shipping during the
+alpha â€?publish dshell `0.1.2` carrying the widened ranges.
 
 **Acceptance:** the app boots with dshell's rows live and the manifest validator
 silent; `~/.dsh/settings.yaml` gains its `dshell:` section; the block view renders
@@ -491,22 +491,22 @@ in both dsh themes.
 
 **Where the build stands (2026-09-18).** `node scripts/package-linux.mjs` now
 completes against this checkout and produces both artifacts for
-`0.1.6-alpha.1` â€” the AppImage and the `.deb` â€” in
+`0.1.6-alpha.1` â€?the AppImage and the `.deb` â€?in
 `dsh/apps/desktop/.desktop-build/targets/linux-x64/artifacts/`. Two things had to
 be adapted first, and both are recorded where they were made rather than here:
-the prepare step follows the rename `prepare-seed.ts` â†’ `prepare-dsh.ts`
+the prepare step follows the rename `prepare-seed.ts` â†?`prepare-dsh.ts`
 (`scripts/package-linux.mjs`), and the runtime project is given the `fs-ext`
 declaration upstream's payload check asserts but nothing declares
-(`scripts/linux-target-hooks.mjs`). The rest of A5 â€” the seed-omission list, the
-install recipe, and dshell in a desktop profile â€” is still open.
+(`scripts/linux-target-hooks.mjs`). The rest of A5 â€?the seed-omission list, the
+install recipe, and dshell in a desktop profile â€?is still open.
 
-### A6 â€” Deferred capabilities
+### A6 â€?Deferred capabilities
 
 Listed in Â§1.3 and deliberately out of this round. Each is a phase of its own:
 browser use and computer use (patch rows + a provider choice), PTC and
 `run_code`, MCP resources, image offload, auto review, and moving dshell's
-archive onto `workspaceRegistry`. They are additive â€” none of them unblocks the
-upgrade â€” which is exactly why they are not in it.
+archive onto `workspaceRegistry`. They are additive â€?none of them unblocks the
+upgrade â€?which is exactly why they are not in it.
 
 ## 3. Testing roadmap
 
@@ -527,31 +527,31 @@ a live harness instead.
 Everything else is a manual recipe written down in the roadmap: the browser loop
 with its debug handles, the route `fetch` matrix, the local sshd rig, the
 packaging acceptance runs, the desktop-profile install, the publish check, the
-two-language sweep. They are good recipes â€” they are just not re-run by anything.
+two-language sweep. They are good recipes â€?they are just not re-run by anything.
 
 Three gaps matter for an upgrade:
 
 1. **No test pins what we assume about dsh.** The 211 exact pins, the 46 `link:`
    overrides, the `neverBundle` platform modules, the bundle-patch row ids and the
    five seed-omission names are all checked by nothing. The one incompatibility
-   found in the rc.1 â†’ rc.2 move (a `single` slot at default priority) surfaced in
+   found in the rc.1 â†?rc.2 move (a `single` slot at default priority) surfaced in
    a browser. *(T1 closed the first four; see the phase below.)*
 2. **Whole packages have no spec at all**: `storage` (the history engine), `ssh`,
    `buffer`, `workspace`, `commands`, `conversation`, `bundle`, most of `mode`'s
-   client, and `files`' transfer suite. The oldest of these â€” the storage engine's
-   "30 behavioural checks" cited in Phase 10.5 â€” is unreproducible: the script is
+   client, and `files`' transfer suite. The oldest of these â€?the storage engine's
+   "30 behavioural checks" cited in Phase 10.5 â€?is unreproducible: the script is
    not in the repo or its history.
 3. **One suite sits outside `pnpm test`**: `terminal-bridge/scripts/
    check-commands.ts` holds 13 assertions over the command splitter and lives
    beside `src/`, so the vitest glob (`tests/**`) never sees it. *(Moved into
    `tests/commands.spec.ts` by T1.)*
 
-### 3.2 T1 â€” Turn the assumptions into assertions (before the bump)
+### 3.2 T1 â€?Turn the assumptions into assertions (before the bump)
 
 The cheapest phase, and the one that would have caught the desktop validator:
 
 - a spec that every row id our `cordis.patch.yml` names (disabled or inserted)
-  exists in the current dsh bundle patches â€” read them from `dsh/`, so 0.1.6's
+  exists in the current dsh bundle patches â€?read them from `dsh/`, so 0.1.6's
   renames become a red test instead of a stderr warning;
 - a spec over the manifests: the peer sets agree across the packages that carry
   them, every name is in the
@@ -559,7 +559,7 @@ The cheapest phase, and the one that would have caught the desktop validator:
   `PLATFORM_MODULES`, and the five seed-omission names match in all three places
   the docs list them;
 - `check-commands.ts` inside `pnpm test`, as a spec that imports the same
-  assertions (or a wrapper that runs them) â€” the splitter is pure and belongs in
+  assertions (or a wrapper that runs them) â€?the splitter is pure and belongs in
   the suite;
 - the version itself: the pins must name the checkout `dsh/` is on, so a
   half-done bump fails typecheck-adjacent rather than at runtime.
@@ -572,8 +572,8 @@ seeing red.
 
 | Spec | Watches | Proof it bites |
 | --- | --- | --- |
-| `packages/dshell/bundle/tests/host-rows.spec.ts` | every row id our patch names, against the ids the two `web`-profile bundle patches introduce (read from `dsh/`, `!!js` tags accepted by an extended YAML schema); that the composition still is those two bundles, and that our inserts collide with nothing | renamed a targeted id â€” the existence case went red with `['ui-jobs-renamed']` |
-| `scripts/tests/manifest-contract.spec.ts` | peer/dev agreement per package; every declared name's `link:` override and the name its target manifest answers to; ranges satisfied by `dsh/package.json`'s version; no `@deepseek-ai/*` name in `dependencies`; `neverBundle` âŠ† dsh's `PLATFORM_MODULES`; the install recipe covers every package | dropped `@deepseek-ai/dsh-shell` from the overrides â†’ the ownership case red; pointed one pin at `0.1.6-alpha.1` alone â†’ the version case red; added a name the loader does not serve to `neverBundle` â†’ the module-table case red |
+| `packages/dshell/bundle/tests/host-rows.spec.ts` | every row id our patch names, against the ids the two `web`-profile bundle patches introduce (read from `dsh/`, `!!js` tags accepted by an extended YAML schema); that the composition still is those two bundles, and that our inserts collide with nothing | renamed a targeted id â€?the existence case went red with `['ui-jobs-renamed']` |
+| `scripts/tests/manifest-contract.spec.ts` | peer/dev agreement per package; every declared name's `link:` override and the name its target manifest answers to; ranges satisfied by `dsh/package.json`'s version; no `@deepseek-ai/*` name in `dependencies`; `neverBundle` âŠ?dsh's `PLATFORM_MODULES`; the install recipe covers every package | dropped `@deepseek-ai/dsh-shell` from the overrides â†?the ownership case red; pointed one pin at `0.1.6-alpha.1` alone â†?the version case red; added a name the loader does not serve to `neverBundle` â†?the module-table case red |
 | `packages/dshell/terminal-bridge/tests/commands.spec.ts` | the 13 splitter and window assertions, moved out of `scripts/check-commands.ts` (deleted) | the same 13 cases; two of them are the truncation caps, which fail if the caps move |
 
 The fourth proof came free, twice over:
@@ -587,13 +587,13 @@ The fourth proof came free, twice over:
   stable list to assert against: the desktop package set is *generated* from the
   packed tarball closure (`apps/desktop/scripts/prepare-package-set.ts`), so the
   five names are a fact about a build, not a file. What replaced it is the
-  stronger, place-independent rule the validator actually enforces â€” no
-  `@deepseek-ai/*` name in `dependencies`, ever â€” plus the override check that
+  stronger, place-independent rule the validator actually enforces â€?no
+  `@deepseek-ai/*` name in `dependencies`, ever â€?plus the override check that
   every name we declare is owned by the checkout.
 
 Suite: 12 files, 172 cases (was 9 files, 147).
 
-### T2 â€” The upstream surface gate
+### T2 â€?The upstream surface gate
 
 A spec that asserts the service keys, slot ids and event names dshell uses still
 exist in the checkout in front of it. `pnpm typecheck` covers the *shapes* of what
@@ -604,7 +604,7 @@ plugin installs cleanly, boots cleanly, and leaves one dshell surface silently d
 
 The spec reads the checkout rather than a frozen copy, for the reason
 `host-rows.spec.ts` does: the thing worth watching is the dsh in front of us.
-Two sources feed it, because dsh declares services in two places â€”
+Two sources feed it, because dsh declares services in two places â€?
 
 - the generated catalogs it maintains for its own `doc-sync`
   (`SERVICE_API`, the client slot catalog, `KNOWN_SESSION_EVENT_TYPES`);
@@ -618,7 +618,7 @@ every host claim still passed.
 Run it with `pnpm run check:upstream`.
 
 **Acceptance:** each claim is proven to bite by removing the name from a checkout
-and seeing red. Done â€” `scripts/tests/upstream-surface-bites.spec.ts` removes one
+and seeing red. Done â€?`scripts/tests/upstream-surface-bites.spec.ts` removes one
 service, one slot and one event from an in-memory copy of the real checkout, and
 also pins the two quiet failures: a catalog the reader cannot parse, and a context
 walk that finds nothing.
@@ -628,7 +628,7 @@ service reads, 9 slots, 4 events, 13 routes) and the reader;
 `scripts/tests/upstream-surface.spec.ts` asserts it green and pins that the
 browser-side half is populated at all. 16 cases, `pnpm typecheck` clean.
 
-### T2.1 â€” The supported host window, and the CI that grades it
+### T2.1 â€?The supported host window, and the CI that grades it
 
 The gate above answers "does the surface still exist". It does not answer the
 question users actually hit: *may I install this*. dsh decides that from the
@@ -642,17 +642,41 @@ Measured before the change: **213 declaration sites across 11 manifests, and
 exactly one distinct value** (106 peers, 106 devDependencies, 1 dependency). A fact
 about the repository stored 213 times by hand is the defect, not the string in it.
 
-The window is now `>=0.1.5-rc.2 <0.2.2-0`, written from one place â€”
-`support.range` in `dsh-upstream.json` â€” and the seven versions this repository has
-actually run against are kept as `support.verified`, because a range that silently
-drops a tested host is worse than one that is too narrow.
+The window is written from one place â€?`support.range` in `dsh-upstream.json` â€?and
+the seven versions this repository has actually run against are kept as
+`support.verified`, because a range that silently drops a tested host is worse than
+one that is too narrow.
+
+The range **cannot be a plain window**, and the first attempt here proved it by
+shipping and failing to install. npm resolves peer ranges **without**
+`includePrerelease`, while dsh's gate (`plugin-compatibility.ts`) resolves them
+**with** it. Under npm, `>=0.1.5-rc.2 <0.2.2-0` accepts only `0.1.5-rc.2` and
+`0.2.1` itself â€?a prerelease above the floor matches nothing â€?so `npm install`
+answered `ETARGET: no matching version found`, and the published
+`0.1.16-alpha.1` could not be installed at all. Both sides therefore have to accept
+the same set, which means naming the prereleases explicitly and using a range only
+where it is unambiguous:
+
+```
+0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.2-0
+```
+
+`>=0.2.1-rc.2 <0.2.2-0` admits every `0.2.1-*` prerelease and `0.2.1` final under
+both rules, because a range whose lower bound names a prerelease of a version
+admits that version's prereleases. 0.1.16-alpha.1 is deprecated on npm; the fix is
+alpha.2.
 
 - **Accepted today**, so a user upgrades without a dshell release: every `0.2.1`
-  prerelease (`rc.4`, `rc.5`, â€¦) and `0.2.1` final.
+  prerelease (`rc.4`, `rc.5`, â€? and `0.2.1` final.
 - **Accepted, already tested**: the seven `verified` versions.
 - **Refused on purpose**: `0.2.2` and later. A new minor line is a surface review,
   which is what T2 and this section exist for; `^0.2.1-rc.3` would have admitted
   `0.2.9` and `0.3.0` instead.
+
+One consequence worth stating plainly: a `0.2.1-*` prerelease published *after* this
+release is accepted by the range, but `support.verified` does not name it. The range
+is what installs; `verified` is what has been run. They are different claims and the
+file keeps them apart rather than conflating "installs" with "tested".
 
 `scripts/sync-host-range.mjs` writes the range; `--check` reports drift. It parses
 and re-serializes each manifest, which is byte-identical here (CRLF and two-space
@@ -669,10 +693,16 @@ devDependencies half is written with the peer half so the two cannot disagree.
    now does: fetch the pinned upstream tag, build its declarations, then
    `sync-host-range --check`, `typecheck`, `test`, `check:upstream`.
 
-**Acceptance:** the range guard bites. Done â€” corrupting one of the 213 sites
-(`<0.2.2-0` â†’ `<0.2.1-rc.4` in `conversation`) fails two specs, and the sync script
-restores it; the suite is green at **706 passed / 44 skipped** with the lockfile
-untouched.
+**Acceptance:** the range guard bites. Done â€?corrupting one of the 213 sites fails
+two specs, and the sync script restores it; the suite is green at **706 passed / 44
+skipped** with the lockfile untouched.
+
+**Accepted by actually installing it.** `0.1.16-alpha.2` was installed from npmjs
+into an empty directory: 179 packages, exit 0, and the resolved `@deepseek-ai/dsh-*`
+tree came down at **`0.2.1-rc.5`** â€?the version whose users the published `0.1.15`
+refused outright. That is the whole point of this section: they install now without
+a dshell release. `latest` still points at `0.1.15`; promotion to the stable tag is a
+separate, deliberate act.
 
 **The residual risk, stated rather than hidden.** A window admits versions this
 repository has not run against, and dsh's pre-stable APIs mean *presence* can
@@ -681,7 +711,7 @@ that the window removes the release coupling for a line we already test, not the
 need to review a new minor line: the fence at `0.2.2-0` is where that review is due,
 and T2 plus this section are the review.
 
-### T3 â€” Host-side integration for our routes
+### T3 â€?Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against
 `/api/dshell/*`: if it can stand in for the remote layer, the buffer, files and
@@ -691,20 +721,20 @@ say so here and keep those routes in T4's checklist.
 **Acceptance:** either three new specs green, or a paragraph explaining why the
 mock does not fit and a checklist entry in its place.
 
-### T4 â€” The acceptance checklist, scripted
+### T4 â€?The acceptance checklist, scripted
 
 The recipes in `dshell-roadmap.md` collected into one runnable checklist, so an
 upgrade is "run it" rather than "re-read twenty phases":
 
 - boot: `__DSH_BOOT__.entries` carries all three dshell client faces, and no
-  "Failed to load plugins" â€” now also *our rows are live*, since 0.1.6 warns
+  "Failed to load plugins" â€?now also *our rows are live*, since 0.1.6 warns
   instead of aborting;
 - routes: the status-code matrix for `/api/dshell/*` (200/400/401 as documented)
   and one device-session variant;
-- rendering: the light/dark pass â€” palette classes, ANSI inks per span, the
+- rendering: the light/dark pass â€?palette classes, ANSI inks per span, the
   swatches, the picker dialog;
 - the local sshd rig: fs, exec, interactive shell through dshell's per-device
-  seams (unchanged by A4 â€” see A4.1);
+  seams (unchanged by A4 â€?see A4.1);
 - packaging: `linux-unpacked` payload, icon hashes, `.deb` install, AppArmor,
   launch;
 - publish: `dist` metadata and the tarball's bytes, not the CLI's word.
@@ -712,12 +742,12 @@ upgrade is "run it" rather than "re-read twenty phases":
 **Acceptance:** a second person can run it from the doc alone on a machine that
 has never had dshell installed.
 
-### T5 â€” Fill the zero-coverage packages
+### T5 â€?Fill the zero-coverage packages
 
 In value order: `storage`'s history engine, `ssh`'s argument assembly and
 host-key rules, `buffer`'s protocol and feasibility checks, `workspace`'s list
 and archive maths, then `mode`'s client-side pure functions. Each entry names
-which functions are pure enough to test where they live â€” several already are
+which functions are pure enough to test where they live â€?several already are
 (the splitter, the path rules, the geometry), which is why they were the first
 ones tested.
 
@@ -735,10 +765,10 @@ been shown to fail when its rule is broken.
   it checks (`@deepseek-ai/schemastery` is in the runtime's own
   `desktop-packages.json`) and the rule itself (a runtime-owned name declared as
   a dependency is rejected, unconditionally). What is still unobserved is the
-  failure *text* and the ordering with the rest of profile preparation â€” A5 runs
+  failure *text* and the ordering with the rest of profile preparation â€?A5 runs
   the app for that.
-- **Best-effort startup removes an alarm.** Our implicit smoke test â€” "it did not
-  boot" â€” is gone for optional rows. T1's row check and T4's boot assertion are
+- **Best-effort startup removes an alarm.** Our implicit smoke test â€?"it did not
+  boot" â€?is gone for optional rows. T1's row check and T4's boot assertion are
   the replacements, which is why they are in the first phase rather than the last.
 - **Shipping during the alpha**: dshell `0.1.1` is published with exact
   `0.1.5-rc.2` peers. A1's widened ranges are what let a `0.1.2` serve both
@@ -746,7 +776,7 @@ been shown to fail when its rule is broken.
   releasable.
 - **Two kinds of stale number in `dshell-roadmap.md`.** The "190 pins" figure in
   Phase 10.4 and "80 specs" in Phase 10.26 were true when written and are not true
-  now (211 pins, 147 cases) â€” they are a phase's record, so they stay as they are;
+  now (211 pins, 147 cases) â€?they are a phase's record, so they stay as they are;
   read them as history, and take the counts from this document or from the tree.
   The verbatim-duplicated Phase 10.29/10.30 blocks are a different thing: a defect
   worth removing in a documentation pass of its own.
