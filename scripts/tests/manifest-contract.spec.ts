@@ -138,6 +138,26 @@ describe('the dshell manifests', () => {
     expect(problems).toEqual([])
   })
 
+  it('never point an override at a path inside the package store', () => {
+    // pnpm names a store directory after the package and a hash of what it
+    // patched, and the spelling of that hash changed between pnpm 9
+    // (`patch_hash=`) and pnpm 10+ (`_patc_`). An override written against one
+    // of them resolves to nothing under the other, and the failure reads as a
+    // missing package rather than as a stale path -- which is how the
+    // node-pty override outlived the pnpm that created it.
+    //
+    // So an override may point into the checkout, but never into the store:
+    // the checkout's own links are pnpm's to maintain, and they follow the
+    // store whatever it is called this week.
+    const problems: string[] = []
+    for (const [name, target] of Object.entries(OVERRIDES)) {
+      if (!target.startsWith('link:')) continue
+      const path = target.slice('link:'.length)
+      if (path.includes('/.pnpm/')) problems.push(`${name} override points into the store (${target})`)
+    }
+    expect(problems).toEqual([])
+  })
+
   it('never name a first-party package as a dependency, bar the runtime-omitted ones', () => {
     // The desktop profile fails on this for the packages its runtime owns. That
     // set belongs to upstream and is not visible from here, so the default is

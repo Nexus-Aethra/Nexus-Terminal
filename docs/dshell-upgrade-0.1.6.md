@@ -704,6 +704,51 @@ that the window removes the release coupling for a line we already test, not the
 need to review a new minor line: the fence at `0.2.2-0` is where that review is due,
 and T2 plus this section are the review.
 
+### T2.2 — What the first CI run found
+
+The CI above was written on a machine that already had the upstream checkout
+installed, and it passed there. On a clean runner it failed before a single gate
+ran, and the three failures are worth keeping, because each one is a class of
+problem a local checkout hides.
+
+**1. Two pnpm versions, one PATH.** This repository pins `pnpm@9.15.0`; the dsh
+checkout pins `pnpm@11.28.5`. They are not interchangeable. pnpm 10 moved
+`overrides` out of `package.json` into `pnpm-workspace.yaml`, so pnpm 9 reads
+dsh's override list as *empty* while dsh's own lockfile records three, and
+`pnpm install --frozen-lockfile` answers `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`.
+Locally this never appeared, because `corepack pnpm` resolves the version from
+the nearest `packageManager` field — 9.15.0 in the repository, 11.28.5 inside
+`dsh/` — while CI had pinned one version for the whole job. CI now lets corepack
+resolve it too, and calls `corepack pnpm` in the dsh steps so the version they
+get is the one dsh declares.
+
+**2. A lockfile that stopped matching its manifests.** The range change rewrote
+213 dependency specifiers and the root `pnpm-lock.yaml` was never regenerated,
+so `--frozen-lockfile` refused to install: `ERR_PNPM_OUTDATED_LOCKFILE`. The
+lockfile is part of the change now.
+
+**3. An override that named a path inside the package store.** The `node-pty`
+override pointed at `dsh/node_modules/.pnpm/node-pty@1.2.0-beta.15_patch_hash=…`,
+which is a *pnpm 9* spelling: pnpm 11 shortens the same directory to
+`node-pty@1.2.0-beta.15_patc_…`. The override had been written when dsh was
+installed with pnpm 9 and had been failing to resolve ever since dsh moved to
+pnpm 11 — the local checkout simply had not been reinstalled to show it. The
+override now points at the checkout's own link,
+`dsh/packages/subprocess/subprocess-local/node_modules/node-pty`, which is pnpm's
+to maintain and follows the store whatever it is called. The patched package is
+the same one it pointed at before (the `DSH_NODE_PTY_SPAWN_HELPER` patch is
+applied).
+
+The third one is the general lesson, so it is now a rule rather than a fix: a
+tracked override may point into the checkout, but never into the store. The
+store's directory names carry a hash that pnpm has changed before and will
+change again, and a stale one reads as a missing package rather than as a stale
+path. `manifest-contract.spec.ts` fails an override that names `/.pnpm/`.
+
+**Acceptance:** the store-path guard bites — reverting the override to the old
+pnpm 9 spelling fails two specs and names the offending override — and the
+suite is green at **706 passed / 44 skipped**.
+
 ### T3 — Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against

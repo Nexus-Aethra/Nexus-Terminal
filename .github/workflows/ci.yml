@@ -26,20 +26,31 @@ jobs:
       - name: verify the checkout matches the pin
         run: node scripts/fetch-upstream.mjs --check
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
+      # Two pnpm versions meet here, and they must not be pinned to one.
+      #
+      # This repository is pnpm 9 (packageManager in the root manifest); the dsh
+      # checkout is pnpm 11 (packageManager in dsh/package.json). They are not
+      # interchangeable: pnpm 10 moved `overrides` out of package.json into
+      # pnpm-workspace.yaml, so pnpm 9 reads dsh's override list as empty while
+      # dsh's lockfile records three, and `pnpm install --frozen-lockfile` fails
+      # with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH before a single gate runs.
+      #
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
+      # corepack resolves the pnpm version from the nearest packageManager field,
+      # so the same `pnpm` on PATH is 9.15.0 in this repository and 11.28.5 inside
+      # dsh/. The dsh steps call `corepack pnpm` explicitly so the version they
+      # get is the one dsh declares, not whatever the repository happens to pin.
+      - name: enable corepack
+        run: corepack enable
 
       # dsh is a pnpm workspace of its own. Its packages resolve types through
       # `lib/types`, which is build output: a fresh clone has `src/` only, so the
       # host program has to be built before anything here can typecheck against it.
       - name: install dsh
         working-directory: dsh
-        run: pnpm install --frozen-lockfile
+        run: corepack pnpm install --frozen-lockfile
 
       # `pnpm run typecheck` in dsh compiles the Host program and writes its
       # declarations without bundling, which is exactly what is needed here:
@@ -48,8 +59,10 @@ jobs:
       # bundle the desktop app, which no gate below reads.
       - name: build dsh declarations
         working-directory: dsh
-        run: pnpm run typecheck
+        run: corepack pnpm run typecheck
 
+      # The node-pty override resolves through the dsh checkout, so this step
+      # has to follow the dsh install above.
       - name: install dshell
         run: pnpm install --frozen-lockfile
 
