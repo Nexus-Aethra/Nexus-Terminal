@@ -77,6 +77,13 @@ jobs:
       - name: install dshell
         run: pnpm install --frozen-lockfile
 
+      # dshell's own packages ship a build output too, and the ssh suite reads
+      # it: the device helper is a bundle (`lib/helper.js`) that the helper
+      # artifact spec checks by opening the file. Without this step that spec
+      # fails on a missing file rather than on anything about the helper.
+      - name: build dshell packages
+        run: pnpm build
+
       # The range dsh peers are graded by lives in one file; a manifest carrying a
       # different one is the failure mode that silently disables rows in a profile.
       - name: host range matches the pin

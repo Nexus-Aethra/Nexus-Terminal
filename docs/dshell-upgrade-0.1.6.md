@@ -773,6 +773,31 @@ machine, and a CI runner is slower than that. Upstream raises the same budget
 for its own equivalent checks (`DSH_COVERAGE_TEST_TIMEOUT_MS`), for the same
 reason; this repository now does the same, in `vitest.config.ts`.
 
+**And a seventh, in this repository's own specs — three of them, all of them
+platform or build artefacts rather than logic.**
+
+1. *dshell's own packages need building too.* The device helper is a bundle
+   (`packages/dshell/ssh/lib/helper.js`), and the helper-artifact spec opens the
+   file to check it. On CI it was missing, so the spec failed on a missing file —
+   and it said so: *run "pnpm build" before "pnpm test"*. The CI now builds
+   dshell's packages as well as dsh's.
+
+2. *A path that only the machine's owner can read.* Three cases in
+   `ambient-scope-routing.spec.ts` assert that the read was answered by **this
+   machine**, so they really read the file they name — and the file they named
+   was `/root/.bashrc`. A CI runner does not run as root, so the read failed with
+   `EACCES` and the case said nothing about routing. They now name a file that
+   the test creates in its own temporary directory.
+
+3. *A host path that is only a host path on Windows.* The device's protocol
+   admits an absolute POSIX path and nothing else, so a Windows path is refused
+   on the spot — that is the whole mechanism `remote-fs-paths.spec.ts` is about.
+   On a POSIX host there is no such spelling: every absolute path already looks
+   like a device path, and a host path outside the mount cannot be told apart
+   from a device path by anything but the mapping. So the case cannot hold there,
+   and the spec now says so and skips those three cases off Windows, which is
+   the convention the rest of this repository already follows.
+
 **Acceptance:** the suite is green at **707 passed / 44 skipped** with every
 dsh package's `lib/index.js` present, and the whole sequence was verified on a
 tree whose 358 `lib/` directories had been deleted first — the state a fresh
