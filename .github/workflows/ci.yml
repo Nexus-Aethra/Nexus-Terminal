@@ -52,14 +52,22 @@ jobs:
         working-directory: dsh
         run: corepack pnpm install --frozen-lockfile
 
-      # `pnpm run typecheck` in dsh compiles the Host program and writes its
-      # declarations without bundling, which is exactly what is needed here:
-      # `lib/types` is where every dsh package's `types` entry points, and it is
-      # build output, so a fresh clone has `src/` only. `build:lib:host` would also
-      # bundle the desktop app, which no gate below reads.
-      - name: build dsh declarations
+      # dsh's packages resolve through two different build outputs, and a
+      # fresh clone has neither. `tsc -b` writes the declarations every
+      # package's `types` entry points at (`lib/types`), and `tsdown` writes
+      # the runnable JavaScript every package's `main` and `exports` point at
+      # (`lib/index.js`). The type check alone only produces the first, and a
+      # suite that imports a dsh package then fails with "Failed to resolve
+      # entry for package" rather than with anything about the code.
+      #
+      # This is the Host face of dsh's own build: `build:lib:host` is the same
+      # two commands followed by the desktop bundle, which no gate below
+      # reads.
+      - name: build dsh packages
         working-directory: dsh
-        run: corepack pnpm run typecheck
+        run: |
+          corepack pnpm exec tsc -b tsconfig.host.json
+          corepack pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE host
 
       # The node-pty override resolves through the dsh checkout, so this step
       # has to follow the dsh install above.

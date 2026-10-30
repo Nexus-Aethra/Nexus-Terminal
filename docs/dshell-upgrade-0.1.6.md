@@ -747,7 +747,21 @@ path. `manifest-contract.spec.ts` fails an override that names `/.pnpm/`.
 
 **Acceptance:** the store-path guard bites — reverting the override to the old
 pnpm 9 spelling fails two specs and names the offending override — and the
-suite is green at **706 passed / 44 skipped**.
+suite is green at **707 passed / 44 skipped**.
+
+**A fourth one, in the step that was supposed to be the safe one.** Building
+dsh's *declarations* is not the same as building dsh. Every dsh package has two
+build outputs: `tsc -b` writes the declarations its `types` entry points at
+(`lib/types`), and `tsdown` writes the runnable JavaScript its `main` and
+`exports` point at (`lib/index.js`). The type check produces the first and not
+the second, so a suite that imports a dsh package fails with *Failed to resolve
+entry for package* — a message about packaging, arriving where a reader
+expects a message about code. The CI step now runs both, which is the Host
+face of dsh's own build; `build:lib:host` is the same two commands followed by
+the desktop bundle, and no gate here reads that.
+
+**Acceptance:** the suite is green at **707 passed / 44 skipped** with every
+dsh package's `lib/index.js` present.
 
 ### T3 — Host-side integration for our routes
 
