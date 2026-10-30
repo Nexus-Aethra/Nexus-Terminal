@@ -18,7 +18,7 @@ its evidence in place; A2 is next.
 | Channel | `alpha`. `next` is `0.1.5-rc.2` (what every dshell manifest pins, exactly); `latest` is an old `0.1.0-rc.6` |
 | Checkout | Already fetched into `dsh/`, **not** checked out: the repo still builds and publishes against `0.1.5-rc.2` |
 | Delta | 3942 files, +784k/−47k, eighteen new packages and two deleted |
-| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); A3–A6 and T2–T5 open; **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); A3–A6 and T2–T5 open |
+| Progress | A1 done (both hosts accepted by one manifest set); T1 done (the manifests, the patch row ids and the splitter are asserted); A2 done (host moved to 0.1.6-alpha.1, four gates green, node-pty override/symlink updated, 0.1.6-only symbol present in emitted bundles); **A2 re-run for alpha.2 done** (see below: 226 pins moved, host moved, three slot/face changes adapted, boot clean, block view verified); **T2 done 2026-10-30** (`scripts/upstream-surface.ts` + 16 cases, `pnpm run check:upstream`); A3–A6 and T3–T5 open |
 
 Four decisions this roadmap takes, each reversible by editing this section:
 
@@ -593,16 +593,40 @@ The fourth proof came free, twice over:
 
 Suite: 12 files, 172 cases (was 9 files, 147).
 
-### T2 — Compile-time host contract
+### T2 — The upstream surface gate
 
-A type-only spec that asserts the service keys, slot ids and event names dshell
-uses exist in the installed dsh types. `pnpm typecheck` already covers the
-*shapes* of what we call; this covers *presence*, which is what upstream deletes
-and renames. Cheap, and it turns "the feature silently stopped working" into a
-build error.
+A spec that asserts the service keys, slot ids and event names dshell uses still
+exist in the checkout in front of it. `pnpm typecheck` covers the *shapes* of what
+we call; this covers *presence*, which is what upstream deletes and renames, and
+which no version range can see: dsh's public APIs are pre-stable, so a release may
+drop a name while every peer range still admits that release. Without this the
+plugin installs cleanly, boots cleanly, and leaves one dshell surface silently dead.
 
-**Acceptance:** deleting a name from a local stub of the type (or pointing the
-spec at a frozen copy of an older surface) fails the build.
+The spec reads the checkout rather than a frozen copy, for the reason
+`host-rows.spec.ts` does: the thing worth watching is the dsh in front of us.
+Two sources feed it, because dsh declares services in two places —
+
+- the generated catalogs it maintains for its own `doc-sync`
+  (`SERVICE_API`, the client slot catalog, `KNOWN_SESSION_EVENT_TYPES`);
+- the `declare module '@deepseek-ai/cordis'` blocks that merge `Context`, which is
+  how every *browser* service is declared (`slots`, `uiConversation`, `locale`).
+
+The second source is why the gate cannot simply read a catalog: an implementation
+that only read `SERVICE_API` would leave every client-side claim unguarded while
+every host claim still passed.
+
+Run it with `pnpm run check:upstream`.
+
+**Acceptance:** each claim is proven to bite by removing the name from a checkout
+and seeing red. Done — `scripts/tests/upstream-surface-bites.spec.ts` removes one
+service, one slot and one event from an in-memory copy of the real checkout, and
+also pins the two quiet failures: a catalog the reader cannot parse, and a context
+walk that finds nothing.
+
+**Done** (2026-10-30). `scripts/upstream-surface.ts` holds the claim (31 dshell
+service reads, 9 slots, 4 events, 13 routes) and the reader;
+`scripts/tests/upstream-surface.spec.ts` asserts it green and pins that the
+browser-side half is populated at all. 16 cases, `pnpm typecheck` clean.
 
 ### T3 — Host-side integration for our routes
 
