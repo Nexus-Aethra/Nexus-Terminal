@@ -863,8 +863,27 @@ that gives it a way to reach a port on that device. The second would have
 quietly replaced the first, and the symptom would be a session that kept its
 local shell after it had been bound to a device. It is a list of listeners now.
 
-**Acceptance:** 729 in the suite, all green; 19 of them the forwarder, 5 the
-route, 7 the tool, 3 the seat.
+**Acceptance:** 731 in the suite, all green; 19 of them the forwarder, 5 the
+route, 7 the tool, 3 the seat, 2 the end-to-end pair.
+
+**The end-to-end pair, and why it exists.** Every other spec in this package
+drives a client that is not ssh2, because the decisions worth pinning there
+are about SHAPE — what is asked for, what is collected, which connection a
+device keeps. None of that says whether a tunnel CARRIES anything.
+
+So two specs run against a real ssh2 server: a real handshake, a real channel
+opened by the device for a forwarded connection, a real socket on this
+machine, and real bytes over the wire. The server is ssh2's own, so the
+protocol is the protocol rather than a script of what the protocol is
+supposed to do.
+
+The half-close case is the one worth reading, and it is worth reading twice:
+the unit test found it, and the end-to-end test PROVED it. With
+`allowHalfOpen` removed, the tunnel still opens, the request still reaches the
+device, and the answer still arrives nowhere — the end-to-end failure reads
+`expected '' to contain '200 OK'`, which is exactly what a broken tunnel looks
+like from the outside. The fix is not an opinion about sockets; it is the
+difference between carrying a request and carrying an answer.
 
 ### T3 — Host-side integration for our routes
 
