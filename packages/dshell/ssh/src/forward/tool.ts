@@ -130,6 +130,52 @@ const TOOL_PARAMETERS = {
 } as const
 
 /**
+ * The tool's output, as the harness's contract asks for it.
+ *
+ * The registry refuses a tool that does not declare this, so it is not optional
+ * paperwork: a tool without it never reaches a model at all. The value is the
+ * lossless record of what happened, and the render is the one line the model
+ * reads.
+ */
+const TOOL_OUTPUT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    // `required` is a LIST of names on an object, never a per-property flag.
+    // The registry enforces the subset it accepts and refuses the rest, so a
+    // schema written in the looser dialect is refused at registration — which
+    // is why this shape is pinned by a test rather than left to a reader.
+    required: ['forwards', 'message'],
+    properties: {
+      forwards: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['sessionId', 'deviceId', 'deviceName', 'devicePort', 'localPort', 'localAddress', 'status'],
+          properties: {
+            sessionId: { type: 'string' },
+            deviceId: { type: 'string' },
+            deviceName: { type: 'string' },
+            devicePort: { type: 'number' },
+            localPort: { type: 'number' },
+            localAddress: { type: 'string' },
+            status: { type: 'string' },
+            error: { type: 'string' },
+          },
+        },
+      },
+      message: { type: 'string' },
+    },
+  },
+  render: (_args: unknown, value: unknown): { type: 'text'; text: string }[] => {
+    const answer = value as { message?: unknown }
+    const text = typeof answer?.message === 'string' ? answer.message : 'the forwarder said nothing'
+    return [{ type: 'text', text }]
+  },
+} as const
+
+/**
  * Run one call.
  *
  * @param deps - the forwarder and the router.
@@ -219,17 +265,16 @@ export function installForwardTool(ctx: unknown, deps: ForwardToolDeps): () => v
       name: PORT_FORWARD_TOOL,
       description: TOOL_DESCRIPTION,
       parameters: TOOL_PARAMETERS,
+      output: TOOL_OUTPUT,
       execute: async (input: unknown): Promise<unknown> => {
         const action = parseAction(input)
         if (action === undefined) {
           return {
             forwards: deps.forwarder.listSession(sessionId),
             message: 'the action was not understood',
-            content: [{ type: 'text', text: 'the action was not understood' }],
           }
         }
-        const result = await runForward(deps, sessionId, action)
-        return { ...result, content: [{ type: 'text', text: result.message }] }
+        return await runForward(deps, sessionId, action)
       },
     }
     applied.set(sessionId, agent.ctx.tools.register(definition))

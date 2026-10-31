@@ -79,15 +79,34 @@ class FakeSeat implements ForwardSeat {
   }
 }
 
-/** A tool registry that records what was registered. */
+/**
+ * A tool registry that records what was registered.
+ *
+ * It refuses a definition without an `output`, the way the harness's own registry
+ * does: a tool that declares no output contract never reaches a model at all,
+ * and the refusal is a registration error rather than a silent absence. That
+ * refusal is the point of the fake — it is what turns a missing contract into a
+ * red test here instead of a runtime failure in a composition.
+ */
 class FakeRegistry {
-  readonly registered: { name: string; execute?: (input: unknown) => Promise<unknown> }[] = []
+  readonly registered: {
+    name: string
+    execute?: (input: unknown) => Promise<unknown>
+    output?: { schema?: unknown; render?: unknown }
+  }[] = []
 
   get(): undefined {
     return undefined
   }
 
-  register(definition: { name: string; execute?: (input: unknown) => Promise<unknown> }): () => void {
+  register(definition: {
+    name: string
+    execute?: (input: unknown) => Promise<unknown>
+    output?: { schema?: unknown; render?: unknown }
+  }): () => void {
+    if (definition.output === undefined || typeof definition.output.render !== 'function') {
+      throw new TypeError(`tool "${definition.name}" must declare output { schema, render, presentationMeta? }`)
+    }
     this.registered.push(definition)
     return () => {
       this.registered = this.registered.filter(entry => entry !== definition)
@@ -184,6 +203,64 @@ describe('the forward tool', () => {
     const result = await tool.execute?.({ action: 'list' }) as { message: string }
 
     expect(result.message).toContain('3000')
+  })
+
+  it('declares the output contract the registry demands', () => {
+    // The harness's registry REFUSES a tool that declares no output: the tool
+    // never reaches a model at all, and the refusal surfaces as a registration
+    // error in whatever composition mounted it. That is not visible in a type
+    // check and not visible in a unit test that fakes the registry — it was
+    // found by registering the tool in a real dsh, where it broke the whole
+    // session's activation.
+    const onDevice = agent('s-device')
+    const ctx = {
+      tools: new FakeRegistry(),
+      agents: { list: () => [onDevice] },
+      on: () => () => {},
+    }
+
+    installForwardTool(ctx, { forwarder: new FakeSeat(), router: routerWith(['s-device']) })
+
+    const tool = onDevice.tools.registered[0]
+    expect(tool.output).toBeDefined()
+    expect(typeof tool.output?.render).toBe('function')
+  })
+
+  it('declares its output schema in the subset the registry enforces', () => {
+    // The registry enforces a JSON Schema SUBSET, and refuses the rest at
+    // registration. The subset is stricter than the loose dialect a
+    // `parameters` schema may use: `required` is a LIST of names on an object,
+    // never a per-property flag, and `properties`/`items` belong to objects and
+    // arrays respectively.
+    //
+    // A schema written in the looser dialect is refused at registration, which
+    // in a composition breaks the session's activation rather than the tool's
+    // own use — so it is checked here, where the failure is legible.
+    const onDevice = agent('s-device')
+    const ctx = {
+      tools: new FakeRegistry(),
+      agents: { list: () => [onDevice] },
+      on: () => () => {},
+    }
+
+    installForwardTool(ctx, { forwarder: new FakeSeat(), router: routerWith(['s-device']) })
+
+    const schema = onDevice.tools.registered[0].output?.schema as
+      | { type?: string; properties?: Record<string, unknown>; required?: unknown }
+      | undefined
+    expect(schema?.type).toBe('object')
+    // The names, not a per-property flag.
+    expect(Array.isArray(schema?.required)).toBe(true)
+    for (const name of schema?.required as string[]) {
+      expect(Object.hasOwn(schema?.properties ?? {}, name)).toBe(true)
+    }
+    for (const [name, property] of Object.entries(schema?.properties ?? {})) {
+      const node = property as { type?: string; required?: unknown; properties?: unknown; items?: unknown }
+      expect(node.required).toBeUndefined()
+      if (node.type === 'object') expect(node.items).toBeUndefined()
+      if (node.type === 'array') expect(node.properties).toBeUndefined()
+      expect(name.length).toBeGreaterThan(0)
+    }
   })
 
   it('says so when it does not understand the action', async () => {
