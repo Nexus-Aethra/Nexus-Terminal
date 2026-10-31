@@ -15,7 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          # No gate below pushes, fetches from this repository, or reads its
+          # history -- `repo-hygiene.spec.ts` asks git for the tracked file list,
+          # which a shallow checkout answers. So the credentials are not needed,
+          # and leaving them out keeps them out of the clone.
+          persist-credentials: false
 
       # The repo builds against an upstream dsh checkout that is git-ignored here,
       # so every gate below resolves `@deepseek-ai/dsh-*` through a directory this
@@ -35,7 +41,7 @@ jobs:
       # dsh's lockfile records three, and `pnpm install --frozen-lockfile` fails
       # with ERR_PNPM_LOCKFILE_CONFIG_MISMATCH before a single gate runs.
       #
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
       # corepack resolves the pnpm version from the nearest packageManager field,
