@@ -918,6 +918,54 @@ The second is that a DSH Box container has its own loopback: its `127.0.0.1`
 is not the host's. A "device" reached at the host's loopback is unreachable
 from inside the container, which is why the device server runs in there too.
 
+**And then against the REAL device, in the REAL browser.** The device above was
+a stand-in; the point of the third layer is the thing a reader would do, so it
+was done against a real server over real SSH, in a real dsh rc.5 container, with
+the panel driven by a real browser:
+
+```
+the device panel's ports tab lists what the device listens on
+  → every row carries a 转发 button
+  → clicking it opens a forward and the row names the local port
+  → a request to that local port comes back from the device's own nginx
+```
+
+The chain that answered, on a real server:
+
+```
+HTTP/1.1 301 Moved Permanently
+Server: nginx/1.28.3 (Ubuntu)
+Location: https://game.code-help.top
+```
+
+**And two bugs that ONLY a real dsh could find.** Neither is visible in a type
+check, and neither is visible in a unit test that fakes the registry:
+
+1. *The registry refuses a tool that declares no output.* Registering
+   `port_forward` in a real dsh answered
+
+   ```
+   tool "port_forward" must declare output { schema, render, presentationMeta? }
+   ```
+
+   so the tool never reached a model at all — and the refusal surfaced as a
+   registration error that broke the whole SESSION's activation, not as a
+   complaint about the tool.
+
+2. *The output's schema is in a subset, and the looser dialect is refused too.*
+   `required` is a list of names on an object, never a per-property flag, and
+   `properties` and `items` belong to objects and arrays respectively. The first
+   version of this schema was written in the dialect a `parameters` schema may
+   use, and it was refused at registration as well:
+
+   ```
+   schema.properties.forwards.required is not supported on type "array"
+   ```
+
+   Both are now pinned by tests that use the harness's own rules: a fake
+   registry that refuses a definition without an output, and a case that reads
+   the schema the way the registry reads it.
+
 ### T3 — Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against
