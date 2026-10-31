@@ -26,6 +26,7 @@
 
 import { createServer, type Server, type Socket } from 'node:net'
 import type { ClientChannel } from 'ssh2'
+import type { DshellForwardStatus, DshellForwardView } from '@nexus-aethra/dshell-std'
 import type { DeviceConnection } from '../devices.js'
 import type { DeviceTransport } from '../transport/transport.js'
 
@@ -36,27 +37,8 @@ import type { DeviceTransport } from '../transport/transport.js'
  * request, and until it does there is no tunnel — a reader who saw only
  * `running` and `failed` would have to guess which one they are in.
  */
-export type ForwardStatus = 'starting' | 'running' | 'failed' | 'stopped'
-
-/** One forward, as a reader sees it. */
-export interface ForwardView {
-  /** The session this forward belongs to. */
-  readonly sessionId: string
-  /** The device the traffic goes to. */
-  readonly deviceId: string
-  /** The device's display name, as the reader named it. */
-  readonly deviceName: string
-  /** The port on the device that is being reached. */
-  readonly devicePort: number
-  /** The port on THIS machine that is listening. */
-  readonly localPort: number
-  /** The address on this machine that is listening. */
-  readonly localAddress: string
-  /** How the forward is doing. */
-  readonly status: ForwardStatus
-  /** Why it failed, when it did; undefined otherwise. */
-  readonly error: string | undefined
-}
+export type ForwardStatus = DshellForwardStatus
+export type ForwardView = DshellForwardView
 
 /** What a caller asks for. */
 export interface ForwardRequest {
