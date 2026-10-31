@@ -885,6 +885,39 @@ device, and the answer still arrives nowhere — the end-to-end failure reads
 like from the outside. The fix is not an opinion about sockets; it is the
 difference between carrying a request and carrying an answer.
 
+**And the third layer, which no test in this repository can reach: a real dsh.**
+The two layers above prove the tunnel and the protocol. Neither proves that the
+ROUTE is registered, that the service it waits on arrives, or that a session
+bound to a device finds it — those are questions about a composition, and a
+composition is a whole dsh with this repository's plugins in it.
+
+So it was run against one: a dsh rc.5 container (DSH Box), this repository's
+bundle built locally and installed into it, a real ssh2 server as the DEVICE,
+and a real HTTP service behind it. The chain that answered:
+
+```
+a request to the local port
+  → the socket dshell opened on this machine
+  → a real SSH channel (a real handshake, a real forwardOut)
+  → the device's own HTTP service
+  → the answer, back the whole way
+```
+
+The route answered `200 {"forwards":[]}` before a device existed and
+`200 {"error":"this session does not run on a device"}` for a session that
+was not on one — the same two answers the unit tests give, from a real
+composition.
+
+**Two things that check found, both of them about dsh rather than about the
+tunnel.** The first is a trap for anyone reading a 404 as a bug: dsh's `/api`
+routes need the cookie that `GET /` mints from the launch token, and a request
+without it gets a **404**, not a 401. Every dshell route looked missing until
+the cookie was in hand — including ones that had been there all along.
+
+The second is that a DSH Box container has its own loopback: its `127.0.0.1`
+is not the host's. A "device" reached at the host's loopback is unreachable
+from inside the container, which is why the device server runs in there too.
+
 ### T3 — Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against
