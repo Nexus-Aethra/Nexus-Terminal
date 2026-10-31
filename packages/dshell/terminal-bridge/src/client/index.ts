@@ -745,12 +745,18 @@ export class PtyStreamService extends Service {
 
   private openChannel(dshSessionId: string): void {
     this.closeChannel()
+    // A bind is the reader choosing this session, and a retry budget belongs to
+    // the failure that spent it. Opening the carrier is what turns the page
+    // back onto this shell — the ordinary act of switching sessions — so the
+    // budget resets here even when the session is the one this state already
+    // describes: a viewer that comes back must not be met with the retry count
+    // of a socket that died while they were away, and the count is what draws
+    // "reconnecting" over a terminal that is about to work.
+    this.attempt = 0
     if (this.state.getSnapshot().sessionId !== dshSessionId) {
-      // A different session starts from a clean slate: the retry budget, the
-      // failure report and the readiness all belong to the session that earned
-      // them, and carrying them over would show session B's view the state of
-      // session A.
-      this.attempt = 0
+      // A different session starts from a clean slate: the failure report and
+      // the readiness belong to the session that earned them, and carrying them
+      // over would show session B's view the state of session A.
       this.patch({
         sessionId: dshSessionId,
         status: 'connecting',
@@ -771,9 +777,20 @@ export class PtyStreamService extends Service {
         failure: undefined,
       })
     } else {
-      this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now() })
+      this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now(), attempt: 0, exhausted: false })
     }
     let channel: PtyChannel
+    /**
+     * Whether this carrier has already said the shell is gone.
+     *
+     * The host sends its death frame BEFORE the snapshot, so a replay that
+     * arrives after one describes a shell that is still dead: the retry that
+     * frame scheduled is what is being watched, and a replay must not cancel
+     * it. A replay with no death frame in front of it is the opposite claim —
+     * the carrier came back for a shell that never went away — and that is
+     * what refills the budget below.
+     */
+    let deathAnnounced = false
     channel = openPtyChannel({
       sessionId: dshSessionId,
       stream: 'main',
@@ -784,6 +801,7 @@ export class PtyStreamService extends Service {
           // a no-op on the other path.
           channel.send({ kind: 'bind', sessionId: dshSessionId })
           this.boundId = dshSessionId
+          deathAnnounced = false
           this.patch({ status: 'connecting' })
           // Replay the grid this session's view already asked for: a request
           // made while the carrier was still connecting was remembered, not
@@ -794,7 +812,8 @@ export class PtyStreamService extends Service {
           // A superseded channel (handover already moved on) must never feed
           // history: its carrier may still deliver while it winds down.
           if (this.channel !== channel) return
-          this.ingestMainFrame(dshSessionId, frame)
+          if (frame.kind === 'closed' || frame.kind === 'error') deathAnnounced = true
+          this.ingestMainFrame(dshSessionId, frame, deathAnnounced)
         },
         onClose: () => {
           // Only the current channel owns teardown and reconnection; a
@@ -819,11 +838,23 @@ export class PtyStreamService extends Service {
     this.channelSession = dshSessionId
   }
 
-  /** Fold one main-stream frame into the session's state and history. */
-  private ingestMainFrame(dshSessionId: string, frame: WireFrame): void {
+  /**
+   * Fold one main-stream frame into the session's state and history.
+   * @param dshSessionId - the session this channel was opened for.
+   * @param frame - the decoded frame.
+   * @param deathAnnounced - whether the host already said this shell is gone on
+   *   this carrier, which is what tells a live replay apart from the snapshot
+   *   that follows a death.
+   */
+  private ingestMainFrame(dshSessionId: string, frame: WireFrame, deathAnnounced = false): void {
     if (frame.kind === 'output' && typeof frame.chunk === 'string') {
       this.boundId = dshSessionId
-      if (frame.replay !== true) this.resetRetry()
+      // A replay normally means "here is the scrollback you missed", not "the
+      // shell answered" — so it must not refill the budget. The exception is a
+      // replay that arrived with no death in front of it: that is a carrier
+      // that came back to a shell which never stopped running, which is exactly
+      // the successful reconnect the retry counter is waiting to be cleared by.
+      if (frame.replay !== true || !deathAnnounced) this.resetRetry()
       this.patch({ status: 'open' })
       this.ingest(dshSessionId, {
         text: frame.chunk,
