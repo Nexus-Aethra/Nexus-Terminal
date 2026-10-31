@@ -812,6 +812,60 @@ thing — `tsc -b` treats the build-info file as the record of what it emitted �
 so a build that deletes one has to delete the other. A fresh clone has neither,
 which is why CI never sees it.
 
+### T2.3 — Port forwards: the panel, the model, and the tunnel under both
+
+The ports page answers “what is listening”. It did not answer “how do I reach
+it from here”, and the protocol said so from the start — the socket list is
+*what a port-forward would have to bind*.
+
+**What it is.** A forward is the shape `ssh -L` has: a socket on the READER's
+machine, and every connection accepted on it carried over the device's own SSH
+connection to a port there. It is a TCP tunnel, not an HTTP proxy, so what
+travels through it is whatever the port speaks — a web page, an API, a
+database wire protocol, a websocket.
+
+**Three halves, and the one that decides the cost.**
+
+1. *The tunnel* (`ssh/src/forward/forwarder.ts`). It rides the POOLED connection
+   the transport already holds, so a forward costs no extra SSH session. The
+   cost of that choice is the thing this has to handle: a channel dies with its
+   connection, and the transport re-dials a dead one on its own without knowing
+   which forwards were meant to outlive it.
+2. *The route* (`ssh/src/forward/route.ts`). It names a SESSION, never a
+   device — the session decides the machine, the same rule every other
+   session-scoped route here follows — and it lives in the shared contract
+   layer, so the route that answers it and the browser face that reads it
+   cannot drift from the forwarder in between.
+3. *The panel* (`mode/src/client/device-forward.ts`). Every port row carries a
+   forward button, and a port that already has one names the local port it
+   landed on — the address the reader opens in a browser.
+
+**And the model gets a tool.** `port_forward` is registered in the scope of a
+session that runs on a device, and only there: a forward is a tunnel to a
+device, and a session on this machine has no device to tunnel to. It follows
+the BINDING rather than the agent's birth, so a session bound after its agent
+was created still gets it, and it goes away when the session is unbound.
+
+**Two bugs the tunnel needed that a relay does not**, both found by a tunnel
+that carried the request and dropped the answer:
+
+- The two directions are moved by hand rather than by `pipe`. `pipe` ends the
+  destination when the source ends, so a caller that finished writing would
+  take the answer with it.
+- The listener is created with `allowHalfOpen`. Node's default server answers
+  a half-close by closing the whole socket — and a half-close is exactly what
+  an HTTP client does after it has sent its request.
+
+**One bug the router had, found while adding the second consumer.** The
+assignment hook was ONE slot, and two things now follow the assignment: the
+device dialect that gives a bound session its own shell, and the forward tool
+that gives it a way to reach a port on that device. The second would have
+quietly replaced the first, and the symptom would be a session that kept its
+local shell after it had been bound to a device. It is a list of listeners now.
+
+**Acceptance:** 729 in the suite, all green; 19 of them the forwarder, 5 the
+route, 7 the tool, 3 the seat.
+
 ### T3 — Host-side integration for our routes
 
 `0.1.6-alpha.1` ships `test-support/remote-mock`. Evaluate it against
