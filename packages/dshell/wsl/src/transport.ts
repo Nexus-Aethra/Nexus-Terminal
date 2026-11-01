@@ -1,16 +1,17 @@
 /**
  * A WSL2 distribution as a device: the transport that runs one in-process.
  *
- * WSL is "a device on this machine whose transport is `wsl.exe`" — the device
- * model already carries everything a WSL session needs (a per-session binding,
- * a spawn plan, mount translation, the subprocess and filesystem seams), and
- * the only thing that differs from an SSH device is HOW bytes leave this
- * process. Where {@link DeviceTransport} dials `ssh2`, this class spawns
- * `wsl.exe`: the exec and open doors are plain child processes, the shell door
- * is a ConPTY pty. The bridge's own settle injection (its PROMPT_COMMAND
+ * WSL is "a device on this machine whose transport is `wsl.exe`", and this
+ * package is the whole of it: the doors (`exec`/`open` as plain child
+ * processes, `shell` as a ConPTY pty), the distribution detection, and the
+ * provider that registers all three into dshell-ssh's device registry. The
+ * device MODEL — bindings, spawn plans, mount translation, the subprocess and
+ * filesystem seams — belongs to the registry's owner; the only thing that
+ * differs from an SSH device is HOW bytes leave this process, and that is all
+ * that lives here. The bridge's own settle injection (its PROMPT_COMMAND
  * written into the pty after the shell is up) is transport-agnostic, so the
  * command splitter, the block log and the completion warm trigger all work
- * over this path unchanged — proven against this machine (the `wsl-spike`):
+ * over this path unchanged — proven against a real machine (the `wsl-spike`):
  * the marker bytes survive ConPTY, resize reaches the inner shell, and the
  * session exits cleanly.
  *
@@ -18,7 +19,7 @@
  * key (there is no handshake to verify), no credential (the distro is the
  * credential), no helper deployment (the exec lane serves everything the
  * helper would), and no port forwards (WSL2 shares this machine's loopback —
- * the forward seams refuse before asking).
+ * the provider refuses them before anyone asks).
  */
 
 import { spawn } from 'node:child_process'
@@ -26,16 +27,17 @@ import type { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { Readable } from 'node:stream'
 import type { Duplex, Writable } from 'node:stream'
-import type { DeviceConnection } from '../devices.js'
-import { deviceTransport } from './transport.js'
+// Type-only: DeviceConnection is the std fact; the door vocabulary is
+// dshell-ssh's extension point (see the note in this package's index.ts).
+import type { DeviceConnection } from '@nexus-aethra/dshell-std'
 import type {
   DeviceCommand,
+  DeviceDoors,
   DeviceExecOptions,
   DeviceExecResult,
   DeviceOutcome,
   DeviceShell,
-  DeviceTransport,
-} from './transport.js'
+} from '@nexus-aethra/dshell-ssh'
 
 /** One WSL distribution this machine could run a shell in. */
 export interface WslDistro {
@@ -162,16 +164,6 @@ class Window {
 }
 
 /**
- * One running `wsl.exe` command, as a {@link DeviceCommand}.
- *
- * The duplex is OUR pipe: writes into it go to the child's stdin, the
- * child's stdout comes out of it. Ending the duplex is what the no-stdin
- * contract reads as EOF on the far side, and `terminate` kills the host
- * process — which is what carries the distro's process tree, so a killed
- * command ends the way a killed SSH channel does, residue on the far side
- * included.
- */
-/**
  * Write into a child pipe that may already be dead. A dying child turns its
  * pipes into EPIPE — thrown synchronously here or delivered later as an
  * 'error' event — and an unhandled either is fatal to the whole host, which
@@ -190,6 +182,16 @@ function guardedEnd(target: Writable | null): void {
   try { target.end() } catch { /* already gone */ }
 }
 
+/**
+ * One running `wsl.exe` command, as a {@link DeviceCommand}.
+ *
+ * The duplex is OUR pipe: writes into it go to the child's stdin, the
+ * child's stdout comes out of it. Ending the duplex is what the no-stdin
+ * contract reads as EOF on the far side, and `terminate` kills the host
+ * process — which is what carries the distro's process tree, so a killed
+ * command ends the way a killed SSH channel does, residue on the far side
+ * included.
+ */
 class ProcessCommand implements DeviceCommand {
   readonly stream: Duplex
   readonly stderr: Readable
@@ -244,7 +246,7 @@ class ProcessCommand implements DeviceCommand {
  * operation is a fresh `wsl.exe` process and the distro's own start-up is
  * what a cold call pays for.
  */
-export class WslTransport {
+export class WslTransport implements DeviceDoors {
   /** Run one command and collect its output, bounded. */
   async exec(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceExecResult> {
     const run = await this.open(device, command, options)
@@ -356,16 +358,4 @@ let shared: WslTransport | undefined
 export function wslTransport(): WslTransport {
   shared ??= new WslTransport()
   return shared
-}
-
-/**
- * The doors one device's operations go through, by its kind.
- *
- * The single place that knows a WSL device from an SSH one — every seam above
- * (subprocess, filesystem, shell plan, device probes) asks here and speaks to
- * the doors, which are shaped identically for both. An SSH device keeps the
- * pooled `ssh2` transport; a WSL one spawns `wsl.exe`.
- */
-export function transportFor(device: Pick<DeviceConnection, 'id' | 'kind'>): DeviceTransport | WslTransport {
-  return device.kind === 'wsl' || isWslDevice(device.id) ? wslTransport() : deviceTransport()
 }

@@ -26,7 +26,7 @@ import type {
 } from './remote-fs-transport.js'
 import { quote, quoteDevicePath } from './shell-quote.js'
 import type { DeviceOutcome } from './transport/transport.js'
-import { transportFor } from './transport/wsl.js'
+import { transportFor } from './transport/transport.js'
 
 /** The error text this file's classifier reads; see the note in the module header. */
 const MISSING_PATH = /No such file or directory|cannot statx? .*No such/i

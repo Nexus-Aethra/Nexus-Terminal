@@ -18,7 +18,7 @@
  */
 import type { DeviceConnection } from '../devices.js'
 
-import { transportFor } from '../transport/wsl.js'
+import { transportFor } from '../transport/transport.js'
 
 /**
  * The probe: the device's home directory, then a Node executable if it has one.

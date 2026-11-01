@@ -40,7 +40,7 @@ import { HelperTargets } from './helper/target.js'
 import { RemoteProcess, supportsStdio } from './remote-process.js'
 import { DeviceSubprocessHandle } from './channel-process.js'
 import { deviceTransport } from './transport/transport.js'
-import { transportFor } from './transport/wsl.js'
+import { transportFor } from './transport/transport.js'
 
 /**
  * The device's own ripgrep.

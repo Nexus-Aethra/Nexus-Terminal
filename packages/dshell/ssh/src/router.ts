@@ -21,7 +21,8 @@ import type { ShellExecRequest, ShellExecSpec } from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
-import { transportFor } from './transport/wsl.js'
+import { DshellDeviceRegistry } from './registry.js'
+import { transportFor } from './transport/transport.js'
 import { CredentialStore } from './credentials.js'
 import { SecretVault, VaultLockedError } from './vault.js'
 import type { DshellSshTranslate } from './host-locales.js'
@@ -228,6 +229,13 @@ class BindingStore {
 /** Devices, their assignments, and the per-call decision they drive. */
 export class SshRouter {
   private readonly devices: DeviceStore
+  /**
+   * The built-in device providers (see `registry.ts`). Created here, published
+   * as the `DSHELL_DEVICE_REGISTRY` service by `apply`, and pointed at by the
+   * transport dispatcher — a provider registers from its own package and its
+   * rows and doors answer everywhere this package consults devices.
+   */
+  readonly registry: DshellDeviceRegistry
   /** The group registry and the unlock state, shared with every reader. */
   readonly vault: SecretVault
   /** The credential library devices point at. */
@@ -342,7 +350,11 @@ export class SshRouter {
     // the device store, the credential store and the card all see the same one.
     this.vault = new SecretVault(root)
     this.credentials = new CredentialStore(root, this.vault)
-    this.devices = new DeviceStore(root, this.credentials)
+    // The built-in device providers register here from their own packages; the
+    // router is the composition's root for it, `apply` publishes it as the
+    // DSHELL_DEVICE_REGISTRY service and points the transport dispatcher at it.
+    this.registry = new DshellDeviceRegistry()
+    this.devices = new DeviceStore(root, this.credentials, this.registry)
     this.bindings = new BindingStore(() => join(root(), 'bindings.json'))
     // Eagerly, and deliberately: `targetForSession` below is synchronous
     // because `spawn`/`resolve` cannot await, so this cache has to be filled
@@ -1033,23 +1045,25 @@ export class SshRouter {
     await this.bindings.load()
     await this.refreshDevices()
     await this.adoptMounts()
-    this.probeWslRoots()
+    this.probeProviderRoots()
   }
 
   /**
-   * Ask every built-in WSL device where its home is, once, in the background.
+   * Ask every provider device where its home is, once, in the background.
    *
-   * A WSL device has no helper handshake to volunteer its root (see
+   * A provider's device has no helper handshake to volunteer its root (see
    * {@link ensureDeviceRoot}), and a binding that survived a host restart
    * meets the files seam before any test or rebind has asked — with the root
-   * still the literal `~`, which no seam can open. The probes are local and
-   * cheap, and the answers only fill the same cache bind fills.
+   * still the literal `~` the reader typed, which no seam can open. The
+   * probes are the provider's own to keep cheap, and the answers only fill
+   * the same cache bind fills.
    */
-  private probeWslRoots(): void {
-    for (const [id, device] of this.connections) {
-      if (device.kind !== 'wsl' || this.deviceRoots.has(id)) continue
-      void this.ensureDeviceRoot(id)
-    }
+  private probeProviderRoots(): void {
+    void this.registry.probeTargets().then((targets) => {
+      for (const device of targets) {
+        if (!this.deviceRoots.has(device.id)) void this.ensureDeviceRoot(device.id)
+      }
+    }).catch(() => { /* a provider that cannot answer has no root to give */ })
   }
 
   /**

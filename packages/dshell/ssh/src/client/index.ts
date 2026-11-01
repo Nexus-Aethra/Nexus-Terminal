@@ -22,7 +22,6 @@ import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import { DshellAdminPage } from './admin.js'
 import { DshellSshConfigPage } from './card.js'
 import { watchDshellNavIcon } from './nav-icon.js'
-import { DshellWslCard } from './wsl-card.js'
 import { en, zh } from './locales.js'
 import { SshClientService } from './service.js'
 import { DshellSessionDeviceButton } from './session-bind.js'
@@ -77,21 +76,9 @@ export function apply(ctx: Context): void {
     },
     DshellSshConfigPage,
   ))
-  // The WSL card: the built-in distributions, with their own surface rather
-  // than a row inside the SSH registry — the registry's actions (edit,
-  // delete, helper) are refusals for a distro, so the card says what a
-  // distro IS instead.
-  ctx.slots.inject('dshell.admin.card', () => ctx.slots.register(
-    {
-      name: 'dshell.admin.card',
-      id: 'wsl',
-      order: 15,
-      label: () => t('admin.card.wsl'),
-      locale: NS,
-      inject: () => ({ ssh }),
-    },
-    DshellWslCard,
-  ))
+  // The WSL card lives in its own package now (@nexus-aethra/dshell-wsl),
+  // registered into this same seat from there: a device kind with its own
+  // transport and no credential is a provider's surface, not this registry's.
   // The page itself is the registered component: its `t` seat comes from the
   // declared namespace, and the device service travels as the inject face, so
   // both reach it as composed props. The panel keys the entry by the row it

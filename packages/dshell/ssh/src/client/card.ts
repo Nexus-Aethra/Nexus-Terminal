@@ -135,10 +135,11 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
-  // WSL distributions have a card of their own in the 管理台; this one is
-  // the SSH registry, so a built-in row would be noise here — its actions
-  // (edit, delete, helper) are refusals by design.
-  const devices = snapshot.devices.filter(device => device.auth !== 'wsl')
+  // The registry card is about credentials and edits — exactly what a
+  // provider's built-in device is not (its rows are derived, its actions are
+  // refusals here), so built-ins stay out of the list; each provider surfaces
+  // its own card beside this one in the 管理台.
+  const devices = snapshot.devices.filter(device => device.builtin !== true)
   // The group that is actually holding a device's credential, read from the
   // current state: a refusal is a moment, and the group stays locked after any
   // other call has answered.

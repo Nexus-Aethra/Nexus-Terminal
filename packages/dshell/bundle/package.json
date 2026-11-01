@@ -48,7 +48,8 @@
     "@nexus-aethra/dshell-std": "workspace:^",
     "@nexus-aethra/dshell-storage": "workspace:^",
     "@nexus-aethra/dshell-terminal-bridge": "workspace:^",
-    "@nexus-aethra/dshell-usage": "workspace:^"
+    "@nexus-aethra/dshell-usage": "workspace:^",
+    "@nexus-aethra/dshell-wsl": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

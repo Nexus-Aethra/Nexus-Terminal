@@ -1,7 +1,8 @@
 /**
  * The WSL device's pure pieces: the management output's decoding, the
  * distribution list's parsing, the argv a `wsl.exe` run is built from, and
- * the dispatcher that picks these doors over the pooled SSH client.
+ * the provider's registration — rows, doors, refusals — as the registry
+ * reads them.
  *
  * The decoding cases come from real `wsl.exe` behavior: management output is
  * UTF-16LE with a BOM when redirected and without one in some pipes, while
@@ -10,7 +11,8 @@
  * spellings of the default-distribution marker.
  */
 import { describe, expect, it } from 'vitest'
-import { decodeWslOutput, distroOf, isWslDevice, parseWslList, transportFor, wslExecArgs, WSL_EXE } from '../src/transport/wsl.js'
+import { decodeWslOutput, distroOf, isWslDevice, parseWslList, wslExecArgs, WSL_EXE, WslTransport } from '../src/transport.js'
+import { WslDeviceProvider } from '../src/provider.js'
 
 function utf16le(text: string, bom = true): Buffer {
   const body = Buffer.from(text, 'utf16le')
@@ -102,20 +104,33 @@ describe('wsl device identity', () => {
   })
 })
 
-describe('transportFor', () => {
-  it('routes a wsl-kind device to the WSL doors', async () => {
-    const { WslTransport } = await import('../src/transport/wsl.js')
-    const doors = transportFor({ id: 'tencent', kind: 'wsl' })
+describe('WslDeviceProvider', () => {
+  const provider = new WslDeviceProvider()
+
+  it('claims only the ids carrying the wsl prefix', () => {
+    expect(provider.owns('wsl:Ubuntu-24.04')).toBe(true)
+    expect(provider.owns('tencent')).toBe(false)
+  })
+
+  it('answers its doors for its own devices and nothing else', () => {
+    const doors = provider.doors({ id: 'wsl:Ubuntu-24.04', name: 'Ubuntu-24.04', host: 'wsl', port: 0, user: '', remoteRoot: '~', auth: 'wsl', kind: 'wsl', secret: undefined })
     expect(doors).toBeInstanceOf(WslTransport)
+    expect(provider.doors({ id: 'tencent', name: 'tencent', host: 'x', port: 22, user: 'u', remoteRoot: '~', auth: 'key', secret: undefined })).toBeUndefined()
   })
 
-  it('routes a built-in id to the WSL doors even without a kind', async () => {
-    const { WslTransport } = await import('../src/transport/wsl.js')
-    expect(transportFor({ id: 'wsl:Ubuntu-24.04' })).toBeInstanceOf(WslTransport)
+  it('refuses port forwards in its own words, for its own ids', () => {
+    expect(provider.forwards).toBe(false)
+    expect(provider.refusal('wsl:Ubuntu-24.04')).toContain('回环')
+    expect(provider.refusal('tencent')).toBeUndefined()
   })
 
-  it('routes an ordinary device to the pooled SSH transport', async () => {
-    const { DeviceTransport } = await import('../src/transport/transport.js')
-    expect(transportFor({ id: 'tencent' })).toBeInstanceOf(DeviceTransport)
+  it('rows carry the builtin mark and the distro name unadorned', async () => {
+    // Detection runs only on Windows; elsewhere the rows are simply absent.
+    const rows = await provider.rows()
+    for (const row of rows) {
+      expect(row.builtin).toBe(true)
+      expect(row.id.startsWith('wsl:')).toBe(true)
+      expect(row.name).not.toContain('wsl:')
+    }
   })
 })
