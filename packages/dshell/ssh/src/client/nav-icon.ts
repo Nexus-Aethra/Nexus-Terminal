@@ -7,17 +7,16 @@
  * `settings.section` seat carries no icon of its own — so the console's row
  * reads as "some settings" instead of dshell's.
  *
- * The artwork is dshell's own mark rather than a copy from the primitives:
- * the prompt — a chevron and a block cursor — at the same size and weight
- * as the icons beside it (16 viewBox, 1.3px stroke). Idempotent via the
- * label check and a marker attribute; delete both files the day
+ * The artwork is the terminal, drawn like the icons beside it (16 viewBox,
+ * 1.3px stroke): a prompt chevron and the underscore after it. Idempotent
+ * via the label check and a marker attribute; delete both files the day
  * `settings.section` accepts an icon.
  */
 
-/** The prompt: chevron, then the block cursor dshell's mark carries. */
+/** The terminal: a prompt chevron and the underscore after it. */
 const PROMPT_PATHS = [
   { d: 'M2.75 3.75L6.75 8L2.75 12.25', stroke: true },
-  { d: 'M9.25 4.5H13.25V11.5H9.25Z', stroke: false },
+  { d: 'M8.75 11.75H13.25', stroke: true },
 ] as const
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
