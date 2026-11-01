@@ -21,6 +21,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import { DSHELL_BUNDLE_NAME } from '@nexus-aethra/dshell-std'
 import { DshellAdminPage } from './admin.js'
 import { DshellSshConfigPage } from './card.js'
+import { watchDshellNavIcon } from './nav-icon.js'
+import { DshellWslCard } from './wsl-card.js'
 import { en, zh } from './locales.js'
 import { SshClientService } from './service.js'
 import { DshellSessionDeviceButton } from './session-bind.js'
@@ -58,6 +60,9 @@ export function apply(ctx: Context): void {
     },
     DshellAdminPage,
   ))
+  // The row's own icon, because this seat carries none: dsh draws a generic
+  // gear for any section id it does not ship (see nav-icon.ts).
+  ctx.effect(() => watchDshellNavIcon(() => t('admin.nav')), 'dshell-ssh: navigation icon')
   // The device card, into the seat the 管理台 renders: the same surface the
   // Plugins row's configure control opens, so a reader manages devices either
   // beside the plugin or in the console — one component, two doors.
@@ -71,6 +76,21 @@ export function apply(ctx: Context): void {
       inject: () => ({ ssh }),
     },
     DshellSshConfigPage,
+  ))
+  // The WSL card: the built-in distributions, with their own surface rather
+  // than a row inside the SSH registry — the registry's actions (edit,
+  // delete, helper) are refusals for a distro, so the card says what a
+  // distro IS instead.
+  ctx.slots.inject('dshell.admin.card', () => ctx.slots.register(
+    {
+      name: 'dshell.admin.card',
+      id: 'wsl',
+      order: 15,
+      label: () => t('admin.card.wsl'),
+      locale: NS,
+      inject: () => ({ ssh }),
+    },
+    DshellWslCard,
   ))
   // The page itself is the registered component: its `t` seat comes from the
   // declared namespace, and the device service travels as the inject face, so

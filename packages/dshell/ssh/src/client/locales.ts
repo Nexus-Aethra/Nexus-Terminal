@@ -17,9 +17,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 /** Simplified Chinese dictionary and key-set source of truth. */
 export const zh = {
-  'admin.nav': 'dshell 管理台',
+  'admin.nav': 'dshell',
   'admin.intro': '这里集中管理 dshell 的一切：SSH 设备与凭据、WSL 发行版、终端偏好与数据目录。WSL 发行版是内建设备，随检测出现，会话可直接绑定。',
   'admin.card.devices': '设备与凭据',
+  'admin.card.wsl': 'WSL 发行版',
+  'wsl.summary': '{count} 个发行版 · {names}',
+  'wsl.empty': '这台机器没有检测到 WSL2 发行版（或未安装 WSL）。',
+  'wsl.hint': '发行版随检测出现与消失：内建设备，无需凭据；会话创建页直接绑定即可。',
   'card.title': 'SSH 设备',
   'row.summary': '登记远程设备与凭据；绑定到会话后，该会话的工具就在远端机器上执行。',
   'bind.title': '本会话运行在哪台设备',
@@ -103,9 +107,13 @@ export type DshellSshKey = keyof typeof zh
 
 /** English dictionary, checked complete against the Chinese key set. */
 export const en = {
-  'admin.nav': 'dshell console',
+  'admin.nav': 'dshell',
   'admin.intro': 'Everything dshell configures, in one place: SSH devices and credentials, WSL distributions, terminal preferences and the data root. A WSL distribution is a built-in device — it appears with detection, and sessions bind to it directly.',
   'admin.card.devices': 'Devices & credentials',
+  'admin.card.wsl': 'WSL distributions',
+  'wsl.summary': '{count} distributions · {names}',
+  'wsl.empty': 'No WSL2 distribution detected on this machine (or WSL is not installed).',
+  'wsl.hint': 'Distributions come and go with detection: built-in devices, no credentials; bind a session from the creation page.',
   'card.title': 'SSH devices',
   'row.summary': 'Register remote devices and their credentials; a session bound to one runs its tools on that machine.',
   'bind.title': 'Which device this session runs on',

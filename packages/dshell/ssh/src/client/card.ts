@@ -198,6 +198,10 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
   const snapshot = useSyncExternalStore(ssh.subscribe, ssh.getSnapshot)
+  // WSL distributions have a card of their own in the 管理台; this one is
+  // the SSH registry, so a built-in row would be noise here — its actions
+  // (edit, delete, helper) are refusals by design.
+  const devices = snapshot.devices.filter(device => device.auth !== 'wsl')
   // The group that is actually holding a device's credential, read from the
   // current state: a refusal is a moment, and the group stays locked after any
   // other call has answered.
@@ -255,25 +259,23 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
           style: { fontSize: 14, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' },
         }, t('card.title')),
         createElement('span', { style: descStyle },
-          snapshot.devices.length === 0
+          devices.length === 0
             ? t('card.empty')
             : t('card.summary', {
-              count: snapshot.devices.length,
-              names: snapshot.devices.map(d => d.name).join(t('card.nameSeparator')),
+              count: devices.length,
+              names: devices.map(d => d.name).join(t('card.nameSeparator')),
             })),
       ),
       createElement(Chevron, { open }),
     ),
     open
       ? createElement('div', { style: bodyStyle },
-        ...snapshot.devices.map(device => createElement('div', { key: device.id, style: rowStyle },
+        ...devices.map(device => createElement('div', { key: device.id, style: rowStyle },
           createElement('span', { style: rowTitleStyle },
             `${device.name} · ${device.user}@${device.host}:${String(device.port)}`
             + ` · ${t('device.login', {
-              method: device.auth === 'wsl'
-                ? t('auth.wsl')
-                : device.auth === 'password' ? t('auth.password') : t('auth.key'),
-            })}${device.hasSecret || device.auth === 'wsl' ? '' : t('device.noSecret')}`),
+              method: device.auth === 'password' ? t('auth.password') : t('auth.key'),
+            })}${device.hasSecret ? '' : t('device.noSecret')}`),
           // The actions travel as one unit. Flex breaks lines before it
           // shrinks anything, so four loose buttons let a long device name
           // push the last one onto its own line; grouped and unshrinkable,
