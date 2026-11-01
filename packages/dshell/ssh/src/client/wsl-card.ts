@@ -43,7 +43,7 @@ export function DshellWslCard(
             ? t('wsl.empty')
             : t('wsl.summary', {
               count: distros.length,
-              names: distros.map(d => d.name.replace(/^wsl:/, '')).join(t('card.nameSeparator')),
+              names: distros.map(d => d.name).join(t('card.nameSeparator')),
             })),
       ),
       createElement(Chevron, { open }),
@@ -51,8 +51,7 @@ export function DshellWslCard(
     open
       ? createElement('div', { style: bodyStyle },
         ...distros.map(device => createElement('div', { key: device.id, style: rowStyle },
-          createElement('span', { style: rowTitleStyle },
-            `${device.name.replace(/^wsl:/, '')} · ${device.user}@${device.host}`),
+          createElement('span', { style: rowTitleStyle }, device.name),
           createElement('div', { style: { display: 'flex', gap: 8, flexShrink: 0 } },
             createElement('button', {
               type: 'button', style: actionStyle, title: t('device.testTooltip'),

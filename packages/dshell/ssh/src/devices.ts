@@ -462,7 +462,11 @@ export class DeviceStore {
   private wslView(distro: WslDistro): DeviceView {
     return {
       id: `${WSL_DEVICE_PREFIX}${distro.name}`,
-      name: `WSL · ${distro.name}`,
+      // The distro's own name, unadorned: dsh's session-row device badge caps
+      // at 96px, and any prefix we add ("WSL · ") is what clips it mid-glyph.
+      // The distro name is the recognizable part; the admin card is where the
+      // WSL context is spelled out.
+      name: distro.name,
       host: 'wsl',
       port: 0,
       user: '',
@@ -486,7 +490,7 @@ export class DeviceStore {
     if (!present) return undefined
     return {
       id: deviceId,
-      name: `WSL · ${name}`,
+      name,
       host: 'wsl',
       port: 0,
       user: '',

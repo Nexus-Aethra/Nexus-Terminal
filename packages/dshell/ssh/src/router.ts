@@ -463,6 +463,12 @@ export class SshRouter {
     let assigned = mount
     if (deviceId !== null) {
       await this.connectionFor(deviceId)
+      // The root a `~`-spelled binding resolves against. An SSH device's
+      // helper handshake volunteers its home as a side effect of connecting,
+      // but a WSL device has no handshake — so the root is asked here, once,
+      // or the files seam keeps seeing the literal `~` the reader typed,
+      // which no seam can open.
+      await this.ensureDeviceRoot(deviceId)
       if (createRemoteRoot) await this.ensureRemoteRoot(deviceId, remoteRoot)
       const tree = assigned === null || assigned.trim().length === 0
         ? await this.mountPath(deviceId, remoteRoot)
@@ -1027,6 +1033,23 @@ export class SshRouter {
     await this.bindings.load()
     await this.refreshDevices()
     await this.adoptMounts()
+    this.probeWslRoots()
+  }
+
+  /**
+   * Ask every built-in WSL device where its home is, once, in the background.
+   *
+   * A WSL device has no helper handshake to volunteer its root (see
+   * {@link ensureDeviceRoot}), and a binding that survived a host restart
+   * meets the files seam before any test or rebind has asked — with the root
+   * still the literal `~`, which no seam can open. The probes are local and
+   * cheap, and the answers only fill the same cache bind fills.
+   */
+  private probeWslRoots(): void {
+    for (const [id, device] of this.connections) {
+      if (device.kind !== 'wsl' || this.deviceRoots.has(id)) continue
+      void this.ensureDeviceRoot(id)
+    }
   }
 
   /**

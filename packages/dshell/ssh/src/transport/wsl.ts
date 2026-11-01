@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { Readable } from 'node:stream'
-import type { Duplex } from 'node:stream'
+import type { Duplex, Writable } from 'node:stream'
 import type { DeviceConnection } from '../devices.js'
 import { deviceTransport } from './transport.js'
 import type {
@@ -171,6 +171,25 @@ class Window {
  * command ends the way a killed SSH channel does, residue on the far side
  * included.
  */
+/**
+ * Write into a child pipe that may already be dead. A dying child turns its
+ * pipes into EPIPE — thrown synchronously here or delivered later as an
+ * 'error' event — and an unhandled either is fatal to the whole host, which
+ * is why every pipe touch is guarded and every pipe carries a handler.
+ */
+function guardedWrite(target: Writable | null, chunk: Buffer): void {
+  if (target === null) return
+  try {
+    if (!target.writableEnded) target.write(chunk)
+  } catch { /* EPIPE and friends: the child is gone; `done` reports it */ }
+}
+
+/** End a child pipe that may already be dead, with the same guard. */
+function guardedEnd(target: Writable | null): void {
+  if (target === null) return
+  try { target.end() } catch { /* already gone */ }
+}
+
 class ProcessCommand implements DeviceCommand {
   readonly stream: Duplex
   readonly stderr: Readable
@@ -178,10 +197,16 @@ class ProcessCommand implements DeviceCommand {
 
   constructor(private readonly process: ChildProcess) {
     const stream = new PassThrough()
-    process.stdout?.on('data', (chunk: Buffer) => { stream.write(chunk) })
-    process.stdout?.on('end', () => { stream.end() })
-    stream.on('data', (chunk: Buffer) => { process.stdin?.write(chunk) })
-    stream.on('end', () => { process.stdin?.end() })
+    process.stdout?.on('data', (chunk: Buffer) => { guardedWrite(stream, chunk) })
+    process.stdout?.on('end', () => { guardedEnd(stream) })
+    stream.on('data', (chunk: Buffer) => { guardedWrite(process.stdin, chunk) })
+    stream.on('end', () => { guardedEnd(process.stdin) })
+    // The pipes' async failures (EPIPE after the child died) arrive as
+    // 'error' events; without handlers they are fatal to the host, exactly
+    // like the channel errors the SSH transport swallows.
+    process.stdin?.on('error', () => undefined)
+    process.stdout?.on('error', () => undefined)
+    process.stderr?.on('error', () => undefined)
     // The child's errors are reported through `done` as the lost-process
     // outcome they are; an unhandled 'error' event would take the host down.
     process.on('error', () => undefined)
