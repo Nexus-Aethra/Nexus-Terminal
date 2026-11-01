@@ -234,7 +234,7 @@ Switching session and coming back re-opens the carrier, so the wire is
 briefly `connecting` while the handshake runs. That is a rebind, not a
 retry, and the two must not share a presentation: the retry counter says
 how much of a failure budget is gone, so showing it for an ordinary switch
-reports a fault where there is none. Three rules keep them apart.
+reports a fault where there is none. Four rules keep them apart.
 
 The budget resets when a bind opens the carrier, not only when live output
 arrives. `attempt` is spent by failures, and the reader choosing the
@@ -254,6 +254,16 @@ browser holds in CONNECTING through a silent network raises neither
 "still connecting": no close, no retry, and a screen that never resolves.
 The timeout turns that silence into the ordinary close path, where the
 budget lives.
+
+Readiness crosses a switch as a memory, not as a reset. The panel-vs-marker
+choice consumes `ready`, and `ready` describes one session at a time — so
+zeroing it on a switch would present the next session as one that never
+answered, and a device session would re-render the first-dial screen over a
+terminal that is about to work, on every switch. The client therefore
+remembers, per session, that its shell reached a prompt, and seeds `ready`
+from that memory while the handshake runs. The host's own `ready` frame
+lands one round trip in and remains the only authority; the memory covers
+nothing but the window in front of it.
 
 The device PTY's lifetime belongs to the dsh session, not to the browser's
 socket — it is a channel on the pool § 19 describes — so a rebind costs a
