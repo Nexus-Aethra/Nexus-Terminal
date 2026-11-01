@@ -270,8 +270,10 @@ export function DshellSshCard(props: DshellSshCardProps): ReactElement {
           createElement('span', { style: rowTitleStyle },
             `${device.name} · ${device.user}@${device.host}:${String(device.port)}`
             + ` · ${t('device.login', {
-              method: device.auth === 'password' ? t('auth.password') : t('auth.key'),
-            })}${device.hasSecret ? '' : t('device.noSecret')}`),
+              method: device.auth === 'wsl'
+                ? t('auth.wsl')
+                : device.auth === 'password' ? t('auth.password') : t('auth.key'),
+            })}${device.hasSecret || device.auth === 'wsl' ? '' : t('device.noSecret')}`),
           // The actions travel as one unit. Flex breaks lines before it
           // shrinks anything, so four loose buttons let a long device name
           // push the last one onto its own line; grouped and unshrinkable,
