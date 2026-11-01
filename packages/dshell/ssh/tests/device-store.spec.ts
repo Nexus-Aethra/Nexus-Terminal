@@ -25,7 +25,7 @@ describe('DeviceStore helper status', () => {
     }, null, 2), 'utf8')
     const store = new DeviceStore(() => root)
     const devices = await store.list()
-    expect(devices).toHaveLength(1)
+    expect(devices.filter(device => !device.id.startsWith('wsl:'))).toHaveLength(1)
     expect(devices[0].helper).toBeUndefined()
   })
 
@@ -54,7 +54,7 @@ describe('DeviceStore helper status', () => {
 
     const reloaded = new DeviceStore(() => root)
     const devices = await reloaded.list()
-    expect(devices).toHaveLength(1)
+    expect(devices.filter(device => !device.id.startsWith('wsl:'))).toHaveLength(1)
     expect(devices[0].helper).toEqual(status)
   })
 
@@ -92,7 +92,7 @@ describe('DeviceStore helper status', () => {
 
     const refreshed = new DeviceStore(() => root)
     const devices = await refreshed.list()
-    expect(devices).toHaveLength(1)
+    expect(devices.filter(device => !device.id.startsWith('wsl:'))).toHaveLength(1)
     expect(devices[0].helper).toBeUndefined()
   })
 })

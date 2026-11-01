@@ -21,6 +21,7 @@ import type { ShellExecRequest, ShellExecSpec } from '@deepseek-ai/dsh-shell'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type { DshellSshConnection } from './connection.js'
 import { DeviceStore, type DeviceConnection } from './devices.js'
+import { transportFor } from './transport/wsl.js'
 import { CredentialStore } from './credentials.js'
 import { SecretVault, VaultLockedError } from './vault.js'
 import type { DshellSshTranslate } from './host-locales.js'
@@ -32,7 +33,7 @@ import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import { absoluteRemoteRoot, isUnder, mountFor } from './mount.js'
 import { mountBase } from './paths.js'
 import { quote, quoteDevicePath } from './shell-quote.js'
-import { deviceTransport, type DeviceShell } from './transport/transport.js'
+import type { DeviceShell } from './transport/transport.js'
 
 /**
  * Service name under which the router is published.
@@ -599,7 +600,7 @@ export class SshRouter {
    * might have changed since the cache was populated.
    */
   private async probeDevice(device: DeviceConnection): Promise<{ home: string; node: string | undefined }> {
-    const result = await deviceTransport().exec(device, PROBE, { graceMs: 10_000 })
+    const result = await transportFor(device).exec(device, PROBE, { graceMs: 10_000 })
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() === ''
         ? this.t('install.probeFailed', { code: String(result.exitCode ?? 'on a signal') })
@@ -840,7 +841,7 @@ export class SshRouter {
     const device = await this.connectionFor(deviceId)
     const trustedBefore = trustedHostKey(device.host, device.port)
     const started = Date.now()
-    const result = await deviceTransport().exec(
+    const result = await transportFor(device).exec(
       device,
       'printf "%s|%s|%s" "$(hostname)" "$(id -un)" "$(uname -sr)"',
       { graceMs: 5_000 },
@@ -886,7 +887,7 @@ export class SshRouter {
    */
   private async surveyHelper(deviceId: string, device: DeviceConnection): Promise<void> {
     const artifact = localHelperArtifact()
-    const result = await deviceTransport().exec(device, installProbe(artifact.hash), { graceMs: 10_000 })
+    const result = await transportFor(device).exec(device, installProbe(artifact.hash), { graceMs: 10_000 })
     if (result.exitCode !== 0) return
     const [home = '', node = '', onDevice = ''] = result.stdout.trimEnd().split('\n')
     const homeDir = home.trim()
@@ -949,7 +950,7 @@ export class SshRouter {
     if (device === undefined) throw new Error(this.t('error.unknownDevice', { id: deviceId }))
     const root = remoteRoot === null || remoteRoot.trim() === '' ? device.remoteRoot : remoteRoot.trim()
     if (root.trim() === '' || root.trim() === '~') return
-    const result = await deviceTransport().exec(device, `mkdir -p -- ${quote(root)}`, { graceMs: 5_000 })
+    const result = await transportFor(device).exec(device, `mkdir -p -- ${quote(root)}`, { graceMs: 5_000 })
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() === '' ? this.t('mount.createFailed', { root }) : result.stderr.trim())
     }
@@ -1122,7 +1123,7 @@ function deviceShellPlan(device: DeviceConnection, remoteCwd: string, t: DshellS
   const cd = deviceShellCd(root, t('shell.missingRemoteDir', { root }))
   return {
     kind: 'device',
-    open: async window => await deviceTransport().shell(
+    open: async window => await transportFor(device).shell(
       device,
       `${cd}exec bash -l`,
       { rows: window.rows, cols: window.cols, term: window.terminalType },

@@ -464,6 +464,9 @@ importers:
       '@nexus-aethra/dshell-std':
         specifier: workspace:^
         version: link:../std
+      node-pty:
+        specifier: link:../../../dsh/packages/subprocess/subprocess-local/node_modules/node-pty
+        version: link:../../../dsh/packages/subprocess/subprocess-local/node_modules/node-pty
       ssh2:
         specifier: 1.17.0
         version: 1.17.0

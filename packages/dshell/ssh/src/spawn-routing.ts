@@ -40,6 +40,7 @@ import { HelperTargets } from './helper/target.js'
 import { RemoteProcess, supportsStdio } from './remote-process.js'
 import { DeviceSubprocessHandle } from './channel-process.js'
 import { deviceTransport } from './transport/transport.js'
+import { transportFor } from './transport/wsl.js'
 
 /**
  * The device's own ripgrep.
@@ -183,7 +184,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     // no-helper tier behaving the way it did before this milestone.
     const legacyArgv = program === undefined ? spec.argv : [program, ...spec.argv.slice(1)]
     const line = `cd ${shellDir(directory)} && exec ${legacyArgv.map(quote).join(' ')}`
-    return new DeviceSubprocessHandle(deviceTransport().open(assignment.device, line, {
+    return new DeviceSubprocessHandle(transportFor(assignment.device).open(assignment.device, line, {
       graceMs: spec.graceMs,
       ...spec.signal === undefined ? {} : { signal: spec.signal },
       // The transport closes stdin for a command that asked for no input, writes

@@ -95,6 +95,17 @@ export function createForwardRoute(deps: ForwardRouteDeps): ConnectionFetchRoute
             error: 'this session does not run on a device',
           }
         }
+        if (target.device.kind === 'wsl') {
+          // A WSL distribution shares this machine's loopback: its port 80 is
+          // already 127.0.0.1:80 here, and a tunnel would bind a second socket
+          // to the bytes the first one already carries. The ports page still
+          // lists what the distro listens on; the forward action says why
+          // there is nothing to tunnel.
+          return {
+            forwards: [],
+            error: 'WSL 与本机共享回环，端口本来就通，无需转发',
+          }
+        }
         const opened = await deps.forwarder.open({
           sessionId: input.sessionId,
           device: target.device,

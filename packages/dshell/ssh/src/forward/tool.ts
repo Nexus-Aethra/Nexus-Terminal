@@ -205,6 +205,14 @@ async function runForward(
       if (target === undefined) {
         return { forwards: deps.forwarder.listSession(sessionId), message: 'this session does not run on a device' }
       }
+      if (target.device.kind === 'wsl') {
+        // A WSL distribution shares this machine's loopback — the route's
+        // refusal says the same thing to the panel.
+        return {
+          forwards: deps.forwarder.listSession(sessionId),
+          message: 'WSL 与本机共享回环，端口本来就通，无需转发',
+        }
+      }
       const opened = await deps.forwarder.open({
         sessionId,
         device: target.device,

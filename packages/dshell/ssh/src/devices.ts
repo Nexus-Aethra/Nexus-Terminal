@@ -11,12 +11,22 @@
  */
 
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import type { DshellSshTranslate } from './host-locales.js'
 import type { DeviceAuth, DeviceInput, DeviceView } from './protocol.js'
 import type { DeviceHelperStatus } from '@nexus-aethra/dshell-std'
 import type { CredentialStore } from './credentials.js'
 import { DeviceSshError } from './transport/errors.js'
+import {
+  decodeWslOutput,
+  distroOf,
+  isWslDevice,
+  parseWslList,
+  WSL_DEVICE_PREFIX,
+  WSL_EXE,
+  type WslDistro,
+} from './transport/wsl.js'
 
 /** A stored device record; the secret path is absent when none is stored. */
 interface DeviceRecord {
@@ -74,6 +84,15 @@ export interface DeviceConnection {
   readonly user: string
   readonly remoteRoot: string
   readonly auth: DeviceAuth
+  /**
+   * Which transport serves this device.
+   *
+   * `undefined` reads as `'ssh'` — every row written before WSL existed. A
+   * `'wsl'` device is a built-in: one per detected WSL2 distribution on this
+   * machine, carrying no host key, no credential and no helper, reached
+   * through `transportFor` rather than the pooled `ssh2` client.
+   */
+  readonly kind?: 'ssh' | 'wsl'
   /**
    * The device's stored secret, resolved when a connection is made.
    *
@@ -233,14 +252,17 @@ export class DeviceStore {
     return join(this.root(), 'keys')
   }
 
-  /** Every device, in registration order. */
+  /** Every device, in registration order, followed by the WSL built-ins. */
   async list(): Promise<readonly DeviceView[]> {
     await this.ensure()
-    return this.records.map(record => this.view(record))
+    const rows = this.records.map(record => this.view(record))
+    const distros = await this.wslDistros()
+    return [...rows, ...distros.map(distro => this.wslView(distro))]
   }
 
   /** Resolve one device for execution, or undefined when unknown. */
   async connection(deviceId: string): Promise<DeviceConnection | undefined> {
+    if (isWslDevice(deviceId)) return await this.wslConnection(deviceId)
     await this.ensure()
     const record = this.records.find(candidate => candidate.id === deviceId)
     if (record === undefined) return undefined
@@ -279,6 +301,9 @@ export class DeviceStore {
    * @returns the saved view.
    */
   async save(input: DeviceInput, t: DshellSshTranslate): Promise<DeviceView> {
+    if (input.id !== undefined && isWslDevice(input.id)) {
+      throw new Error(t('error.wslBuiltin'))
+    }
     await this.ensure()
     const id = input.id ?? this.uniqueId(idFor(input.name))
     const existing = this.records.find(record => record.id === id)
@@ -378,6 +403,7 @@ export class DeviceStore {
    * @param deviceId - device to remove.
    */
   async remove(deviceId: string): Promise<void> {
+    if (isWslDevice(deviceId)) return
     await this.ensure()
     const record = this.records.find(candidate => candidate.id === deviceId)
     if (record === undefined) return
@@ -402,6 +428,72 @@ export class DeviceStore {
       // key to unlock, so a passphrase there would be a secret nothing reads.
       hasPassphrase: record.auth === 'key' && record.passphraseFile !== undefined,
       helper: record.helper,
+    }
+  }
+
+  /**
+   * The WSL2 distributions this machine could run a shell in, asked once per
+   * short window. `wsl.exe` is asked only on Windows and only through its
+   * management output, whose UTF-16LE encoding the decoder owns; a machine
+   * without WSL answers an empty list and the built-in rows simply never
+   * appear.
+   */
+  private wslCache: { at: number; distros: WslDistro[] } | undefined
+
+  private async wslDistros(): Promise<WslDistro[]> {
+    if (process.platform !== 'win32') return []
+    const cached = this.wslCache
+    if (cached !== undefined && Date.now() - cached.at < 30_000) return cached.distros
+    const distros = await new Promise<WslDistro[]>((resolve) => {
+      execFile(WSL_EXE, ['--list', '--verbose'], { timeout: 8_000, windowsHide: true, encoding: 'buffer' }, (error, stdout) => {
+        if (error !== null) { resolve([]); return }
+        try {
+          resolve(parseWslList(decodeWslOutput(stdout as Buffer)).filter(distro => distro.version === 2))
+        } catch {
+          resolve([])
+        }
+      })
+    })
+    this.wslCache = { at: Date.now(), distros }
+    return distros
+  }
+
+  /** The built-in view one distribution carries: no credential, no helper. */
+  private wslView(distro: WslDistro): DeviceView {
+    return {
+      id: `${WSL_DEVICE_PREFIX}${distro.name}`,
+      name: `WSL · ${distro.name}`,
+      host: 'wsl',
+      port: 0,
+      user: '',
+      remoteRoot: '~',
+      auth: 'wsl',
+      hasSecret: false,
+      hasPassphrase: false,
+    }
+  }
+
+  /**
+   * One WSL distribution's connection parameters, derived rather than stored.
+   *
+   * A distribution that has vanished (WSL uninstalled, distro removed) reads
+   * as an unknown device: the assignment survives, every seam refuses through
+   * the ordinary unservable path, and the rows return when WSL answers again.
+   */
+  private async wslConnection(deviceId: string): Promise<DeviceConnection | undefined> {
+    const name = distroOf(deviceId)
+    const present = (await this.wslDistros()).some(distro => distro.name === name)
+    if (!present) return undefined
+    return {
+      id: deviceId,
+      name: `WSL · ${name}`,
+      host: 'wsl',
+      port: 0,
+      user: '',
+      remoteRoot: '~',
+      auth: 'wsl',
+      kind: 'wsl',
+      secret: undefined,
     }
   }
 

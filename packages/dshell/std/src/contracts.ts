@@ -679,8 +679,15 @@ export interface DshellForwardResponse {
 /** Settings namespace owned by this plugin; also the device card's slot key. */
 export const SSH_SETTINGS_NAMESPACE = 'dshell-ssh'
 
-/** How a device authenticates. */
-export type DeviceAuth = 'key' | 'password'
+/**
+ * How a device authenticates.
+ *
+ * `'wsl'` marks a built-in WSL distribution: there is no handshake to
+ * authenticate, the distro is its own credential, and the row exists only
+ * while `wsl.exe` reports the distribution on this machine. It never reaches
+ * the SSH dial path.
+ */
+export type DeviceAuth = 'key' | 'password' | 'wsl'
 
 /**
  * What dshell knows about the helper on a device.

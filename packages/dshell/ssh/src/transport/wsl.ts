@@ -1,0 +1,346 @@
+/**
+ * A WSL2 distribution as a device: the transport that runs one in-process.
+ *
+ * WSL is "a device on this machine whose transport is `wsl.exe`" — the device
+ * model already carries everything a WSL session needs (a per-session binding,
+ * a spawn plan, mount translation, the subprocess and filesystem seams), and
+ * the only thing that differs from an SSH device is HOW bytes leave this
+ * process. Where {@link DeviceTransport} dials `ssh2`, this class spawns
+ * `wsl.exe`: the exec and open doors are plain child processes, the shell door
+ * is a ConPTY pty. The bridge's own settle injection (its PROMPT_COMMAND
+ * written into the pty after the shell is up) is transport-agnostic, so the
+ * command splitter, the block log and the completion warm trigger all work
+ * over this path unchanged — proven against this machine (the `wsl-spike`):
+ * the marker bytes survive ConPTY, resize reaches the inner shell, and the
+ * session exits cleanly.
+ *
+ * What is deliberately NOT here: the SSH vocabulary. A WSL device has no host
+ * key (there is no handshake to verify), no credential (the distro is the
+ * credential), no helper deployment (the exec lane serves everything the
+ * helper would), and no port forwards (WSL2 shares this machine's loopback —
+ * the forward seams refuse before asking).
+ */
+
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { Readable } from 'node:stream'
+import type { Duplex } from 'node:stream'
+import type { DeviceConnection } from '../devices.js'
+import { deviceTransport } from './transport.js'
+import type {
+  DeviceCommand,
+  DeviceExecOptions,
+  DeviceExecResult,
+  DeviceOutcome,
+  DeviceShell,
+  DeviceTransport,
+} from './transport.js'
+
+/** One WSL distribution this machine could run a shell in. */
+export interface WslDistro {
+  /** The registered distribution name, as `wsl.exe` spells it. */
+  readonly name: string
+  /** Whether `wsl.exe` runs this one when no `-d` is given. */
+  readonly default: boolean
+  /** WSL architecture generation. Only 2 is supported. */
+  readonly version: 1 | 2
+}
+
+/**
+ * Decode `wsl.exe` management output.
+ *
+ * The management subcommands (`--list`, `--status`) answer in UTF-16LE —
+ * with a BOM when redirected, without one in some pipes — while everything
+ * an executed Linux command prints is UTF-8. A UTF-8 decoder fed UTF-16LE
+ * interleaves NUL bytes into every other position, which is the tell used
+ * here before trusting either decoding.
+ */
+export function decodeWslOutput(raw: Buffer): string {
+  if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) {
+    return raw.subarray(2).toString('utf16le')
+  }
+  // No BOM: count NUL bytes. UTF-16LE ASCII text puts one in every other
+  // byte; UTF-8 output of the same length has essentially none.
+  let nulls = 0
+  for (const byte of raw) {
+    if (byte === 0) nulls += 1
+  }
+  return nulls > raw.length / 8 ? raw.toString('utf16le') : raw.toString('utf8')
+}
+
+/**
+ * Parse `wsl.exe --list --verbose` output into distributions.
+ *
+ * The columns are whitespace-separated and the header line is LOCALIZED
+ * (NAME / 名称), so the header is skipped positionally rather than by
+ * matching its text: the first non-empty line never carries a trailing
+ * digit. A row is read as `[·] NAME STATE VERSION` — the default marker may
+ * be glued to the name or stand alone, the version is the last token, the
+ * state the one before it. Distribution names are store identifiers without
+ * runs of whitespace in practice; a row that cannot be read this way is
+ * skipped rather than turned into a device.
+ *
+ * @param text - decoded output of one `--list --verbose` run.
+ * @returns the distributions, in the order wsl.exe listed them.
+ */
+export function parseWslList(text: string): WslDistro[] {
+  const distros: WslDistro[] = []
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '')
+  for (const line of lines.slice(1)) {
+    const versionMatch = line.match(/(?:^|\s)([12])$/u)
+    if (versionMatch === null) continue
+    const head = line.slice(0, line.length - versionMatch[0].length).trim()
+    const defaultMarked = head.startsWith('*')
+    const withoutMark = defaultMarked ? head.slice(1).trim() : head
+    const stateMatch = withoutMark.match(/^(.*?)\s+(\S+)$/u)
+    const name = (stateMatch === null ? withoutMark : stateMatch[1]).trim()
+    if (name === '') continue
+    distros.push({
+      name,
+      default: defaultMarked,
+      version: versionMatch[1] === '1' ? 1 : 2,
+    })
+  }
+  return distros
+}
+
+/** The WSL device id prefix; a device id carrying it is a built-in row. */
+export const WSL_DEVICE_PREFIX = 'wsl:'
+
+/** Whether this device id names a WSL distribution. */
+export function isWslDevice(deviceId: string): boolean {
+  return deviceId.startsWith(WSL_DEVICE_PREFIX)
+}
+
+/** The distribution a WSL device runs, from its id. */
+export function distroOf(deviceId: string): string {
+  return deviceId.slice(WSL_DEVICE_PREFIX.length)
+}
+
+/** The argv that runs one command line inside one distribution. */
+export function wslExecArgs(deviceId: string, command: string): string[] {
+  return ['-d', distroOf(deviceId), '-e', 'bash', '-c', command]
+}
+
+/** The management executable; System32 is on every PATH that has WSL at all. */
+export const WSL_EXE = 'wsl.exe'
+
+/** stdout/stderr caps, matching the SSH transport's. */
+const STDOUT_MAX_BYTES = 8 * 1024 * 1024
+const STDERR_MAX_BYTES = 64 * 1024
+const STDIN_CHUNK_BYTES = 64 * 1024
+const TERMINATED: DeviceOutcome = { exitCode: null, signal: 'SIGTERM' }
+
+/** A tail-keeping window over one stream (the SSH transport's shape). */
+class Window {
+  private chunks: Buffer[] = []
+  private size = 0
+  private dropped = 0
+
+  constructor(private readonly maxBytes: number) {}
+
+  push(chunk: Buffer): void {
+    if (chunk.length === 0) return
+    this.chunks.push(chunk)
+    this.size += chunk.length
+    if (this.size <= this.maxBytes * 2) return
+    const merged = Buffer.concat(this.chunks)
+    const excess = this.size - this.maxBytes
+    this.dropped += excess
+    this.chunks = [merged.subarray(excess)]
+    this.size = this.maxBytes
+  }
+
+  get truncated(): boolean {
+    return this.dropped > 0
+  }
+
+  text(): string {
+    return this.chunks.length === 0 ? '' : Buffer.concat(this.chunks).toString('utf8')
+  }
+}
+
+/**
+ * One running `wsl.exe` command, as a {@link DeviceCommand}.
+ *
+ * The duplex is OUR pipe: writes into it go to the child's stdin, the
+ * child's stdout comes out of it. Ending the duplex is what the no-stdin
+ * contract reads as EOF on the far side, and `terminate` kills the host
+ * process — which is what carries the distro's process tree, so a killed
+ * command ends the way a killed SSH channel does, residue on the far side
+ * included.
+ */
+class ProcessCommand implements DeviceCommand {
+  readonly stream: Duplex
+  readonly stderr: Readable
+  readonly done: Promise<DeviceOutcome>
+
+  constructor(private readonly process: ChildProcess) {
+    const stream = new PassThrough()
+    process.stdout?.on('data', (chunk: Buffer) => { stream.write(chunk) })
+    process.stdout?.on('end', () => { stream.end() })
+    stream.on('data', (chunk: Buffer) => { process.stdin?.write(chunk) })
+    stream.on('end', () => { process.stdin?.end() })
+    // The child's errors are reported through `done` as the lost-process
+    // outcome they are; an unhandled 'error' event would take the host down.
+    process.on('error', () => undefined)
+    this.stream = stream
+    this.stderr = process.stderr ?? Readable.from([])
+    this.done = new Promise<DeviceOutcome>((resolve) => {
+      let settled = false
+      const once = (outcome: DeviceOutcome): void => {
+        if (settled) return
+        settled = true
+        resolve(outcome)
+      }
+      process.on('exit', (code, signal) => {
+        once(signal !== null
+          ? { exitCode: null, signal }
+          : { exitCode: typeof code === 'number' ? code : null, signal: null })
+        stream.end()
+      })
+      process.on('error', () => {
+        // Spawn failure (wsl.exe missing, distro gone): no exit status exists,
+        // and `exec`'s idempotent repeat is safe to make.
+        once({ exitCode: null, signal: null, connectionLost: true })
+      })
+    })
+  }
+
+  terminate(signal = 'SIGTERM'): void {
+    void signal
+    try { this.process.kill() } catch { /* already gone */ }
+  }
+}
+
+/**
+ * The WSL doors. One instance per host; nothing is pooled, because every
+ * operation is a fresh `wsl.exe` process and the distro's own start-up is
+ * what a cold call pays for.
+ */
+export class WslTransport {
+  /** Run one command and collect its output, bounded. */
+  async exec(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceExecResult> {
+    const run = await this.open(device, command, options)
+    const stdout = new Window(STDOUT_MAX_BYTES)
+    const stderr = new Window(STDERR_MAX_BYTES)
+    run.stream.on('data', (chunk: Buffer) => { stdout.push(chunk) })
+    run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk) })
+    if (options.stdin !== undefined) {
+      const payload = typeof options.stdin === 'string' ? Buffer.from(options.stdin, 'utf8') : Buffer.from(options.stdin)
+      for (let at = 0; at < payload.length; at += STDIN_CHUNK_BYTES) {
+        if (!run.stream.write(payload.subarray(at, at + STDIN_CHUNK_BYTES))) {
+          await new Promise<void>(resolve => { run.stream.once('drain', resolve) })
+        }
+      }
+    }
+    if (options.openStdin !== true) run.stream.end()
+    const outcome = await this.bounded(run, options)
+    return { ...outcome, stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated }
+  }
+
+  /** Run one command, leaving its output on the returned streams. */
+  async open(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceCommand> {
+    const child = spawn(WSL_EXE, wslExecArgs(device.id, command), {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    const run = new ProcessCommand(child)
+    if (options.signal !== undefined) {
+      const abort = (): void => { run.terminate() }
+      if (options.signal.aborted) abort()
+      else options.signal.addEventListener('abort', abort, { once: true })
+      void run.done.then(() => { options.signal?.removeEventListener('abort', abort) })
+    }
+    if (options.graceMs !== undefined) {
+      const timer = setTimeout(() => { run.terminate() }, options.graceMs)
+      timer.unref()
+      void run.done.then(() => { clearTimeout(timer) })
+    }
+    return run
+  }
+
+  /** Open a pty shell inside the distribution, running one remote line. */
+  async shell(device: DeviceConnection, command: string, window: { rows: number; cols: number; term: string }): Promise<DeviceShell> {
+    // Imported lazily: the exec and open doors are plain child processes, so
+    // the native module is only owed where a pty is actually opened — and by
+    // then the profile it runs in is one the terminal bridge shares.
+    const nodePty = await import('node-pty')
+    const pty = nodePty.spawn(WSL_EXE, wslExecArgs(device.id, command), {
+      name: window.term,
+      cols: window.cols,
+      rows: window.rows,
+      env: { ...process.env, TERM: window.term },
+    })
+    const done = new Promise<DeviceOutcome>((resolve) => {
+      pty.onExit(({ exitCode }) => { resolve({ exitCode, signal: null }) })
+    })
+    return {
+      stream: pty as unknown as Duplex,
+      done,
+      setWindow: (rows, cols) => {
+        try { pty.resize(cols, rows) } catch { /* already closing */ }
+      },
+      close: () => { try { pty.kill() } catch { /* already gone */ } },
+    }
+  }
+
+  /** End one device's processes; a WSL device pools nothing. */
+  release(_deviceId: string): void { /* nothing pooled */ }
+
+  /** End everything; a WSL device pools nothing. */
+  releaseAll(): void { /* nothing pooled */ }
+
+  /** Wait for a bounded run, terminating it when its bound is reached. */
+  private async bounded(run: DeviceCommand, options: DeviceExecOptions): Promise<DeviceOutcome> {
+    if (options.signal?.aborted === true) {
+      run.terminate()
+      return TERMINATED
+    }
+    let stopped = false
+    const bounds: Promise<DeviceOutcome>[] = [run.done]
+    if (options.graceMs !== undefined) {
+      bounds.push(new Promise<DeviceOutcome>((resolve) => {
+        const timer = setTimeout(() => {
+          stopped = true
+          run.terminate()
+          resolve(TERMINATED)
+        }, options.graceMs)
+        timer.unref()
+        void run.done.then(() => { clearTimeout(timer) })
+      }))
+    }
+    if (options.signal !== undefined) {
+      bounds.push(new Promise<DeviceOutcome>((resolve) => {
+        options.signal?.addEventListener('abort', () => {
+          stopped = true
+          run.terminate()
+          resolve(TERMINATED)
+        }, { once: true })
+      }))
+    }
+    const outcome = await Promise.race(bounds)
+    return outcome.exitCode === null && outcome.signal === null && stopped ? TERMINATED : outcome
+  }
+}
+
+let shared: WslTransport | undefined
+
+/** The process-wide WSL transport. */
+export function wslTransport(): WslTransport {
+  shared ??= new WslTransport()
+  return shared
+}
+
+/**
+ * The doors one device's operations go through, by its kind.
+ *
+ * The single place that knows a WSL device from an SSH one — every seam above
+ * (subprocess, filesystem, shell plan, device probes) asks here and speaks to
+ * the doors, which are shaped identically for both. An SSH device keeps the
+ * pooled `ssh2` transport; a WSL one spawns `wsl.exe`.
+ */
+export function transportFor(device: Pick<DeviceConnection, 'id' | 'kind'>): DeviceTransport | WslTransport {
+  return device.kind === 'wsl' || isWslDevice(device.id) ? wslTransport() : deviceTransport()
+}
