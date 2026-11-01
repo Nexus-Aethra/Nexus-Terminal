@@ -110,6 +110,12 @@ export interface PtyStreamState {
    * difference between a connection that dropped and one that never came up is
    * invisible from the wire alone, and the two need opposite presentations
    * (a marker appended to a working terminal vs. a full failure screen).
+   *
+   * On a rebind of a session this page has already seen reach a prompt, the
+   * fact is seeded from per-session memory rather than reset: the host's own
+   * `ready` frame re-asserts the truth one round trip into the handshake, and
+   * without the seed every session switch would re-render the first-dial
+   * screen over a terminal that is about to work.
    */
   ready: boolean
   /** Automatic reconnect attempts spent since this connection last worked. */
@@ -284,6 +290,18 @@ export class PtyStreamService extends Service {
   })
 
   private readonly histories = new Map<string, SessionHistory>()
+  /**
+   * The sessions whose main shell this page has seen reach a prompt.
+   *
+   * The wire state describes one session at a time, so a session switch would
+   * otherwise present the next session as one that never answered — and a
+   * device session's presentation for that shape is the first-dial screen,
+   * which would flash over a live terminal on every switch. Seeding `ready`
+   * from this set keeps the switch to the tail-marker form; the host's own
+   * `ready` frame remains the authority the moment it arrives. Kept for the
+   * page's life, like `histories`.
+   */
+  private readonly prompted = new Set<string>()
   /** Per-session block lists, exactly as the host ordered them. The stored
    * copy is mutable because a live block grows by deltas. */
   private readonly blockLists = new Map<string, {
@@ -754,9 +772,15 @@ export class PtyStreamService extends Service {
     // "reconnecting" over a terminal that is about to work.
     this.attempt = 0
     if (this.state.getSnapshot().sessionId !== dshSessionId) {
-      // A different session starts from a clean slate: the failure report and
-      // the readiness belong to the session that earned them, and carrying them
-      // over would show session B's view the state of session A.
+      // A different session starts from a clean slate: the failure report
+      // belongs to the session that earned it, and carrying it over would show
+      // session B's view the state of session A. Readiness is the one fact
+      // that crosses the switch, and only as a memory: whether this session's
+      // shell ever reached a prompt decides panel-vs-marker, and re-asking it
+      // of a shell this page has already seen at a prompt would re-render the
+      // first-dial screen over a terminal that is about to work — the flash
+      // every session switch would carry. The host's own `ready` frame lands
+      // one round trip into the handshake and re-asserts the truth.
       this.patch({
         sessionId: dshSessionId,
         status: 'connecting',
@@ -765,7 +789,7 @@ export class PtyStreamService extends Service {
         tui: undefined,
         reason: undefined,
         detail: undefined,
-        ready: false,
+        ready: this.prompted.has(dshSessionId),
         attempt: 0,
         maxAttempts: MAX_AUTO_ATTEMPTS,
         exhausted: false,
@@ -901,18 +925,23 @@ export class PtyStreamService extends Service {
         host: typeof frame.host === 'string' ? frame.host : '',
         home: typeof frame.home === 'string' ? frame.home : '',
       })
-      if (typeof frame.ready === 'boolean') this.patch({ ready: frame.ready })
+      if (typeof frame.ready === 'boolean') {
+        if (frame.ready) this.prompted.add(dshSessionId)
+        this.patch({ ready: frame.ready })
+      }
       return
     }
     if (frame.kind === 'ready') {
       // The shell reached its prompt. Until this arrives the view shows a
       // connecting state rather than an empty terminal.
+      if (frame.ready !== false) this.prompted.add(dshSessionId)
       this.patch({ ready: frame.ready !== false })
       return
     }
     if (frame.kind === 'closed') {
       // Kept, not just logged: this is what the end-of-terminal marker says,
       // and what tells "the link dropped" apart from "it never came up".
+      if (frame.ready === true) this.prompted.add(dshSessionId)
       this.patch({
         status: 'closed',
         reason: typeof frame.reason === 'string' ? frame.reason : undefined,
