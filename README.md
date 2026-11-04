@@ -125,7 +125,7 @@ The release after it adds five more. All five are on this branch today; the publ
 | **The 管理台** | dsh's Settings gains a **dshell** section — one page that gathers the whole suite's settings | **设备与凭据**, **WSL 发行版** and **终端与数据** as three cards on one page, instead of a configure control per plugin row |
 | **A ConPTY repaint no longer blanks the terminal** | On Windows, a program that repaints its whole screen after a resize — the ConPTY signature — left a **blank wall above the prompt** | The region renders the rows that carry ink and cuts the dead frame around them, so the row count and the bytes agree again |
 | **A session switch keeps its prompt** | Switching to a session and back reset its readiness, so a live device session flashed the first-dial panel over a terminal that was about to work | That the session reached a prompt is remembered for the page's life, and seeded while the rebind handshake runs |
-| **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2` — **the published `0.1.14` does not install there at all** |
+| **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2-rc.1` — **the published `0.1.14` does not install there at all** |
 
 ---
 
