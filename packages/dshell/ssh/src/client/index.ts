@@ -76,9 +76,9 @@ export function apply(ctx: Context): void {
     },
     DshellSshConfigPage,
   ))
-  // The WSL card lives in its own package now (@nexus-aethra/dshell-wsl),
-  // registered into this same seat from there: a device kind with its own
-  // transport and no credential is a provider's surface, not this registry's.
+  // A device kind with its own transport and no credential brings its own
+  // card, registered into this same seat from its own package: such a kind is
+  // a provider's surface, not this registry's.
   // The page itself is the registered component: its `t` seat comes from the
   // declared namespace, and the device service travels as the inject face, so
   // both reach it as composed props. The panel keys the entry by the row it

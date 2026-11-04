@@ -105,11 +105,11 @@ export function mappingFor(
 /**
  * The device id as a directory segment.
  *
- * A WSL device's id carries a colon (`wsl:Ubuntu-24.04`), and a colon is
- * illegal in a Windows directory name — the mount `mkdir` would fail with
- * EINVAL before a shell ever ran. Every reserved character is folded to a
- * dash; the mapping is derived from the same call in both directions, so the
- * spelling only has to be stable, not pretty.
+ * A provider's id may carry a colon — a namespace prefix of the kind's own
+ * naming — and a colon is illegal in a Windows directory name: the mount
+ * `mkdir` would fail with EINVAL before a shell ever ran. Every reserved
+ * character is folded to a dash; the mapping is derived from the same call in
+ * both directions, so the spelling only has to be stable, not pretty.
  */
 function deviceSegment(deviceId: string): string {
   return deviceId.replace(/[*?"<>|:]/gu, '-')

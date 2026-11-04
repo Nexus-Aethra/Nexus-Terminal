@@ -97,9 +97,9 @@ export function createForwardRoute(deps: ForwardRouteDeps): ConnectionFetchRoute
         }
         if (!deps.router.registry.forwardsAllowed(target.device.id)) {
           // A provider's device can decline forwards with its own words — a
-          // WSL distribution shares this machine's loopback, so its port 80 is
-          // already 127.0.0.1:80 here and a tunnel would bind a second socket
-          // to the bytes the first one already carries. The ports page still
+          // kind that shares this machine's loopback has its port 80 already
+          // at 127.0.0.1:80 here, and a tunnel would bind a second socket to
+          // the bytes the first one already carries. The ports page still
           // lists what such a device listens on; the forward action says why
           // there is nothing to tunnel.
           return {

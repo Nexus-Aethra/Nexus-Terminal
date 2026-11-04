@@ -4,12 +4,12 @@
  *
  * dshell-ssh owns the device MODEL — stored rows, bindings, routing, the seams
  * the shell and the agent consume — but not every device KIND, and it must not
- * learn one: a kind with its own transport and no credential (WSL is the
- * first, see `@nexus-aethra/dshell-wsl`) registers a
+ * learn one: a kind with its own transport and no credential registers a
  * {@link DshellDeviceProvider} here, and every seam that used to branch on a
- * kind asks the registry instead. A composition that omits the provider's
- * package leaves this registry empty and this package exactly as it was before
- * providers existed.
+ * kind asks the registry instead — for its rows, for its doors, and for what
+ * its kind can and cannot do (see {@link DshellDeviceProvider.helper}). A
+ * composition that omits the provider's package leaves this registry empty and
+ * this package exactly as it was before providers existed.
  *
  * The contracts live in THIS module rather than dshell-std because they speak
  * in node streams (`DeviceCommand`, `DeviceShell`), and std must stay
@@ -116,17 +116,19 @@ export interface DeviceDoors {
 /**
  * One source of built-in devices, contributed by a package outside dshell-ssh.
  *
- * A kind with its own transport and no credential (WSL is the first)
- * registers a provider here: its rows join the device list, its ids refuse
- * save/remove, and its doors answer for its connections. A composition that
- * omits the provider's package simply has none of its devices.
+ * A kind with its own transport and no credential registers a provider here:
+ * its rows join the device list, its ids refuse save/remove, its doors answer
+ * for its connections, and it says which seams its kind cannot serve (see
+ * {@link DshellDeviceProvider.helper} and {@link DshellDeviceProvider.reachable}).
+ * A composition that omits the provider's package simply has none of its
+ * devices.
  */
 export interface DshellDeviceProvider {
   /**
    * The built-in rows this provider contributes, appended to the stored ones.
    *
-   * Derived on every call — a WSL2 distribution exists only while `wsl.exe`
-   * reports it — and each row must carry {@link DeviceView.builtin}.
+   * Derived on every call — a built-in device exists only while the
+   * provider reports it — and each row must carry {@link DeviceView.builtin}.
    */
   rows(): Promise<readonly DeviceView[]>
   /**
@@ -152,6 +154,35 @@ export interface DshellDeviceProvider {
    */
   forwards?: boolean
   /**
+   * Whether this kind uses the SSH helper at all.
+   *
+   * The helper is a Node process this package deploys onto a device and then
+   * talks to over an SSH channel; a kind that is reached another way has no
+   * such process, no channel, and no need for one. Saying so here keeps the
+   * deploy seam from putting a helper on a device whose kind never wanted it.
+   *
+   * Default: **true** — a provider that says nothing is an SSH kind, so a
+   * composition that adds a provider without touching this field keeps every
+   * SSH behaviour it had. A kind that never uses the helper sets this to
+   * false, and the seams that would deploy or survey one refuse instead.
+   */
+  helper?: boolean
+  /**
+   * Whether this kind is reachable through the ordinary dial path.
+   *
+   * The dial path is this package's pooled ssh2 transport: it opens a TCP
+   * connection to a host and port, authenticates with a credential, and
+   * verifies the host's key against the store of trusted keys. A kind that is
+   * not reached that way has no host key to trust and no credential to ask
+   * for — recording a host key for it would write an entry about a host that
+   * was never dialled, and asking it for a credential would ask a question it
+   * has no answer to.
+   *
+   * Default: **true** — a provider that says nothing is an SSH kind, and the
+   * dial path applies to it as it always did.
+   */
+  reachable?: boolean
+  /**
    * The provider's own refusal for a seam it does not serve, in the active
    * locale where the provider has one.
    *
@@ -160,6 +191,25 @@ export interface DshellDeviceProvider {
    */
   refusal?(deviceId: string): string | undefined
   /**
+   * The provider's own refusal for ONE seam, when it words that seam
+   * differently from the others.
+   *
+   * The refusal above is the provider's answer about the device in general
+   * (today: the port forward it declines). A kind that declines more than one
+   * thing — a helper it will never carry and a forward it cannot tunnel —
+   * says which is which here, so each seam gets the words that fit it rather
+   * than one message reused for both.
+   *
+   * Optional: a provider that words every seam the same way needs only
+   * {@link refusal}, and one that has no message of its own for a seam gets
+   * the registry's neutral sentence — which names no kind.
+   *
+   * @param deviceId - the device the seam was asked about.
+   * @param seam - the seam that was asked about.
+   * @returns the message, or undefined when the provider has none for it.
+   */
+  refusalFor?(deviceId: string, seam: DshellDeviceSeam): string | undefined
+  /**
    * The connections whose home directory should be probed when the host loads.
    *
    * An SSH device's helper handshake volunteers its root as a side effect of
@@ -167,6 +217,29 @@ export interface DshellDeviceProvider {
    * a root ask for it here — probed once, in the background, at load.
    */
   probeTargets?(): Promise<DeviceConnection[]>
+}
+
+/**
+ * The seams a provider's kind can decline.
+ *
+ * A seam is a thing this package does to a device: opening a port forward to
+ * it, putting the SSH helper onto it, dialling it over the pooled transport
+ * where a host key is trusted and a credential is asked for. A kind that is
+ * served another way declines some of them, and it says so in its own words
+ * (see {@link DshellDeviceProvider.refusalFor}).
+ */
+export type DshellDeviceSeam = 'forward' | 'helper' | 'dial'
+
+/**
+ * The neutral refusal for a seam a kind declines without a message of its own.
+ *
+ * Deliberately says nothing about the kind: a reader is told what the seam
+ * cannot do, and the provider's own wording is what says why.
+ */
+const SEAM_REFUSALS: Record<DshellDeviceSeam, string> = {
+  forward: 'this device does not forward ports',
+  helper: 'this device does not use the SSH helper',
+  dial: 'this device is not reached over SSH',
 }
 
 /** The built-in devices contributed by the composition's provider packages. */
@@ -232,10 +305,50 @@ export class DshellDeviceRegistry {
    * A provider that says no names its reason (see
    * {@link DshellDeviceProvider.refusal}); a device no provider claims is an
    * ssh device, and ssh devices forward.
+   *
+   * The provider's own flag is read as well as its message, so a kind that
+   * declares that it does not forward is refused even when it has no message
+   * of its own to say why — the flag was the promise, and the message was
+   * only ever the way to keep it.
    */
   forwardsAllowed(deviceId: string): boolean {
     for (const provider of this.entries) {
+      if (provider.owns(deviceId) && provider.forwards === false) return false
       if (provider.refusal?.(deviceId) !== undefined) return false
+    }
+    return true
+  }
+
+  /**
+   * Whether this device's kind uses the SSH helper.
+   *
+   * The answer comes from the provider that claims the id; a device no
+   * provider claims is an SSH device, and an SSH device has a helper.
+   *
+   * @param deviceId - the device to ask about.
+   * @returns false only when a provider that owns the id says its kind has no
+   *   helper; true otherwise.
+   */
+  usesHelper(deviceId: string): boolean {
+    for (const provider of this.entries) {
+      if (provider.owns(deviceId)) return provider.helper ?? true
+    }
+    return true
+  }
+
+  /**
+   * Whether this device's kind is reachable through the ordinary dial path.
+   *
+   * The answer comes from the provider that claims the id; a device no
+   * provider claims is an SSH device, and an SSH device is dialled.
+   *
+   * @param deviceId - the device to ask about.
+   * @returns false only when a provider that owns the id says its kind is not
+   *   dialled; true otherwise.
+   */
+  isReachable(deviceId: string): boolean {
+    for (const provider of this.entries) {
+      if (provider.owns(deviceId)) return provider.reachable ?? true
     }
     return true
   }
@@ -251,6 +364,57 @@ export class DshellDeviceRegistry {
       if (message !== undefined) return message
     }
     return undefined
+  }
+
+  /**
+   * The words one seam refuses with, in the provider's own voice.
+   *
+   * The provider that owns the device is asked first, through its per-seam
+   * refusal. A provider that has no message of its own for this seam gets the
+   * registry's neutral sentence, which names no kind: the seam says what it
+   * cannot do, and only the provider can say why.
+   *
+   * The general {@link refusal} is the FORWARD refusal — it is the seam
+   * {@link forwardsAllowed} consults, and it was introduced for that seam — so
+   * it is not reused for the others. A kind that declines more than one thing
+   * words them through {@link DshellDeviceProvider.refusalFor}.
+   *
+   * @param deviceId - the device the seam was asked about.
+   * @param seam - the seam that was asked about.
+   * @returns the refusal, or undefined when the seam is served.
+   */
+  refusalFor(deviceId: string, seam: DshellDeviceSeam): string | undefined {
+    if (!this.declines(deviceId, seam)) return undefined
+    for (const provider of this.entries) {
+      if (!provider.owns(deviceId)) continue
+      const own = provider.refusalFor?.(deviceId, seam)
+      if (own !== undefined) return own
+      break
+    }
+    if (seam === 'forward') {
+      for (const provider of this.entries) {
+        const general = provider.refusal?.(deviceId)
+        if (general !== undefined) return general
+      }
+    }
+    return SEAM_REFUSALS[seam]
+  }
+
+  /**
+   * Whether this kind declines one seam.
+   *
+   * The answer is the capability's, not a separate list: a kind that says it
+   * has no helper declines the helper seam, and one that says it is not
+   * dialled declines the dial seam.
+   *
+   * @param deviceId - the device the seam was asked about.
+   * @param seam - the seam that was asked about.
+   * @returns whether the seam is declined.
+   */
+  private declines(deviceId: string, seam: DshellDeviceSeam): boolean {
+    if (seam === 'helper') return !this.usesHelper(deviceId)
+    if (seam === 'dial') return !this.isReachable(deviceId)
+    return !this.forwardsAllowed(deviceId)
   }
 
   /** Every connection the providers want probed when the host loads. */

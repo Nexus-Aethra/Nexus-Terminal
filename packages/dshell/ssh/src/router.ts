@@ -414,10 +414,18 @@ export class SshRouter {
    * One device's host and port, for a question about its trust rather than
    * about its configuration.
    *
+   * A device of a kind that is not dialled has no destination to name: the
+   * trusted-keys store is this package's record of the hosts it connects to,
+   * and a kind it never connects to has no entry there. Answering undefined
+   * for such a device keeps the trust questions — list, revoke, probe — from
+   * touching the store about a host that was never contacted.
+   *
    * @param deviceId - device to look up.
-   * @returns the destination, or undefined when the device is unknown.
+   * @returns the destination, or undefined when the device is unknown or is
+   *   not reached over the dial path.
    */
   async destinationOf(deviceId: string): Promise<{ host: string; port: number } | undefined> {
+    if (!this.registry.isReachable(deviceId)) return undefined
     const views = await this.list()
     const view = views.find(candidate => candidate.id === deviceId)
     return view === undefined ? undefined : { host: view.host, port: view.port }
@@ -477,9 +485,9 @@ export class SshRouter {
       await this.connectionFor(deviceId)
       // The root a `~`-spelled binding resolves against. An SSH device's
       // helper handshake volunteers its home as a side effect of connecting,
-      // but a WSL device has no handshake — so the root is asked here, once,
-      // or the files seam keeps seeing the literal `~` the reader typed,
-      // which no seam can open.
+      // but a device of a kind that has no handshake has none to offer — so
+      // the root is asked here, once, or the files seam keeps seeing the
+      // literal `~` the reader typed, which no seam can open.
       await this.ensureDeviceRoot(deviceId)
       if (createRemoteRoot) await this.ensureRemoteRoot(deviceId, remoteRoot)
       const tree = assigned === null || assigned.trim().length === 0
@@ -567,6 +575,12 @@ export class SshRouter {
    * @param deviceId - device to deploy to.
    */
   async installHelper(deviceId: string): Promise<DeviceHelperStatus> {
+    // A kind that carries no helper is refused before anything is deployed:
+    // the words are the provider's, because only the provider knows what its
+    // kind is and why it needs no helper. A device no provider claims is an
+    // SSH device, and an SSH device has a helper.
+    const refusal = this.registry.refusalFor(deviceId, 'helper')
+    if (refusal !== undefined) throw new Error(refusal)
     const device = await this.connectionFor(deviceId)
     const artifact = localHelperArtifact()
     const probe = await this.probeDevice(device)
@@ -857,7 +871,13 @@ export class SshRouter {
     // "unknown device" for a machine the reader can see in the panel.
     await this.refreshDevices()
     const device = await this.connectionFor(deviceId)
-    const trustedBefore = trustedHostKey(device.host, device.port)
+    // The host key is this package's own trust decision, and it belongs to a
+    // device this package dials. A device of a kind that is not dialled has
+    // no host key — asking for one would record an entry in the trusted-keys
+    // store about a host that was never contacted, and then report that
+    // nonsense as this device's identity.
+    const dialled = this.registry.isReachable(deviceId)
+    const trustedBefore = dialled ? trustedHostKey(device.host, device.port) : undefined
     const started = Date.now()
     const result = await transportFor(device).exec(
       device,
@@ -876,7 +896,7 @@ export class SshRouter {
       system: system ?? this.t('test.unknownSystem'),
       ms: Date.now() - started,
     })
-    const trusted = trustedHostKey(device.host, device.port)
+    const trustedKey = dialled ? trustedHostKey(device.host, device.port) : undefined
     // Same order the session's own start uses: connect, then make the
     // directory. A refusal here throws with the device's own words.
     if (remoteRoot !== null) await this.ensureRemoteRoot(deviceId, remoteRoot)
@@ -884,9 +904,9 @@ export class SshRouter {
     // action, so this only reports — and records the answer, which is what
     // puts the state on the card without a deployment having been run.
     await this.surveyHelper(deviceId, device)
-    return trusted === undefined
+    return trustedKey === undefined
       ? line
-      : `${line}\n${this.t(trustedBefore === undefined ? 'test.hostKeyFirst' : 'test.hostKeyTrusted', { fingerprint: trusted })}`
+      : `${line}\n${this.t(trustedBefore === undefined ? 'test.hostKeyFirst' : 'test.hostKeyTrusted', { fingerprint: trustedKey })}`
   }
 
   /**
@@ -904,6 +924,12 @@ export class SshRouter {
    * @param device - the resolved connection.
    */
   private async surveyHelper(deviceId: string, device: DeviceConnection): Promise<void> {
+    // A kind that carries no helper is not asked about one. The probe asks
+    // the device for its Node and for the digest of a file this build would
+    // deploy there — a question only an SSH kind can answer — and the answer
+    // would be recorded as this package's helper state for a device that has
+    // no such concept.
+    if (!this.registry.usesHelper(deviceId)) return
     const artifact = localHelperArtifact()
     const result = await transportFor(device).exec(device, installProbe(artifact.hash), { graceMs: 10_000 })
     if (result.exitCode !== 0) return

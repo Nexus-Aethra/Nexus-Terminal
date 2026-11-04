@@ -130,6 +130,11 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     void (async () => {
       const device = router.deviceFor(deviceId)
       if (device === undefined) return
+      // A kind that carries no helper is not warmed: the probe asks the
+      // device for its Node and for the digest of a file this build would
+      // deploy there, and the answer would belong to a device that has no
+      // such concept.
+      if (!router.registry.usesHelper(deviceId)) return
       // Where the device's home is, remembered by the router: a `~`-spelled
       // session root has to become an absolute device path, and the device is
       // the only party that knows what its own `~` means. Asked before the

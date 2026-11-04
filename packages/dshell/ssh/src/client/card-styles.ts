@@ -1,9 +1,10 @@
 /**
  * The chrome the 管理台's device cards share.
  *
- * The SSH registry card and the WSL card draw as siblings of one page, so
- * they draw with one set of styles — same card shell, same header, same row
- * and action measures — rather than two hand-rolled readings of "a card".
+ * The SSH registry card and a provider's own card draw as siblings of one
+ * page, so they draw with one set of styles — same card shell, same header,
+ * same row and action measures — rather than two hand-rolled readings of
+ * "a card".
  * Everything here is dsh-token driven; the form-only styles stay beside the
  * form in card.ts.
  */

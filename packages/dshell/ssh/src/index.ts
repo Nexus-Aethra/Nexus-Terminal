@@ -44,8 +44,8 @@ export { DSHELL_SSH_PATH, type DeviceView, type SshResponse } from './protocol.j
 export { harnessHome, mountBase, sshDeviceRoot } from './paths.js'
 export { SSH_ROUTING_SERVICE } from './router.js'
 // The provider contract and its door vocabulary: what a device-kind package
-// (dshell-wsl) writes its provider against. Type-only — the runtime dependency
-// runs one way, from the provider into this package's registry.
+// writes its provider against. Type-only — the runtime dependency runs one
+// way, from the provider into this package's registry.
 export type {
   DeviceCommand,
   DeviceDoors,
@@ -54,6 +54,7 @@ export type {
   DeviceOutcome,
   DeviceShell,
   DshellDeviceProvider,
+  DshellDeviceSeam,
 } from './registry.js'
 export { DEVICE_SHELL_TOOL } from './device-dialect.js'
 export { isUnder, mappingFor, mountFor, toMountPath, toRemotePath, type MountMapping } from './mount.js'
@@ -89,10 +90,10 @@ export function apply(ctx: Context): void {
     // of the stock backend — can resolve a call's session without this module
     // handing it anything directly.
     ctx.provide(SSH_ROUTING_SERVICE, router)
-    // The built-in device providers (WSL lives in its own package) register
-    // here; publishing the service is what lets them, and pointing the
-    // transport dispatcher at it is what routes their devices without this
-    // package learning any of their vocabulary.
+    // The built-in device providers register here — each in its own package,
+    // so this one never learns a kind's vocabulary; publishing the service is
+    // what lets them, and pointing the transport dispatcher at it is what
+    // routes their devices.
     ctx.provide(DSHELL_DEVICE_REGISTRY, router.registry)
     useDeviceRegistry(router.registry)
     // Bind host copy as soon as its provider is up: this package's host methods
