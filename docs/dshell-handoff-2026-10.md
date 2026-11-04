@@ -17,7 +17,7 @@
    本文写作时 HEAD 是 `1d29161`）。
    `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
    **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
-2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**782 tests passed / 44 skipped**；
+2. **门禁全绿**：`vitest` 77 files passed + 1 skipped，**786 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
 3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
    （`ProcessCommand` 改成真 duplex，读写两侧分开），`env` 经 `WSLENV` 桥接进 distro，
@@ -36,7 +36,8 @@
 | npm 上 | `latest` = `0.1.16` | `npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新 `dshell-v0.1.16` → `b3d72f9`（2026-10-31）；**0.1.17 线还没有 tag** | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | dsh pin | `dsh-v0.2.1-rc.3`（`dsh-upstream.json`） | `cat dsh-upstream.json` |
-| 测试 | 76 files passed + 1 skipped / **782 tests passed / 44 skipped** | `pnpm run test` |
+| dsh 支持窗口 | `>=0.2.1-rc.2 <0.2.3-0`（含 `0.2.2-rc.1`，已在容器里实测） | `node scripts/sync-host-range.mjs --check` |
+| 测试 | 77 files passed + 1 skipped / **786 tests passed / 44 skipped** | `pnpm run test` |
 | 类型 | 干净（`tsc -b tsconfig.host.json`、`tsc -b tsconfig.client.json` 均 exit 0） | `pnpm run typecheck` |
 | 工具链 | **本机 Node 是 `v22.14.0`，而 `package.json` 的 `engines` 要 `>=24.11.0`** | `node -v` |
 | WSL 实测机 | Windows + WSL2 `Ubuntu-24.04`（默认）+ 一个 dshbox 容器 distro | `wsl.exe --list --verbose` |
@@ -135,6 +136,11 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 - **`0.1.17` 版本号提升**：12 个包的 `package.json` 全是 `0.1.16`。
 - **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
+- **0.2.2 的 surface 读数有了，但 pin 还没移**：`scripts/tests/upstream-surface-any.spec.ts`
+  可以指向任意 checkout（`DSH_SURFACE_ROOT=<路径>`），已对 `dsh-v0.2.2-rc.1` 镜像量过：
+  services 156 / slots 109 / events 62，dshell 用到的名字一个没少（0.2.1 是 146/103/62）。
+  但 `dsh/` 镜像和 `dsh-upstream.json` 的 pin 仍钉在 `dsh-v0.2.1-rc.3`，所以**发布门禁守的
+  还是 0.2.1 的面**。把 pin 移过去是剩下的那一半。
 - **WSL 的真机验收**：目前只在**一台** Windows + WSL2 机器上量过（Ubuntu-24.04 + 一个
   dshbox 容器 distro）。WSL1 被过滤掉了，没验过；非 Windows 主机上 `wsl.exe` 不存在，
   内建行不出现，也还没在那种机器上跑过。
@@ -167,7 +173,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 cd <repo-root>
 git status -sb                 # 应显示与 origin/feat/dshell-wsl-device 同步、工作区干净
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 782 passed / 44 skipped + 干净
+pnpm run test && pnpm run typecheck     # 期望 786 passed / 44 skipped + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 ```
 
@@ -185,3 +191,24 @@ pnpm --filter "@nexus-aethra/dshell-*" run build
 文档索引在 [`docs/README.md`](./README.md)；这批改动的规范在
 [`dshell-architecture.md` § 20](./dshell-architecture.md)（device-provider 扩展点）与 § 19
 （设备传输层）；包职责在 [`dshell-packages.md`](./dshell-packages.md)。
+
+## 6. 0.2.2-rc.1 适配读数（2026-11-05）
+
+容器 `dsh-022-verify`（模板 `github.com/deepseek-ai/deepseek-harness:dsh-v0.2.2-rc.1`，宿主
+runtime，12 个 dshell 包全部 symlink 到本检出）：
+
+| 验什么 | 读数 |
+|---|---|
+| 插件安装 | 12 个包全部装上（改 range 之前会被拒：`incompatible with dsh 0.2.2-rc.1`） |
+| GUI 起来 | 是，console 0 error |
+| provider 检测 | `wsl:Ubuntu-24.04` + dshbox distro，`builtin:true` |
+| 设备列表 API | 200，两个 WSL 行 |
+| 绑定会话 | `bind` 200，mount 落到 `mnt\wsl-Ubuntu-24.04\~` |
+| WSL 终端 | `echo DSHELL_022_OK_42` → `42`，Ubuntu 24.04 LTS 欢迎语与系统信息都在 |
+| `router.test` | `已连接 gpumem@LAPTOP-65SFEHRB（Linux 5.15.167 (microsoft-standard-WSL2)） · 334ms` |
+| 主机密钥信任 | **未出现** `主机密钥 SHA256:…` 行——能力位生效 |
+| helper 部署 | 400 拒绝（provider 自己的话） |
+| **surface 检查** | 156 services / 109 slots / 62 events，`missingSurface` 为空 |
+
+门禁：`vitest` 77 files passed + 1 skipped / 786 passed / 44 skipped；两个 `tsc -b` exit 0；
+`node scripts/sync-host-range.mjs --check` 全部一致。

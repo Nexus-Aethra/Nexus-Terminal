@@ -132,6 +132,7 @@ every commit). What it carries is phases 10.49, 10.50 and 10.51, and each one's
 | **10.49** — the 管理台 | one settings section for the whole suite, with a child seat each package contributes into | every edge to dshell-ssh is a RUNTIME seat, never a build-time import |
 | **10.50** — WSL2 as a built-in device | a WSL2 distribution is a derived device row with its own transport, behind a provider registry | the exec door carried both directions on one stream and dropped its stdout — fixed by giving the command a real duplex, and re-measured |
 | **10.51** — port forwards | a TCP tunnel from the reader's machine to a device's port, in the panel and in the model's hands | the two directions are moved by hand, not by `pipe` — `pipe` ends the destination when the source ends |
+| **10.52** — dsh 0.2.2-rc.1 support | the peer window widens to `<0.2.3-0`; the surface is read by a checkout-agnostic spec | the pin still says 0.2.1-rc.3, so the release gate guards 0.2.1's names — the reading is done, the pin move is not |
 
 ---
 ## Phase 10.31 — a palette that knows which surface it is on
@@ -1640,7 +1641,7 @@ device model whole and answers the refusal the local plan cannot.
   The bridge's own settle injection is transport-agnostic, so the command
   splitter, the block log and the completion warm trigger all work over this
   path unchanged.
-- **The gate on this branch**: 76 vitest files passed + 1 skipped, **782 tests
+- **The gate on this branch**: 77 vitest files passed + 1 skipped, **786 tests
   passed, 44 skipped**; `tsc -b tsconfig.host.json` exit 0;
   `tsc -b tsconfig.client.json` exit 0.
   (The three `repo-hygiene` failures that appear before the deletion of
@@ -1827,3 +1828,68 @@ The handover document
 state, what is released, what is owed, and what is open. It is rewritten at each
 handover rather than maintained, so it is the field to read for the present — and
 it goes stale the moment the branch is committed or released.
+
+## Phase 10.52 — dsh 0.2.2-rc.1 joins the window
+
+dsh shipped `0.2.2-rc.1` on its `next` tag, and dshell's peer window stopped at
+`<0.2.2-0` — so a reader on the new dsh could not install the suite at all. The
+rejection is explicit rather than silent, which is the good case:
+
+```
+dsh: installation rejected: Plugin @nexus-aethra/dshell-bundle@0.1.16 is incompatible
+with dsh 0.2.2-rc.1: requirements { ... ">=0.2.1-rc.2 <0.2.2-0" }. ... To accept this
+risk explicitly, grant the exact-version exemption ... with `dsh plugin allow-version`
+```
+
+The window is one string in `dsh-upstream.json` (`support.range`) that
+`scripts/sync-host-range.mjs` writes into every manifest, so widening it is a
+one-line change plus the sync — 219 declaration sites move together or a profile
+activates some rows and silently disables the rest. The new upper bound is
+`<0.2.3-0`. Checked before it was written — with `includePrerelease: true`, which
+is the semantics both gates that matter use: dsh's own check
+(`dsh/packages/boot/app-boot/src/plugin-compatibility.ts`) and this repo's
+`scripts/tests/manifest-contract.spec.ts`. Under that reading `0.2.2-rc.1`,
+`0.2.2-alpha.3` and `0.2.2` all satisfy the range while `0.2.3-rc.1`, `0.2.3` and
+`0.3.0` do not. It is a strict superset of the old range: nothing the old window
+admitted was dropped.
+
+### What was verified, and where
+
+A dshbox container built from the `dsh-v0.2.2-rc.1` template, host runtime so
+`wsl.exe` is reachable, with all twelve dshell packages symlinked to this checkout
+— so the container runs the code on this branch, not a published tarball.
+
+| What | Reading |
+|---|---|
+| install | all twelve packages install |
+| GUI | loads; console reports 0 errors |
+| provider | `wsl:Ubuntu-24.04` + the dshbox distro, `builtin: true` |
+| device list API | 200, both WSL rows |
+| bind | 200; mount lands in `mnt\wsl-Ubuntu-24.04\~` |
+| WSL terminal | `echo DSHELL_022_OK_42` answers `42`, with Ubuntu 24.04 LTS's banner and system info |
+| `router.test` | `已连接 gpumem@LAPTOP-65SFEHRB（Linux 5.15.167 (microsoft-standard-WSL2)） · 334ms` |
+| host-key trust | the `主机密钥 SHA256:…` line does NOT appear — the capability bits hold |
+| helper deploy | refused, in the provider's own words |
+
+Gates on this branch: 77 vitest files passed + 1 skipped, 786 tests passed / 44
+skipped; both `tsc -b` builds exit 0; `sync-host-range.mjs --check` reports every
+manifest carrying the same window.
+
+### What is still owed
+
+**The pin still says 0.2.1-rc.3, so the release gate still guards 0.2.1's surface.**
+That is deliberate — the pin is what `fetch-upstream.mjs` materializes — but it
+means `upstream-surface.spec.ts` asserts against 0.2.1's names, not 0.2.2's. The
+window widening is therefore necessary but not sufficient on its own.
+
+The other half is a reading, and it now exists:
+`scripts/tests/upstream-surface-any.spec.ts` asks the same question of any checkout
+named by `DSH_SURFACE_ROOT`. Measured against a 0.2.2-rc.1 mirror: 156 services,
+109 slots, 62 events, and `missingSurface` empty — every name dshell reaches for is
+still there. The pinned 0.2.1-rc.3 checkout measures 146/103/62, so 0.2.2 added ten
+services and six slots and dropped none that dshell uses. Moving the pin and
+re-running the release gate is what remains.
+
+**`0.2.2-rc.1` is a release candidate.** It is verified here on one Windows + WSL2
+machine in one container. A `0.2.2` final is inside the window by construction and
+has NOT been verified; `0.2.3` and beyond are outside it and want their own pass.
