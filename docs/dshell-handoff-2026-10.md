@@ -13,9 +13,10 @@
 
 ## 0. 三句话状态
 
-1. **分支领先 origin/main，全部未发版**（本文写作时 15 个提交，HEAD `75e0527`）。
+1. **分支领先 origin/main，全部未发版**（`git rev-list --count origin/main..HEAD` 就是数；
+   本文写作时 HEAD 是 `f6e4949`）。
    `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
-   npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
+   **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
 2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**782 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
 3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
@@ -27,7 +28,7 @@
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main（本文写作时 15 个），PR #70 | `git status -sb`、`git rev-list --count origin/main..HEAD` |
+| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main，PR #70（条数见左边的复核命令） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
 | HEAD | 本文写作时 `642025d`（`docs(dshell): align the handover's numbers with HEAD`） | `git log --oneline -1` |
 | main | 本地 `main` = `a38d27c`；`origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
 | 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
@@ -130,7 +131,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 
 ### ② 还没做的（这些是欠着的，不是可以顺手带过的）
 
-- **合 main**：分支领先 origin/main（本文写作时 13 个提交），还没合。
+- **合 main**：分支领先 origin/main，还没合（条数见 §1 表里的复核命令）。
 - **`0.1.17` 版本号提升**：12 个包的 `package.json` 全是 `0.1.16`。
 - **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
