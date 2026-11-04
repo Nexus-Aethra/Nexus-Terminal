@@ -11,7 +11,7 @@ Twelve packages under `packages/dshell/`: `std`, `storage`, `bundle`,
 `conversation`, `terminal-bridge`, `mode`, `commands`, `files`, `ssh`,
 `buffer`, `usage`, `wsl`. All twelve say version `0.1.16`, which is also npm's
 `latest`; the tag `dshell-v0.1.16` points at `b3d72f9`. The branch this
-document was last written on (`feat/dshell-wsl-device`) carries twelve commits
+document was last written on (`feat/dshell-wsl-device`) carries thirteen commits
 ahead of `main`, and they are UNRELEASED — they are phases 10.49, 10.50 and 10.51,
 and each one's "Not yet done" says what is owed.
 
@@ -1639,7 +1639,7 @@ device model whole and answers the refusal the local plan cannot.
   The bridge's own settle injection is transport-agnostic, so the command
   splitter, the block log and the completion warm trigger all work over this
   path unchanged.
-- **The gate on this branch**: 76 vitest files passed + 1 skipped, **778 tests
+- **The gate on this branch**: 76 vitest files passed + 1 skipped, **782 tests
   passed, 44 skipped**; `tsc -b tsconfig.host.json` exit 0;
   `tsc -b tsconfig.client.json` exit 0.
   (The three `repo-hygiene` failures that appear before the deletion of
