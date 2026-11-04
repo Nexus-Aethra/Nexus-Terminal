@@ -23,10 +23,10 @@
  */
 
 import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
-import { PassThrough } from 'node:stream'
+import type { ChildProcess, SpawnOptions } from 'node:child_process'
+import { Duplex } from 'node:stream'
 import { Readable } from 'node:stream'
-import type { Duplex, Writable } from 'node:stream'
+import type { Writable } from 'node:stream'
 // Type-only: DeviceConnection is the std fact; the door vocabulary is
 // dshell-ssh's extension point (see the note in this package's index.ts).
 import type { DeviceConnection } from '@nexus-aethra/dshell-std'
@@ -198,11 +198,29 @@ class ProcessCommand implements DeviceCommand {
   readonly done: Promise<DeviceOutcome>
 
   constructor(private readonly process: ChildProcess) {
-    const stream = new PassThrough()
-    process.stdout?.on('data', (chunk: Buffer) => { guardedWrite(stream, chunk) })
-    process.stdout?.on('end', () => { guardedEnd(stream) })
-    stream.on('data', (chunk: Buffer) => { guardedWrite(process.stdin, chunk) })
-    stream.on('end', () => { guardedEnd(process.stdin) })
+    // TWO sides, not one. The duplex's WRITABLE side is the child's stdin and
+    // its READABLE side is the child's stdout, and the two never touch: ending
+    // the writable side (what the no-stdin contract does) must not end the
+    // readable one. Carrying both directions on one PassThrough did exactly
+    // that - the exec door closed its own read side and dropped every byte the
+    // child printed, so a WSL device answered every command with an empty
+    // stdout. The SSH transport keeps three separate PassThroughs for the same
+    // reason (see dshell-ssh/src/channel-process.ts).
+    const stream = new Duplex({
+      write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+        guardedWrite(process.stdin, chunk as Buffer)
+        callback()
+      },
+      final(callback: (error?: Error | null) => void) {
+        guardedEnd(process.stdin)
+        callback()
+      },
+      read() {
+        // The readable side is fed by push() below; nothing is pulled here.
+      },
+    })
+    process.stdout?.on('data', (chunk: Buffer) => { stream.push(chunk) })
+    process.stdout?.on('end', () => { stream.push(null) })
     // The pipes' async failures (EPIPE after the child died) arrive as
     // 'error' events; without handlers they are fatal to the host, exactly
     // like the channel errors the SSH transport swallows.
@@ -225,7 +243,10 @@ class ProcessCommand implements DeviceCommand {
         once(signal !== null
           ? { exitCode: null, signal }
           : { exitCode: typeof code === 'number' ? code : null, signal: null })
-        stream.end()
+        // The child's stdout 'end' pushes the readable side's EOF; what is left
+        // to close here is the write side, so a reader waiting on the stream
+        // is not held open by a stdin nobody will write to again.
+        guardedEnd(process.stdin)
       })
       process.on('error', () => {
         // Spawn failure (wsl.exe missing, distro gone): no exit status exists,
@@ -242,38 +263,89 @@ class ProcessCommand implements DeviceCommand {
 }
 
 /**
+ * How a `wsl.exe` process is started.
+ *
+ * Injectable so the doors can be proven without a WSL machine: the exec
+ * lane's output contract is a property of the duplex's two sides, not of
+ * what `wsl.exe` happens to print.
+ */
+export type WslSpawn = (file: string, args: readonly string[], options: SpawnOptions) => ChildProcess
+
+/**
+ * Extend `WSLENV` with the names a caller asked to pass through.
+ *
+ * `WSLENV` is a colon-separated list (a `/p` suffix marks a path to translate
+ * between the two filesystems). An existing list is preserved, so a caller's
+ * additions never erase whatever the host already bridges.
+ * @param current - the host's own `WSLENV`, when it has one.
+ * @param names - the variables to carry into the distro.
+ * @returns the list `wsl.exe` should read.
+ */
+function wslEnvBridge(current: string | undefined, names: readonly string[]): string {
+  const kept = (current ?? '').split(':').filter(name => name !== '')
+  return [...new Set([...kept, ...names])].join(':')
+}
+/** The real one: `wsl.exe` with the given arguments. */
+const defaultSpawn: WslSpawn = (file, args, options) => spawn(file, [...args], options)
+
+/**
  * The WSL doors. One instance per host; nothing is pooled, because every
  * operation is a fresh `wsl.exe` process and the distro's own start-up is
  * what a cold call pays for.
  */
 export class WslTransport implements DeviceDoors {
+  /**
+   * @param spawn - how a `wsl.exe` process is started; the default is the real one.
+   */
+  constructor(private readonly spawn: WslSpawn = defaultSpawn) {}
+
   /** Run one command and collect its output, bounded. */
   async exec(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceExecResult> {
     const run = await this.open(device, command, options)
     const stdout = new Window(STDOUT_MAX_BYTES)
     const stderr = new Window(STDERR_MAX_BYTES)
+    // Both windows are filled by the streams' own data events, so the reads are
+    // already in flight when `done` settles and nothing has to be re-requested.
+    // `open` has already taken care of stdin by the time it returns.
     run.stream.on('data', (chunk: Buffer) => { stdout.push(chunk) })
     run.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk) })
-    if (options.stdin !== undefined) {
-      const payload = typeof options.stdin === 'string' ? Buffer.from(options.stdin, 'utf8') : Buffer.from(options.stdin)
-      for (let at = 0; at < payload.length; at += STDIN_CHUNK_BYTES) {
-        if (!run.stream.write(payload.subarray(at, at + STDIN_CHUNK_BYTES))) {
-          await new Promise<void>(resolve => { run.stream.once('drain', resolve) })
-        }
-      }
-    }
-    if (options.openStdin !== true) run.stream.end()
     const outcome = await this.bounded(run, options)
     return { ...outcome, stdout: stdout.text(), stderr: stderr.text(), truncated: stdout.truncated }
   }
 
   /** Run one command, leaving its output on the returned streams. */
   async open(device: DeviceConnection, command: string, options: DeviceExecOptions = {}): Promise<DeviceCommand> {
-    const child = spawn(WSL_EXE, wslExecArgs(device.id, command), {
+    const child = this.spawn(WSL_EXE, wslExecArgs(device.id, command), {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      // The caller's environment additions, the way the SSH transport passes
+      // them to the channel. A provider's command runs with the host's
+      // environment plus what the caller asked for, so a seam that sets one
+      // variable for the device gets it.
+      //
+      // `wsl.exe` does NOT forward the Windows environment: it hands the distro
+      // a fixed set (PATH, HOME, …) and drops everything else, so setting the
+      // variable on this process alone would satisfy nothing. `WSLENV` is the
+      // bridge WSL itself provides — a name listed there is copied into the
+      // distro — and the caller's keys are appended to it, so the variable
+      // arrives on the far side the way an SSH channel's `env` does.
+      ...options.env === undefined ? {} : {
+        env: {
+          ...process.env,
+          ...options.env,
+          WSLENV: wslEnvBridge(process.env.WSLENV, Object.keys(options.env)),
+        },
+      },
     })
     const run = new ProcessCommand(child)
+    // The stdin contract is the SSH transport's, in the same order: a payload
+    // is written and then the write side is closed, a caller that asked to keep
+    // it open gets it left open, and a command that asked for neither is closed
+    // so the far side sees EOF rather than a pipe nobody writes to. Without
+    // this the `open` door would drop a batch payload entirely — the one path
+    // the exec door used to lose stdout on, in the other direction.
+    if (options.stdin !== undefined) void this.feed(run, options.stdin)
+    else if (options.openStdin !== true) run.stream.end()
     if (options.signal !== undefined) {
       const abort = (): void => { run.terminate() }
       if (options.signal.aborted) abort()
@@ -286,6 +358,17 @@ export class WslTransport implements DeviceDoors {
       void run.done.then(() => { clearTimeout(timer) })
     }
     return run
+  }
+
+  /** Write one payload to a command's stdin, then close it. */
+  private async feed(run: DeviceCommand, stdin: string | Uint8Array): Promise<void> {
+    const data = typeof stdin === 'string' ? Buffer.from(stdin, 'utf8') : Buffer.from(stdin)
+    for (let at = 0; at < data.length; at += STDIN_CHUNK_BYTES) {
+      if (!run.stream.write(data.subarray(at, at + STDIN_CHUNK_BYTES))) {
+        await new Promise<void>(resolve => { run.stream.once('drain', resolve) })
+      }
+    }
+    run.stream.end()
   }
 
   /** Open a pty shell inside the distribution, running one remote line. */
