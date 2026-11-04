@@ -40,14 +40,16 @@ READMEs are where dsh's contract is stated.
 ## The user-facing README comes in two languages
 
 `README.md` (English) and [`README.zh-CN.md`](../README.zh-CN.md) (简体中文) are the same document for people who *use*
-dshell, as opposed to the four docs above, which are for people changing it. They are the front page
+dshell, as opposed to the five docs above, which are for people changing it. They are the front page
 GitHub renders.
 
-Both open with a one-line switcher (`**English** · 简体中文`, relative to the
-repo root), and both share the
-screenshots and diagrams under `docs/images/` — so a change to either one must be mirrored in the
-other **in the same commit**. The mermaid diagrams are duplicated per language rather than shared,
-because the labels are prose; keep the diagram shapes identical when you translate one.
+Both open with a one-line switcher, written relative to the repo root: `README.md`
+carries a bold **English** followed by a 简体中文 link to `README.zh-CN.md`, and
+`README.zh-CN.md` carries an English link back followed by a bold **简体中文**. Both
+share the screenshots and diagrams under `docs/images/`, so a change to either one
+must be mirrored in the other **in the same commit**. The mermaid diagrams are
+duplicated per language rather than shared, because the labels are prose; keep the
+diagram shapes identical when you translate one.
 
 ## How to update these documents
 

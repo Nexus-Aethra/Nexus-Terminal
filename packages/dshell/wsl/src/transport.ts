@@ -285,6 +285,7 @@ function wslEnvBridge(current: string | undefined, names: readonly string[]): st
   const kept = (current ?? '').split(':').filter(name => name !== '')
   return [...new Set([...kept, ...names])].join(':')
 }
+
 /** The real one: `wsl.exe` with the given arguments. */
 const defaultSpawn: WslSpawn = (file, args, options) => spawn(file, [...args], options)
 

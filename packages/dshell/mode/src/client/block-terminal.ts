@@ -341,7 +341,6 @@ export function createSpanTerminal(host: HTMLElement, theme: Theme, text: string
   // The region renders its ink span, not its bytes: the dead blank frame a
   // ConPTY repaint leaves around the prompt is measured away above AND cut
   // away here, so the grid's row count and the text it holds agree.
-  const body = text.slice(metrics.trimFrom, metrics.trimTo)
   const cols = regionCols(metrics, containerCols)
   const term = new XtermTerminal({
     fontFamily: SPAN_FONT,
@@ -380,7 +379,10 @@ export function createSpanTerminal(host: HTMLElement, theme: Theme, text: string
     }
     return true
   })
-  let last = body
+  // What the grid currently holds, so the next update can tell a grow from a
+  // re-measure. Empty until the first write, which is what makes that write a
+  // rebuild rather than an append of nothing.
+  let last = ''
   // Geometry follows the text and the column: the grid spans the column, and
   // widens only as far as a redraw needs. Growing it cannot move a redraw's
   // origin and shrinking it stops at that redraw's width, so a `\r` line stays
@@ -392,24 +394,26 @@ export function createSpanTerminal(host: HTMLElement, theme: Theme, text: string
     const nextBody = next.slice(nextMetrics.trimFrom, nextMetrics.trimTo)
     const nextCols = regionCols(nextMetrics, available)
     const nextRows = Math.min(SPAN_MAX_ROWS, renderedRows(nextMetrics, nextCols))
-    const resized = nextCols !== term.cols || nextRows !== term.rows
-    if (resized) term.resize(nextCols, nextRows)
-    // An append is only safe while the grid is UNCHANGED. A resize re-flows
-    // what is already in the buffer, and xterm keeps the tail visible rather
-    // than the head — so a region that was written at one geometry and then
-    // measured at another shows its last rows and nothing else, which is the
-    // black-screen-on-first-command a freshly opened session hit: the region
-    // mounted before layout settled, wrote its whole body into a grid measured
-    // off a zero-width host, and the observer's fit() that followed only ever
-    // appended the empty delta. Rebuilding on a geometry change is what puts
-    // the head back on screen.
-    if (!resized && last.length > 0 && nextBody.startsWith(last)) {
+    // The COLUMN is what a re-flow can invalidate. A row-count change on its own
+    // is not one: the grid grows downward as the text does, which is what a
+    // printing command looks like, and rebuilding on that would throw away the
+    // reader's scroll position on every chunk (xterm's reset clears the
+    // scrollback) and re-emit the whole region per chunk.
+    const recolumned = nextCols !== term.cols
+    if (recolumned || nextRows !== term.rows) term.resize(nextCols, nextRows)
+    if (!recolumned && last.length > 0 && nextBody.startsWith(last)) {
       // The region only grew (a command is still printing): append, so the
       // terminal keeps its scroll position and the redraw stays cheap. The
       // trim's start is the region's first ink row and never moves, so a
       // growing output stays a prefix and this path holds.
       term.write(nextBody.slice(last.length))
     } else {
+      // A first write, a re-column, or a body that is not a prefix of what the
+      // grid holds (a redraw, or a trim that moved). The rebuild is also what
+      // recovers the black-screen-on-first-command: the region can mount before
+      // layout settles, measure a grid off a zero-width host, and then be
+      // re-measured by the observer's fit() — where the text is unchanged and an
+      // append would write nothing at all. Rebuilding puts the head back.
       term.reset()
       term.write(nextBody)
     }

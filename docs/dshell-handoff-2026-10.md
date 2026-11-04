@@ -13,28 +13,29 @@
 
 ## 0. 三句话状态
 
-1. **分支领先 main 9 个提交，全部未发版**。`feat/dshell-wsl-device`，HEAD `fc42e01`
-   （2026-11-02），已推 origin。12 个包的 `package.json` **仍是 `0.1.16`**，
+1. **分支领先 origin/main 12 个提交，全部未发版**。`feat/dshell-wsl-device`，HEAD `6213e7e`，
+   已推 origin 并在 PR #70 上。12 个包的 `package.json` **仍是 `0.1.16`**，
    npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
-2. **门禁全绿**：`vitest` 75 files passed + 1 skipped，**773 tests passed / 44 skipped**；
+2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**778 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
-3. **WSL 这条线现在整条通了**：本文上一版记录的 exec 门丢 stdout 的洞**已修并复量**
-   （`ProcessCommand` 改成真 duplex，读写两侧分开），文件面板依赖的三条 exec 都答得出内容；
-   shell 门（ConPTY）一直是好的。见 §3 ①。**但这些修复还没有提交**，工作区是脏的。
-
+3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
+   （`ProcessCommand` 改成真 duplex，读写两侧分开），`env` 经 `WSLENV` 桥接进 distro，
+   文件面板依赖的三条 exec 都答得出内容；shell 门（ConPTY）一直是好的。见 §3 ①。
+    修复在 `7d1e953`，与 registry 能力位（`1b4a7af`）、黑屏修复（`86420ed`）、
+    文档（`6213e7e`）同批，都已在 PR #70 里。
 ## 1. 现场快照
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-wsl-device`，已推 origin，**领先 main 9 个提交** | `git status -sb`、`git rev-list --count main..HEAD` |
-| HEAD | `fc42e01`（`refactor(dshell): WSL becomes its own package behind a provider registry`） | `git log --oneline -1` |
-| main | `a38d27c` | `git log --oneline -1 main` |
-| 工作区 | **脏**：17 处修改、1 处删除、1 个新文件（本文写作时，均未提交） | `git status --short` |
+| 当前分支 | `feat/dshell-wsl-device`，已推 origin，**领先 origin/main 12 个提交**（PR #70） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
+| HEAD | `6213e7e`（`docs(dshell): record the WSL fixes and compress the roadmap`） | `git log --oneline -1` |
+| main | 本地 `main` = `origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
+| 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
 | 包 | **12 个**，全部 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
 | npm 上 | `latest` = `0.1.16` | `npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新 `dshell-v0.1.16` → `b3d72f9`（2026-10-31）；**0.1.17 线还没有 tag** | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | dsh pin | `dsh-v0.2.1-rc.3`（`dsh-upstream.json`） | `cat dsh-upstream.json` |
-| 测试 | 75 files passed + 1 skipped / **773 tests passed / 44 skipped** | `pnpm run test` |
+| 测试 | 76 files passed + 1 skipped / **778 tests passed / 44 skipped** | `pnpm run test` |
 | 类型 | 干净（`tsc -b tsconfig.host.json`、`tsc -b tsconfig.client.json` 均 exit 0） | `pnpm run typecheck` |
 | 工具链 | **本机 Node 是 `v22.14.0`，而 `package.json` 的 `engines` 要 `>=24.11.0`** | `node -v` |
 | WSL 实测机 | Windows + WSL2 `Ubuntu-24.04`（默认）+ 一个 dshbox 容器 distro | `wsl.exe --list --verbose` |
@@ -42,19 +43,22 @@
 **Node 版本那条要当真**：门禁是在 v22.14.0 上跑绿的，而 `engines` 要求 `>=24.11.0`。
 发布前在一个满足 engines 的 Node 上再跑一遍门禁。
 
-## 2. 这 9 个未发版的提交是什么
+## 2. 这 12 个未发版的提交是什么
 
 | 提交 | 内容 |
 |---|---|
-| `a3e86b1` | 切会话时记住 prompt |
-| `d64bc9b` | WSL2 distro 作为一个内建设备 |
-| `a7a5d2a` | WSL 的 mount 路径留在 Windows 的命名规则里（id 带冒号，Windows 目录名不合法） |
-| `8b986cb` | 管理台（一个设置页） |
-| `f299b94` | WSL 那一行读起来像一种自己的登录方式（`auth: 'wsl'`） |
-| `bca50b9` | WSL 卡片 + 图标 |
-| `95ded8b` | 所有设备共用一套卡片外框 |
-| `8e7a5a3` | ConPTY 重绘空行的修复 |
-| `fc42e01` | WSL 变成自己的包，藏在一个 device-provider registry 后面 |
+| `82e1bf5` | 切会话时记住 prompt（PR #69，已进 origin/main） |
+| `6c23504` | WSL2 distro 作为一个内建设备 |
+| `fc43e17` | WSL 的 mount 路径留在 Windows 的命名规则里（id 带冒号，Windows 目录名不合法） |
+| `c6f63da` | 管理台（一个设置页） |
+| `fc0fe7d` | WSL 那一行读起来像一种自己的登录方式（`auth: 'wsl'`） |
+| `6c3d2d7` | WSL 卡片 + 图标 |
+| `361eb10` | 所有设备共用一套卡片外框 |
+| `3d0df4b` | ConPTY 重绘空行的修复 |
+| `5c0c79e` | WSL 变成自己的包，藏在一个 device-provider registry 后面 |
+| `7d1e953` | **exec 门修复**：duplex 拆分 + `env` 经 `WSLENV` 进 distro + `open` 支持 stdin |
+| `86420ed` | **黑屏修复**：shell region 的网格变化时重建，不再追加空 delta |
+| `1b4a7af` | **registry 能力位**：`helper` / `reachable` / 逐接缝拒绝语，SSH 包不再提 wsl |
 
 第 9 个提交是这批里结构性的那个：WSL 支持原先长在 `dshell-ssh` 里（一个 transport 文件、
 device store 里的 WSL 分支、router 里的探测循环、forward 接缝里写死的拒绝语、客户端里的
@@ -124,10 +128,10 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 - **WSL 的真机验收**：目前只在**一台** Windows + WSL2 机器上量过（Ubuntu-24.04 + 一个
   dshbox 容器 distro）。WSL1 被过滤掉了，没验过；非 Windows 主机上 `wsl.exe` 不存在，
   内建行不出现，也还没在那种机器上跑过。
-- **提交这批修复**：exec 门的修复、registry 的能力位、文档四件套都还在工作区里**没提交**，
-  `git status --short` 能看到。注意 `docs/dshell-upgrade-0.1.6.md` 已删但删除还没进 index——
-  在提交之前 `scripts/tests/repo-hygiene.spec.ts` 会因为读不到这个已删文件而红三条，
-  那是 index 状态造成的，不是代码问题；把删除一起提交就绿。
+- **PR #70 待审待合**：exec 门修复（`7d1e953`）、registry 能力位（`1b4a7af`）、
+  黑屏修复（`86420ed`）和文档（`6213e7e`）都已提交并推到 origin，在 PR #70 上。
+  `docs/dshell-upgrade-0.1.6.md` 的删除也已在 `6213e7e` 里，`repo-hygiene` 因此全绿。
+  合之前要有人核过（PR 描述里列了实测读数）。
 
 ## 4. 交接纪律（先读这条再看代码）
 
@@ -151,20 +155,18 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 
 ```sh
 cd <repo-root>
-git status -sb                 # 现在应显示领先 origin 且工作区脏（修复还没提交）
+git status -sb                 # 应显示与 origin/feat/dshell-wsl-device 同步、工作区干净
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 773 passed / 44 skipped + 干净
+pnpm run test && pnpm run typecheck     # 期望 778 passed / 44 skipped + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 ```
 
 > 本机 `pnpm` 不在 PATH 上时，用 `node_modules\.bin\vitest.CMD run` 和
 > `node_modules\.bin\tsc.CMD -b tsconfig.host.json` / `tsconfig.client.json` 直接跑。
 
-**第一件该做的事是把这批修复提交掉**（§ 3 ② 最后一条）：exec 门的修复、registry 的能力位、
-文档四件套，全在工作区里。提交时**把 `docs/dshell-upgrade-0.1.6.md` 的删除一起带上**——
-不带上 `scripts/tests/repo-hygiene.spec.ts` 会红三条（它去读一个已经不在磁盘上的 tracked 文件）。
-然后按 § 3 ② 的次序走：合 main → `0.1.17` → 发布 → tag，每一步都先问人。
-
+**第一件该做的事是把 PR #70 走过审核合掉**：分支已经在 origin 上，PR 已开，描述里列了
+四项改动各自的根因与实测读数。审核要独立核，blocker 清完才能合；合完按 § 3 ② 的次序走：
+合 main → `0.1.17` → 发布 → tag，每一步都先问人。
 **分支模型**（`dshell-setup.md` 写死了这条）：`main` 只放已发布的线，**不直接提交**；
 一个开发方向一条分支，走 PR **squash-merge** 进 main，合完删分支。判断"某分支的活是否已进 main"
 要**比树**（`git diff --stat origin/main <branch>` 为空即已进），不要看祖先关系——squash 之后

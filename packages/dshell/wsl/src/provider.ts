@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process'
 // Type-only: DeviceConnection/DeviceView are std facts; the doors/provider
 // contract is dshell-ssh's extension point (see the note in index.ts).
 import type { DeviceConnection, DeviceView } from '@nexus-aethra/dshell-std'
-import type { DeviceDoors, DshellDeviceProvider } from '@nexus-aethra/dshell-ssh'
+import type { DeviceDoors, DshellDeviceProvider, DshellDeviceSeam } from '@nexus-aethra/dshell-ssh'
 import {
   decodeWslOutput,
   distroOf,
@@ -30,6 +30,12 @@ import {
 /** Why this provider refuses a port forward, as the forward seams say it. */
 const FORWARD_REFUSAL = 'WSL 与本机共享回环，端口本来就通，无需转发'
 
+/** Why a distribution carries no helper, as the helper seams say it. */
+const HELPER_REFUSAL = 'WSL 发行版不部署 helper：它的 exec 门就是设备本身，远端没有可运行 helper 的 Node'
+
+/** Why a distribution is not dialled, as the host-key seams say it. */
+const DIAL_REFUSAL = 'WSL 发行版不走 SSH，没有握手，也就没有主机密钥可信任'
+
 /**
  * The WSL provider. One instance per host, registered by this package's
  * `apply` and unregistered when the package unloads.
@@ -37,6 +43,27 @@ const FORWARD_REFUSAL = 'WSL 与本机共享回环，端口本来就通，无需
 export class WslDeviceProvider implements DshellDeviceProvider {
   /** Port forwards to a WSL distribution are refused (see {@link refusal}). */
   readonly forwards = false
+  /**
+   * A distribution carries no helper.
+   *
+   * The helper is an SSH-kind concept: a bundle this build deploys to a device
+   * over the exec lane, which a distro has no use for — the exec lane IS the
+   * device, and there is no Node on the far side to run a helper with. Saying so
+   * is what stops `installHelper` from writing the bundle into the distro and
+   * `surveyHelper` from recording this package's helper state for a kind that has
+   * none.
+   */
+  readonly helper = false
+  /**
+   * A distribution is not reached over SSH.
+   *
+   * There is no handshake, so there is no host key to verify and none to trust:
+   * a `known_hosts` entry for host `wsl` port 0 would describe a connection that
+   * never happened. Saying so is what keeps `router.test` from reporting host-key
+   * trust for a built-in row, and the host-key seams from operating on a
+   * destination that was never dialled.
+   */
+  readonly reachable = false
 
   private cache: { at: number; distros: WslDistro[] } | undefined
 
@@ -109,6 +136,23 @@ export class WslDeviceProvider implements DshellDeviceProvider {
   /** The forward refusal, in the provider's own words. */
   refusal(deviceId: string): string | undefined {
     return isWslDevice(deviceId) ? FORWARD_REFUSAL : undefined
+  }
+
+  /**
+   * The refusal for one seam, in this provider's own words.
+   *
+   * The helper and dial seams are SSH-kind questions a distribution cannot
+   * answer, and the words are the provider's because only the provider knows
+   * what its kind is. A caller that asks about a seam this kind does serve —
+   * exec, open, shell — gets undefined, which is the answer that means "go
+   * ahead".
+   */
+  refusalFor(deviceId: string, seam: DshellDeviceSeam): string | undefined {
+    if (!isWslDevice(deviceId)) return undefined
+    if (seam === 'forward') return FORWARD_REFUSAL
+    if (seam === 'helper') return HELPER_REFUSAL
+    if (seam === 'dial') return DIAL_REFUSAL
+    return undefined
   }
 
   /**

@@ -293,3 +293,42 @@ describe('the exec door', () => {
     }
   })
 })
+
+describe('the provider declares what a distribution can do', () => {
+  const provider = new WslDeviceProvider()
+
+  it('declares a distribution as neither helper-carrying nor dialled', () => {
+    // The registry's documented default is "a provider that says nothing is an
+    // SSH kind", so a provider that stays silent about these two is read as a
+    // device with a helper to deploy and a host key to trust - exactly the wrong
+    // answer for a distro. The registry reads these two fields; the specs that
+    // pin what it does with them live beside it (ssh/tests/registry.spec.ts).
+    expect(provider.helper).toBe(false)
+    expect(provider.reachable).toBe(false)
+  })
+
+  it('words the helper and dial refusals itself', () => {
+    const helper = provider.refusalFor?.('wsl:Ubuntu-24.04', 'helper')
+    const dial = provider.refusalFor?.('wsl:Ubuntu-24.04', 'dial')
+    expect(helper).toBeDefined()
+    expect(helper).toContain('helper')
+    expect(dial).toBeDefined()
+    expect(dial).toContain('主机密钥')
+  })
+
+  it('serves the seams a distro does answer', () => {
+    // exec, open and shell are the three doors. forward, helper and dial are the
+    // three refused ones, so a refusal naming any of the doors would be a lie.
+    const forward = provider.refusalFor?.('wsl:Ubuntu-24.04', 'forward')
+    expect(forward).toContain('回环')
+    expect(provider.refusalFor?.('wsl:Ubuntu-24.04', 'helper')).toBeDefined()
+    expect(provider.refusalFor?.('wsl:Ubuntu-24.04', 'dial')).toBeDefined()
+  })
+
+  it('says nothing about a device it does not own', () => {
+    expect(provider.refusalFor?.('tencent', 'helper')).toBeUndefined()
+    expect(provider.refusalFor?.('tencent', 'dial')).toBeUndefined()
+    expect(provider.refusal('tencent')).toBeUndefined()
+  })
+})
+
