@@ -11,9 +11,10 @@ Twelve packages under `packages/dshell/`: `std`, `storage`, `bundle`,
 `conversation`, `terminal-bridge`, `mode`, `commands`, `files`, `ssh`,
 `buffer`, `usage`, `wsl`. All twelve say version `0.1.16`, which is also npm's
 `latest`; the tag `dshell-v0.1.16` points at `b3d72f9`. The branch this
-document was last written on (`feat/dshell-wsl-device`) carries thirteen commits
-ahead of `main`, and they are UNRELEASED — they are phases 10.49, 10.50 and 10.51,
-and each one's "Not yet done" says what is owed.
+document was last written on (`feat/dshell-wsl-device`) is UNRELEASED — it sits ahead of
+`origin/main` (`git rev-list --count origin/main..HEAD` is the number, and it moves with
+every commit). What it carries is phases 10.49, 10.50 and 10.51, and each one's
+"Not yet done" says what is owed.
 
 ## How to read it
 

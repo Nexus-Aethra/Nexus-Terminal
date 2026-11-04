@@ -1,5 +1,5 @@
-   `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
-   **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
+# dshell 交接文档（2026-11-04）
+
 给接手的人。这份只写**当下现场状态**与**为什么**——架构/协议/包职责看
 [`dshell-architecture.md`](./dshell-architecture.md)、[`dshell-packages.md`](./dshell-packages.md)，
 上手顺序看 [`README.md`](./README.md)。
@@ -13,10 +13,10 @@
 
 ## 0. 三句话状态
 
-1. **分支领先 origin/main，全部未发版**（本文写作时 13 个提交，HEAD `cff4c24`）。
-   `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
-   **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
-2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**782 tests passed / 44 skipped**；
+1. **分支领先 origin/main 12 个提交，全部未发版**。`feat/dshell-wsl-device`，HEAD `6213e7e`，
+   已推 origin 并在 PR #70 上。12 个包的 `package.json` **仍是 `0.1.16`**，
+   npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
+2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**778 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
 3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
    （`ProcessCommand` 改成真 duplex，读写两侧分开），`env` 经 `WSLENV` 桥接进 distro，
@@ -27,28 +27,25 @@
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main（本文写作时 13 个），PR #70 | `git status -sb`、`git rev-list --count origin/main..HEAD` |
-| HEAD | 本文写作时是 `cff4c24`（`docs(dshell): align the handover's numbers with HEAD`） | `git log --oneline -1` |
-| main | 本地 `main` = `a38d27c`；`origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
+| 当前分支 | `feat/dshell-wsl-device`，已推 origin，**领先 origin/main**（本文写作时 13 个提交）（PR #70） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
+| HEAD | 本文写作时 `642025d`（`docs(dshell): align the handover's numbers with HEAD`） | `git log --oneline -1` |
+| main | 本地 `main` = `origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
 | 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
 | 包 | **12 个**，全部 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
 | npm 上 | `latest` = `0.1.16` | `npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新 `dshell-v0.1.16` → `b3d72f9`（2026-10-31）；**0.1.17 线还没有 tag** | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | dsh pin | `dsh-v0.2.1-rc.3`（`dsh-upstream.json`） | `cat dsh-upstream.json` |
-| 测试 | 76 files passed + 1 skipped / **782 tests passed / 44 skipped** | `pnpm run test` |
+| 测试 | 76 files passed + 1 skipped / **778 tests passed / 44 skipped** | `pnpm run test` |
 | 类型 | 干净（`tsc -b tsconfig.host.json`、`tsc -b tsconfig.client.json` 均 exit 0） | `pnpm run typecheck` |
 | 工具链 | **本机 Node 是 `v22.14.0`，而 `package.json` 的 `engines` 要 `>=24.11.0`** | `node -v` |
 | WSL 实测机 | Windows + WSL2 `Ubuntu-24.04`（默认）+ 一个 dshbox 容器 distro | `wsl.exe --list --verbose` |
 
 **表里的提交数、HEAD 和测试数都是本文写作那一刻的快照**，不是承诺。合并或再提交之后它们
 就会差一点；以右边「怎么复核」那一列的命令为准，别以本文的数字为准。
-
 **Node 版本那条要当真**：门禁是在 v22.14.0 上跑绿的，而 `engines` 要求 `>=24.11.0`。
 发布前在一个满足 engines 的 Node 上再跑一遍门禁。
 
 ## 2. 分支相对 origin/main 的提交是什么
-（`git rev-list --count origin/main..HEAD` 会多算一个 `82e1bf5`——那是 PR #69，已经在
-origin/main 上了，不在这张表里。）
 
 | 提交 | 内容 |
 |---|---|
@@ -64,7 +61,10 @@ origin/main 上了，不在这张表里。）
 | `86420ed` | **黑屏修复**：shell region 的网格变化时重建，不再追加空 delta |
 | `1b4a7af` | **registry 能力位**：`helper` / `reachable` / 逐接缝拒绝语，SSH 包不再提 wsl |
 | `6213e7e` | **文档**：roadmap 压缩到 40%、补全缺失 phase；handoff 按当前状态重写；删掉 upgrade-0.1.6 |
-| `6589872` | **审核修复**：provider 声明 `helper`/`reachable` 能力位；黑屏修复的两处回归（首帧空白、流式追加失效）；文档数字对齐 |
+| `642025d` | **审核修复后的文档对齐**：能力位声明、两处渲染回归的修法说明、以及本文这些数字的快照化 |
+
+（`git rev-list --count origin/main..HEAD` 会比表里多一个：本文自己那一个提交。`82e1bf5` 是
+origin/main 的尖端，按定义不在这个区间里，所以不列。）
 
 `5c0c79e` 是这批里结构性的那个：WSL 支持原先长在 `dshell-ssh` 里（一个 transport 文件、
 device store 里的 WSL 分支、router 里的探测循环、forward 接缝里写死的拒绝语、客户端里的
@@ -128,7 +128,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 ### ② 还没做的（这些是欠着的，不是可以顺手带过的）
 
 - **合 main**：分支领先 origin/main（本文写作时 13 个提交），还没合。
-- **合 main**：分支领先 origin/main（本文写作时 13 个提交），还没合。
+- **`0.1.17` 版本号提升**：12 个包的 `package.json` 全是 `0.1.16`。
 - **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
 - **WSL 的真机验收**：目前只在**一台** Windows + WSL2 机器上量过（Ubuntu-24.04 + 一个
@@ -163,7 +163,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 cd <repo-root>
 git status -sb                 # 应显示与 origin/feat/dshell-wsl-device 同步、工作区干净
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 782 passed / 44 skipped + 干净
+pnpm run test && pnpm run typecheck     # 期望 778 passed / 44 skipped + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 ```
 
