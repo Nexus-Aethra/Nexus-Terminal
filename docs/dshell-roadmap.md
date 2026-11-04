@@ -132,7 +132,7 @@ every commit). What it carries is phases 10.49, 10.50 and 10.51, and each one's
 | **10.49** — the 管理台 | one settings section for the whole suite, with a child seat each package contributes into | every edge to dshell-ssh is a RUNTIME seat, never a build-time import |
 | **10.50** — WSL2 as a built-in device | a WSL2 distribution is a derived device row with its own transport, behind a provider registry | the exec door carried both directions on one stream and dropped its stdout — fixed by giving the command a real duplex, and re-measured |
 | **10.51** — port forwards | a TCP tunnel from the reader's machine to a device's port, in the panel and in the model's hands | the two directions are moved by hand, not by `pipe` — `pipe` ends the destination when the source ends |
-| **10.52** — dsh 0.2.2-rc.1 support | the peer window widens to `<0.2.3-0`, verified in a dshbox container | a window is only as good as the surface review behind it — the local `dsh/` mirror still pins 0.2.1-rc.3 |
+| **10.52** — dsh 0.2.2-rc.1 support | the peer window widens to `<0.2.3-0`; the surface is read by a checkout-agnostic spec | the pin still says 0.2.1-rc.3, so the release gate guards 0.2.1's names — the reading is done, the pin move is not |
 
 ---
 ## Phase 10.31 — a palette that knows which surface it is on
@@ -1872,14 +1872,18 @@ manifest carrying the same window.
 
 ### What is still owed
 
-**The local `dsh/` mirror still pins `dsh-v0.2.1-rc.3`.** That is deliberate — the
-pin is what `fetch-upstream.mjs` materializes and what `upstream-surface.spec.ts`
-reads — but it means the surface guard is still asserting against 0.2.1's names,
-not 0.2.2's. A dsh release may drop or rename any name dshell reaches for while
-dshell's peer ranges still admit that release, and the version gate cannot see
-that: it compares numbers, not names. So the window widening is necessary but not
-sufficient — moving the pin to `0.2.2-rc.1` and re-running that spec is the other
-half, and it is not done.
+**The pin still says 0.2.1-rc.3, so the release gate still guards 0.2.1's surface.**
+That is deliberate — the pin is what `fetch-upstream.mjs` materializes — but it
+means `upstream-surface.spec.ts` asserts against 0.2.1's names, not 0.2.2's. The
+window widening is therefore necessary but not sufficient on its own.
+
+The other half is a reading, and it now exists:
+`scripts/tests/upstream-surface-any.spec.ts` asks the same question of any checkout
+named by `DSH_SURFACE_ROOT`. Measured against a 0.2.2-rc.1 mirror: 156 services,
+109 slots, 62 events, and `missingSurface` empty — every name dshell reaches for is
+still there. The pinned 0.2.1-rc.3 checkout measures 146/103/62, so 0.2.2 added ten
+services and six slots and dropped none that dshell uses. Moving the pin and
+re-running the release gate is what remains.
 
 **`0.2.2-rc.1` is a release candidate.** It is verified here on one Windows + WSL2
 machine in one container. A `0.2.2` final, or a `0.2.3`, is outside the window by

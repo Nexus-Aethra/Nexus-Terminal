@@ -136,9 +136,11 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 - **`0.1.17` 版本号提升**：12 个包的 `package.json` 全是 `0.1.16`。
 - **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
-- **0.2.2 的真机验收还差一半**：peer 窗口已放到 `<0.2.3-0`，`0.2.2-rc.1` 在一个 dshbox 容器里
-  装上了、GUI 起来了、WSL 终端与 `router.test` 都通了（读数见 §6）。但**本地 `dsh/` 镜像仍钉在
-  `dsh-v0.2.1-rc.3`**，所以 `scripts/tests/upstream-surface.spec.ts` 守的是 0.2.1 的面，不是 0.2.2 的面。
+- **0.2.2 的 surface 读数有了，但 pin 还没移**：`scripts/tests/upstream-surface-any.spec.ts`
+  可以指向任意 checkout（`DSH_SURFACE_ROOT=<路径>`），已对 `dsh-v0.2.2-rc.1` 镜像量过：
+  services 156 / slots 109 / events 62，dshell 用到的名字一个没少（0.2.1 是 146/103/62）。
+  但 `dsh/` 镜像和 `dsh-upstream.json` 的 pin 仍钉在 `dsh-v0.2.1-rc.3`，所以**发布门禁守的
+  还是 0.2.1 的面**。把 pin 移过去是剩下的那一半。
 - **WSL 的真机验收**：目前只在**一台** Windows + WSL2 机器上量过（Ubuntu-24.04 + 一个
   dshbox 容器 distro）。WSL1 被过滤掉了，没验过；非 Windows 主机上 `wsl.exe` 不存在，
   内建行不出现，也还没在那种机器上跑过。
@@ -206,6 +208,7 @@ runtime，12 个 dshell 包全部 symlink 到本检出）：
 | `router.test` | `已连接 gpumem@LAPTOP-65SFEHRB（Linux 5.15.167 (microsoft-standard-WSL2)） · 334ms` |
 | 主机密钥信任 | **未出现** `主机密钥 SHA256:…` 行——能力位生效 |
 | helper 部署 | 400 拒绝（provider 自己的话） |
+| **surface 检查** | 156 services / 109 slots / 62 events，`missingSurface` 为空 |
 
 门禁：`vitest` 76 files passed + 1 skipped / 782 passed / 44 skipped；两个 `tsc -b` exit 0；
 `node scripts/sync-host-range.mjs --check` 全部一致。
