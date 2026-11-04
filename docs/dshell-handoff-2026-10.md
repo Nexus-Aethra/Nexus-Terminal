@@ -4,8 +4,10 @@
 [`dshell-architecture.md`](./dshell-architecture.md)、[`dshell-packages.md`](./dshell-packages.md)，
 上手顺序看 [`README.md`](./README.md)。
 
-本文里的每条读数都是 2026-11-04 在本机（Windows + WSL2，`<repo-root>`）复跑或复扫得到的，
-命令一起写出来了，可以直接推翻我。
+本文里的读数分两批，都标了日期和来源：**§1–§5 是 2026-11-04 在本机**（Windows + WSL2，
+`<repo-root>`）复跑或复扫得到的，命令一起写出来了，可以直接推翻我；**§6 是 2026-11-05 在
+dshbox 容器里**量的（模板 `dsh-v0.2.2-rc.1`，宿主 runtime），容器跑的是本分支的代码，
+但逐条命令没有随读数附上——要复核按 §6 自己写的方法重跑。
 
 **这份文档取代 2026-10-19 那一版**——那一版的版本号、测试计数和工作区状态三条都已过时。
 文件名里的 `2026-10` 是**第一次交接的日期，为了链接不断而保留**：别的文档（roadmap 的
@@ -13,24 +15,23 @@
 
 ## 0. 三句话状态
 
-1. **分支领先 origin/main，全部未发版**（`git rev-list --count origin/main..HEAD` 就是数；
-   本文写作时 HEAD 是 `1d29161`）。
-   `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
-   **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
+1. **WSL 这条线已经全部合进 main 了**（PR #70 与 #71，均 squash-merge）。12 个包的
+   `package.json` **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16`
+   指向 `b3d72f9`（2026-10-31）。**`0.1.17` 的版本号提升、发布、打 tag 全都还没做。**
 2. **门禁全绿**：`vitest` 77 files passed + 1 skipped，**786 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
 3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
    （`ProcessCommand` 改成真 duplex，读写两侧分开），`env` 经 `WSLENV` 桥接进 distro，
    文件面板依赖的三条 exec 都答得出内容；shell 门（ConPTY）一直是好的。见 §3 ①。
-    修复在 `7d1e953`，与 registry 能力位（`1b4a7af`）、黑屏修复（`86420ed`）、
-    文档（`6213e7e`）同批，都已在 PR #70 里。
+   修复随 PR #70（exec 门、registry 能力位、黑屏、文档）与 PR #71（0.2.2 窗口）合入 main；
+   两边都过了独立审核。
+
 ## 1. 现场快照
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main，PR #70（条数见右边的复核命令） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
-| HEAD | 本文写作时 `1d29161`（`docs(dshell): let the command answer the commit count`） | `git log --oneline -1` |
-| main | 本地 `main` = `a38d27c`；`origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
+| 当前分支 | 本文写作时在 `docs/022-review-polish` 上；`main` 已含 PR #70 与 #71 | `git status -sb`、`git log --oneline -3 main` |
+| main | `36f3082`（#71 的合并提交）；本地 `main` 与 `origin/main` 均在此 | `git log --oneline -1 main`、`git log --oneline -1 origin/main` |
 | 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
 | 包 | **12 个**，全部 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
 | npm 上 | `latest` = `0.1.16` | `npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
@@ -48,7 +49,7 @@
 **Node 版本那条要当真**：门禁是在 v22.14.0 上跑绿的，而 `engines` 要求 `>=24.11.0`。
 发布前在一个满足 engines 的 Node 上再跑一遍门禁。
 
-## 2. 分支相对 origin/main 的提交是什么
+## 2. 已合进 main 的提交是什么
 
 | 提交 | 内容 |
 |---|---|
@@ -67,8 +68,8 @@
 | `6589872` | **审核修复**：provider 声明 `helper`/`reachable` 能力位；修掉首帧空白与流式追加失效两处回归 |
 | `642025d` | **文档数字快照化**：把提交数 / HEAD / 测试数统一改成「本文写作时」并加注记 |
 | `75e0527` | **文档修复**：恢复上一轮文档编辑误删的 H1 与「0.1.17 版本号提升」待办；§2 补回 `6589872` |
-
-（`git rev-list --count origin/main..HEAD` 会比表里多两个：`f6e4949` 和 `1d29161`，都是本文自己
+（这些都是**已合入**的：PR #70 与 #71 各自 squash 成一个提交 `2069b83` 与 `36f3082`，
+所以上面这些 SHA 在 main 上看不到，要看得 `git log` 那两个合并提交的正文。）
 这一系的提交。`82e1bf5` 是 origin/main 的尖端，按定义不在这个区间里，所以不列。）
 
 `5c0c79e` 是这批里结构性的那个：WSL 支持原先长在 `dshell-ssh` 里（一个 transport 文件、
@@ -132,7 +133,6 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 
 ### ② 还没做的（这些是欠着的，不是可以顺手带过的）
 
-- **合 main**：分支领先 origin/main，还没合（条数见 §1 表里的复核命令）。
 - **`0.1.17` 版本号提升**：12 个包的 `package.json` 全是 `0.1.16`。
 - **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
@@ -144,15 +144,11 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 - **WSL 的真机验收**：目前只在**一台** Windows + WSL2 机器上量过（Ubuntu-24.04 + 一个
   dshbox 容器 distro）。WSL1 被过滤掉了，没验过；非 Windows 主机上 `wsl.exe` 不存在，
   内建行不出现，也还没在那种机器上跑过。
-- **PR #70 待审待合**：exec 门修复（`7d1e953`）、registry 能力位（`1b4a7af`）、
-  黑屏修复（`86420ed`）和文档（`6213e7e`）都已提交并推到 origin，在 PR #70 上。
-  `docs/dshell-upgrade-0.1.6.md` 的删除也已在 `6213e7e` 里，`repo-hygiene` 因此全绿。
-  合之前要有人核过（PR 描述里列了实测读数）。
 
 ## 4. 交接纪律（先读这条再看代码）
 
 - **绝不 `git add -A`**；按路径 add。**不直接提交 main**；合 main、发版、打 tag、推分支
-  先问人。本次已获授权推 `feat/dshell-wsl-device`，**仅此一次**，不代表以后可以自己推。
+  先问人。历史授权只覆盖当时那一个分支，不代表以后可以自己推。
 - **发布必须 `pnpm publish`**（`npm publish` 会把 `workspace:` 原样发出去，装的人
   `EUNSUPPORTEDPROTOCOL`；0.1.4 就是这么报废的）。12 个包按依赖序、`dshell-bundle` 最后；
   坏版本撤不掉（token 是 bypass-2FA granular，`npm unpublish` 403），只能 `npm deprecate` +
@@ -171,7 +167,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 
 ```sh
 cd <repo-root>
-git status -sb                 # 应显示与 origin/feat/dshell-wsl-device 同步、工作区干净
+git status -sb                 # 应显示与 origin 同步、工作区干净
 pnpm i
 pnpm run test && pnpm run typecheck     # 期望 786 passed / 44 skipped + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
@@ -180,9 +176,9 @@ pnpm --filter "@nexus-aethra/dshell-*" run build
 > 本机 `pnpm` 不在 PATH 上时，用 `node_modules\.bin\vitest.CMD run` 和
 > `node_modules\.bin\tsc.CMD -b tsconfig.host.json` / `tsconfig.client.json` 直接跑。
 
-**第一件该做的事是把 PR #70 走过审核合掉**：分支已经在 origin 上，PR 已开，描述里列了
-四项改动各自的根因与实测读数。审核要独立核，blocker 清完才能合；合完按 § 3 ② 的次序走：
-合 main → `0.1.17` → 发布 → tag，每一步都先问人。
+**第一件该做的事是 `0.1.17`**：12 个包的 `package.json` 还全是 `0.1.16`，而 npm `latest`
+也是 `0.1.16`——也就是说这条分支上所有的 WSL / 0.2.2 工作，现在都还不在任何已发布的包里。
+版本号提升之后按 § 3 ② 的次序走：发布 → tag，每一步都先问人。
 **分支模型**（`dshell-setup.md` 写死了这条）：`main` 只放已发布的线，**不直接提交**；
 一个开发方向一条分支，走 PR **squash-merge** 进 main，合完删分支。判断"某分支的活是否已进 main"
 要**比树**（`git diff --stat origin/main <branch>` 为空即已进），不要看祖先关系——squash 之后
@@ -206,7 +202,7 @@ runtime，12 个 dshell 包全部 symlink 到本检出）：
 | 绑定会话 | `bind` 200，mount 落到 `mnt\wsl-Ubuntu-24.04\~` |
 | WSL 终端 | `echo DSHELL_022_OK_42` → `42`，Ubuntu 24.04 LTS 欢迎语与系统信息都在 |
 | `router.test` | `已连接 gpumem@LAPTOP-65SFEHRB（Linux 5.15.167 (microsoft-standard-WSL2)） · 334ms` |
-| 主机密钥信任 | **未出现** `主机密钥 SHA256:…` 行——能力位生效 |
+| 主机密钥信任 | **未出现** `主机密钥 SHA256:…` 行——能力位生效（`wsl.spec.ts` 直接断言 `provider.reachable === false`） |
 | helper 部署 | 400 拒绝（provider 自己的话） |
 | **surface 检查** | 156 services / 109 slots / 62 events，`missingSurface` 为空 |
 
