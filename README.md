@@ -125,7 +125,7 @@ The release after it adds five more. All five are on this branch today; the publ
 | **The 管理台** | dsh's Settings gains a **dshell** section — one page that gathers the whole suite's settings | **设备与凭据**, **WSL 发行版** and **终端与数据** as three cards on one page, instead of a configure control per plugin row |
 | **A ConPTY repaint no longer blanks the terminal** | On Windows, a program that repaints its whole screen after a resize — the ConPTY signature — left a **blank wall above the prompt** | The region renders the rows that carry ink and cuts the dead frame around them, so the row count and the bytes agree again |
 | **A session switch keeps its prompt** | Switching to a session and back reset its readiness, so a live device session flashed the first-dial panel over a terminal that was about to work | That the session reached a prompt is remembered for the page's life, and seeded while the rebind handshake runs |
-| **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2-rc.1` — **the published `0.1.14` does not install there at all** |
+| **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2` — **the published `0.1.14` does not install there at all** |
 
 ---
 
@@ -156,9 +156,8 @@ a line dshell already runs on installs without waiting for a dshell release. The
 file, `dsh-upstream.json` (`support.range`), and every manifest carries it:
 `0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0`.
 So `0.2.1-rc.3` — and every later `0.2.1` release — installs without waiting for a dshell
-release, and `0.2.2-rc.1` installs too — verified against a live container on this branch. A newer minor
-line than that window still wants a surface review. Installing a dsh from a newer minor
-line is what `allow-version` is for — `dsh plugin --profile <name>
+release, and `0.2.2-rc.1` installs too — verified against a live container on this branch. A dsh from
+a newer minor line than that window is what `allow-version` is for — `dsh plugin --profile <name>
 allow-version <package@version> --dsh-version <exact> --accept-risk`, which records the grant in
 the profile's `compatibility.json`.
 

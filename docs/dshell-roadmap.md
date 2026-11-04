@@ -1641,7 +1641,7 @@ device model whole and answers the refusal the local plan cannot.
   The bridge's own settle injection is transport-agnostic, so the command
   splitter, the block log and the completion warm trigger all work over this
   path unchanged.
-- **The gate on this branch**: 76 vitest files passed + 1 skipped, **782 tests
+- **The gate on this branch**: 77 vitest files passed + 1 skipped, **786 tests
   passed, 44 skipped**; `tsc -b tsconfig.host.json` exit 0;
   `tsc -b tsconfig.client.json` exit 0.
   (The three `repo-hygiene` failures that appear before the deletion of
@@ -1871,7 +1871,7 @@ A dshbox container built from the `dsh-v0.2.2-rc.1` template, host runtime so
 | host-key trust | the `主机密钥 SHA256:…` line does NOT appear — the capability bits hold |
 | helper deploy | refused, in the provider's own words |
 
-Gates on this branch: 76 vitest files passed + 1 skipped, 782 tests passed / 44
+Gates on this branch: 77 vitest files passed + 1 skipped, 786 tests passed / 44
 skipped; both `tsc -b` builds exit 0; `sync-host-range.mjs --check` reports every
 manifest carrying the same window.
 

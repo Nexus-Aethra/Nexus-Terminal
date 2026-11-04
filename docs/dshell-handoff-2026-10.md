@@ -17,7 +17,7 @@
    本文写作时 HEAD 是 `1d29161`）。
    `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
    **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
-2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**782 tests passed / 44 skipped**；
+2. **门禁全绿**：`vitest` 77 files passed + 1 skipped，**786 tests passed / 44 skipped**；
    `tsc -b tsconfig.host.json` 与 `tsc -b tsconfig.client.json` 均 exit 0。
 3. **WSL 这条线现在整条通了，而且已经提交**：exec 门丢 stdout 的洞已修并复量
    （`ProcessCommand` 改成真 duplex，读写两侧分开），`env` 经 `WSLENV` 桥接进 distro，
@@ -37,7 +37,7 @@
 | tag | 最新 `dshell-v0.1.16` → `b3d72f9`（2026-10-31）；**0.1.17 线还没有 tag** | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | dsh pin | `dsh-v0.2.1-rc.3`（`dsh-upstream.json`） | `cat dsh-upstream.json` |
 | dsh 支持窗口 | `>=0.2.1-rc.2 <0.2.3-0`（含 `0.2.2-rc.1`，已在容器里实测） | `node scripts/sync-host-range.mjs --check` |
-| 测试 | 76 files passed + 1 skipped / **782 tests passed / 44 skipped** | `pnpm run test` |
+| 测试 | 77 files passed + 1 skipped / **786 tests passed / 44 skipped** | `pnpm run test` |
 | 类型 | 干净（`tsc -b tsconfig.host.json`、`tsc -b tsconfig.client.json` 均 exit 0） | `pnpm run typecheck` |
 | 工具链 | **本机 Node 是 `v22.14.0`，而 `package.json` 的 `engines` 要 `>=24.11.0`** | `node -v` |
 | WSL 实测机 | Windows + WSL2 `Ubuntu-24.04`（默认）+ 一个 dshbox 容器 distro | `wsl.exe --list --verbose` |
@@ -173,7 +173,7 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 cd <repo-root>
 git status -sb                 # 应显示与 origin/feat/dshell-wsl-device 同步、工作区干净
 pnpm i
-pnpm run test && pnpm run typecheck     # 期望 782 passed / 44 skipped + 干净
+pnpm run test && pnpm run typecheck     # 期望 786 passed / 44 skipped + 干净
 pnpm --filter "@nexus-aethra/dshell-*" run build
 ```
 
@@ -210,5 +210,5 @@ runtime，12 个 dshell 包全部 symlink 到本检出）：
 | helper 部署 | 400 拒绝（provider 自己的话） |
 | **surface 检查** | 156 services / 109 slots / 62 events，`missingSurface` 为空 |
 
-门禁：`vitest` 76 files passed + 1 skipped / 782 passed / 44 skipped；两个 `tsc -b` exit 0；
+门禁：`vitest` 77 files passed + 1 skipped / 786 passed / 44 skipped；两个 `tsc -b` exit 0；
 `node scripts/sync-host-range.mjs --check` 全部一致。
