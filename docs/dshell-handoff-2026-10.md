@@ -14,7 +14,7 @@
 ## 0. 三句话状态
 
 1. **分支领先 origin/main，全部未发版**（`git rev-list --count origin/main..HEAD` 就是数；
-   本文写作时 HEAD 是 `f6e4949`）。
+   本文写作时 HEAD 是 `1d29161`）。
    `feat/dshell-wsl-device`，已推 origin 并在 PR #70 上。12 个包的 `package.json`
    **仍是 `0.1.16`**，npm `latest` 也是 `0.1.16`，最新 tag `dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
 2. **门禁全绿**：`vitest` 76 files passed + 1 skipped，**782 tests passed / 44 skipped**；
@@ -28,8 +28,8 @@
 
 | 事项 | 读数 | 怎么复核 |
 |---|---|---|
-| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main，PR #70（条数见左边的复核命令） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
-| HEAD | 本文写作时 `642025d`（`docs(dshell): align the handover's numbers with HEAD`） | `git log --oneline -1` |
+| 当前分支 | `feat/dshell-wsl-device`，已推 origin，领先 origin/main，PR #70（条数见右边的复核命令） | `git status -sb`、`git rev-list --count origin/main..HEAD` |
+| HEAD | 本文写作时 `1d29161`（`docs(dshell): let the command answer the commit count`） | `git log --oneline -1` |
 | main | 本地 `main` = `a38d27c`；`origin/main` = `82e1bf5`（PR #69 已合入） | `git log --oneline -1 origin/main` |
 | 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
 | 包 | **12 个**，全部 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
@@ -67,7 +67,7 @@
 | `642025d` | **文档数字快照化**：把提交数 / HEAD / 测试数统一改成「本文写作时」并加注记 |
 | `75e0527` | **文档修复**：恢复上一轮文档编辑误删的 H1 与「0.1.17 版本号提升」待办；§2 补回 `6589872` |
 
-（`git rev-list --count origin/main..HEAD` 会比表里多两个：`642025d` 和 `75e0527`，都是本文自己
+（`git rev-list --count origin/main..HEAD` 会比表里多两个：`f6e4949` 和 `1d29161`，都是本文自己
 这一系的提交。`82e1bf5` 是 origin/main 的尖端，按定义不在这个区间里，所以不列。）
 
 `5c0c79e` 是这批里结构性的那个：WSL 支持原先长在 `dshell-ssh` 里（一个 transport 文件、
