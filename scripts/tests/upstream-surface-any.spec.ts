@@ -11,55 +11,36 @@
  *
  *   DSH_SURFACE_ROOT=path/to/dsh vitest run scripts/tests/upstream-surface-any.spec.ts
  *
- * The default is the pinned mirror, so a plain run reads the same checkout as the
- * release gate and the two agree.
+ * With no variable set it reads the pinned mirror, so a plain run reports the same
+ * checkout as the release gate and the two agree — the title names which one it got.
  */
-import { describe, expect, it } from 'vitest'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import {
   DSHELL_SURFACE,
-  UPSTREAM_SURFACE_FILES,
   missingSurface,
-  readUpstreamSurface,
+  readSurfaceAt,
   type SurfaceGap,
 } from '../upstream-surface.ts'
 
 // Any dsh checkout can be measured: point DSH_SURFACE_ROOT at it. The default is
-// the pinned mirror, so the plain `vitest run` reading is unchanged.
-const MIRROR = process.env.DSH_SURFACE_ROOT ?? fileURLToPath(new URL('../../dsh', import.meta.url))
+// the pinned mirror, which is what the release gate reads.
+const ROOT = process.env.DSH_SURFACE_ROOT ?? fileURLToPath(new URL('../../dsh', import.meta.url))
+const WHICH = process.env.DSH_SURFACE_ROOT === undefined ? 'the pinned mirror' : ROOT
 
-function readMirrorFile(p: string): string {
-  return readFileSync(join(MIRROR, p), 'utf8')
-}
+// Awaited at the top of every test rather than at module scope: a checkout that
+// cannot be read must fail the test that asked for it, not the collection of the
+// whole file, so the failure names the checkout.
+let declared: Awaited<ReturnType<typeof readSurfaceAt>>
 
-function listMirrorSources(): readonly string[] {
-  const found: string[] = []
-  const skip = new Set(['node_modules', 'lib', 'dist'])
-  const walk = (dir: string): void => {
-    for (const name of readdirSync(dir)) {
-      if (skip.has(name)) continue
-      const p = join(dir, name)
-      const entry = statSync(p)
-      if (entry.isDirectory()) walk(p)
-      else if (name.endsWith('.ts') && !name.endsWith('.spec.ts')) {
-        found.push(relative(MIRROR, p).replaceAll('\\', '/'))
-      }
-    }
-  }
-  walk(join(MIRROR, 'packages'))
-  return found
-}
-
-const declared = readUpstreamSurface(readMirrorFile, listMirrorSources)
+beforeAll(async () => { declared = await readSurfaceAt(ROOT) })
 
 function describeGap(gap: SurfaceGap): string {
   return gap.kind + " '" + gap.name + "' (used at " + gap.usedAt + ')'
 }
 
-describe('the dsh surface dshell consumes, against the checkout named by DSH_SURFACE_ROOT', () => {
-  it('is declared by the 0.2.2-rc.1 mirror', () => {
+describe('the dsh surface dshell consumes, against ' + WHICH, () => {
+  it('is declared by that checkout', () => {
     expect(missingSurface(DSHELL_SURFACE, declared).map(describeGap)).toEqual([])
   })
 
@@ -68,20 +49,20 @@ describe('the dsh surface dshell consumes, against the checkout named by DSH_SUR
     expect(clientOnly.filter(name => !declared.services.has(name))).toEqual([])
   })
 
-  it('reads a mirror that has the catalogs it depends on', () => {
+  it('reads a checkout that has the catalogs it depends on', () => {
+    // The reader refuses a checkout whose catalogs are missing or empty, so
+    // reaching here at all is the proof these are populated. The numbers are
+    // asserted rather than merely logged, so a checkout that shrank below the
+    // surface dshell needs fails instead of reporting a smaller reading.
     expect(declared.services.size).toBeGreaterThan(100)
     expect(declared.slots.size).toBeGreaterThan(50)
     expect(declared.events.size).toBeGreaterThan(20)
   })
 
   it('reports what it measured', () => {
-    // A gate that found nothing would pass silently; this makes the reading visible.
-    console.log('MEASURED services=' + declared.services.size + ' slots=' + declared.slots.size + ' events=' + declared.events.size)
-    expect(declared.services.size).toBeGreaterThan(0)
-  })
-  it('has the three catalog files the reader needs', () => {
-    for (const p of Object.values(UPSTREAM_SURFACE_FILES)) {
-      expect(() => readMirrorFile(p)).not.toThrow()
-    }
+    // The reading itself, so a run's output says which checkout answered and how
+    // much of it there was. Printed rather than asserted: the assertions above
+    // are the gate, this is the evidence.
+    console.log('SURFACE ' + WHICH + ' services=' + declared.services.size + ' slots=' + declared.slots.size + ' events=' + declared.events.size)
   })
 })

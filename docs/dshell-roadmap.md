@@ -1843,10 +1843,15 @@ risk explicitly, grant the exact-version exemption ... with `dsh plugin allow-ve
 
 The window is one string in `dsh-upstream.json` (`support.range`) that
 `scripts/sync-host-range.mjs` writes into every manifest, so widening it is a
-one-line change plus the sync — 213 declaration sites move together or a profile
+one-line change plus the sync — 219 declaration sites move together or a profile
 activates some rows and silently disables the rest. The new upper bound is
-`<0.2.3-0`, checked with semver before it was written: `0.2.2-rc.1` and
-`0.2.2-alpha.3` satisfy it, `0.2.3-rc.1` and `0.3.0` do not.
+`<0.2.3-0`. Checked before it was written — with `includePrerelease: true`, which
+is the semantics both gates that matter use: dsh's own check
+(`dsh/packages/boot/app-boot/src/plugin-compatibility.ts`) and this repo's
+`scripts/tests/manifest-contract.spec.ts`. Under that reading `0.2.2-rc.1`,
+`0.2.2-alpha.3` and `0.2.2` all satisfy the range while `0.2.3-rc.1`, `0.2.3` and
+`0.3.0` do not. It is a strict superset of the old range: nothing the old window
+admitted was dropped.
 
 ### What was verified, and where
 
@@ -1886,5 +1891,5 @@ services and six slots and dropped none that dshell uses. Moving the pin and
 re-running the release gate is what remains.
 
 **`0.2.2-rc.1` is a release candidate.** It is verified here on one Windows + WSL2
-machine in one container. A `0.2.2` final, or a `0.2.3`, is outside the window by
-construction and wants its own pass.
+machine in one container. A `0.2.2` final is inside the window by construction and
+has NOT been verified; `0.2.3` and beyond are outside it and want their own pass.

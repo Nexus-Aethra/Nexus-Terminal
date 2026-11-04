@@ -116,7 +116,7 @@ device routing ([SSH device sessions](#ssh-device-sessions)), and the pipes and 
 no longer pins a single dsh version but names a **window** of them, so every `0.2.1` release —
 `0.2.1-rc.5`, today's `latest`, included — installs without waiting for a dshell release.
 
-The release after it adds four more. All four are on this branch today; the published
+The release after it adds five more. All five are on this branch today; the published
 `0.1.16` does not have them yet.
 
 | | What changed | What you notice |
@@ -137,14 +137,14 @@ Two ways in: install the published plugins into a dsh you already have, or build
 
 Prerequisites: **dsh** `0.2.1-rc.5` — either the desktop app, or the CLI
 (`npm install -g @deepseek-ai/dsh@latest`) — and **Node >= 24.11.0** with **pnpm 9.15.0** on `PATH`
-(`dsh plugin` forwards to pnpm). On npm, `latest` is `0.2.1-rc.5` and `next` is `0.2.2-rc.1` — and
-`next` is already past the window dshell supports, so install `latest`.
+(`dsh plugin` forwards to pnpm). On npm, `latest` is `0.2.1-rc.5` and `next` is `0.2.2-rc.1` —
+and both sit inside the window dshell declares, so either installs.
 
 Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.16`** — the npm `latest` dist-tag |
+| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.17`** — on this branch; the published `0.1.16` still carries `<0.2.2-0` and refuses `0.2.2-rc.1` |
 | `0.2.1-rc.3` only | **`0.1.15`** — superseded by `0.1.16` |
 | `0.2.1-rc.2` | **`0.1.14`** |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** |
@@ -158,6 +158,7 @@ file, `dsh-upstream.json` (`support.range`), and every manifest carries it:
 So `0.2.1-rc.3` — and every later `0.2.1` release — installs without waiting for a dshell
 release, and `0.2.2-rc.1` installs too — verified against a live container on this branch. A newer minor
 line than that window still wants a surface review. Installing a dsh from a newer minor
+line is what `allow-version` is for — `dsh plugin --profile <name>
 allow-version <package@version> --dsh-version <exact> --accept-risk`, which records the grant in
 the profile's `compatibility.json`.
 
