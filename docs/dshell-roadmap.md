@@ -132,6 +132,7 @@ every commit). What it carries is phases 10.49, 10.50 and 10.51, and each one's
 | **10.49** — the 管理台 | one settings section for the whole suite, with a child seat each package contributes into | every edge to dshell-ssh is a RUNTIME seat, never a build-time import |
 | **10.50** — WSL2 as a built-in device | a WSL2 distribution is a derived device row with its own transport, behind a provider registry | the exec door carried both directions on one stream and dropped its stdout — fixed by giving the command a real duplex, and re-measured |
 | **10.51** — port forwards | a TCP tunnel from the reader's machine to a device's port, in the panel and in the model's hands | the two directions are moved by hand, not by `pipe` — `pipe` ends the destination when the source ends |
+| **10.52** — dsh 0.2.2-rc.1 support | the peer window widens to `<0.2.3-0`, verified in a dshbox container | a window is only as good as the surface review behind it — the local `dsh/` mirror still pins 0.2.1-rc.3 |
 
 ---
 ## Phase 10.31 — a palette that knows which surface it is on
@@ -1827,3 +1828,59 @@ The handover document
 state, what is released, what is owed, and what is open. It is rewritten at each
 handover rather than maintained, so it is the field to read for the present — and
 it goes stale the moment the branch is committed or released.
+
+## Phase 10.52 — dsh 0.2.2-rc.1 joins the window
+
+dsh shipped `0.2.2-rc.1` on its `next` tag, and dshell's peer window stopped at
+`<0.2.2-0` — so a reader on the new dsh could not install the suite at all. The
+rejection is explicit rather than silent, which is the good case:
+
+```
+dsh: installation rejected: Plugin @nexus-aethra/dshell-bundle@0.1.16 is incompatible
+with dsh 0.2.2-rc.1: requirements { ... ">=0.2.1-rc.2 <0.2.2-0" }. ... To accept this
+risk explicitly, grant the exact-version exemption ... with `dsh plugin allow-version`
+```
+
+The window is one string in `dsh-upstream.json` (`support.range`) that
+`scripts/sync-host-range.mjs` writes into every manifest, so widening it is a
+one-line change plus the sync — 213 declaration sites move together or a profile
+activates some rows and silently disables the rest. The new upper bound is
+`<0.2.3-0`, checked with semver before it was written: `0.2.2-rc.1` and
+`0.2.2-alpha.3` satisfy it, `0.2.3-rc.1` and `0.3.0` do not.
+
+### What was verified, and where
+
+A dshbox container built from the `dsh-v0.2.2-rc.1` template, host runtime so
+`wsl.exe` is reachable, with all twelve dshell packages symlinked to this checkout
+— so the container runs the code on this branch, not a published tarball.
+
+| What | Reading |
+|---|---|
+| install | all twelve packages install |
+| GUI | loads; console reports 0 errors |
+| provider | `wsl:Ubuntu-24.04` + the dshbox distro, `builtin: true` |
+| device list API | 200, both WSL rows |
+| bind | 200; mount lands in `mnt\wsl-Ubuntu-24.04\~` |
+| WSL terminal | `echo DSHELL_022_OK_42` answers `42`, with Ubuntu 24.04 LTS's banner and system info |
+| `router.test` | `已连接 gpumem@LAPTOP-65SFEHRB（Linux 5.15.167 (microsoft-standard-WSL2)） · 334ms` |
+| host-key trust | the `主机密钥 SHA256:…` line does NOT appear — the capability bits hold |
+| helper deploy | refused, in the provider's own words |
+
+Gates on this branch: 76 vitest files passed + 1 skipped, 782 tests passed / 44
+skipped; both `tsc -b` builds exit 0; `sync-host-range.mjs --check` reports every
+manifest carrying the same window.
+
+### What is still owed
+
+**The local `dsh/` mirror still pins `dsh-v0.2.1-rc.3`.** That is deliberate — the
+pin is what `fetch-upstream.mjs` materializes and what `upstream-surface.spec.ts`
+reads — but it means the surface guard is still asserting against 0.2.1's names,
+not 0.2.2's. A dsh release may drop or rename any name dshell reaches for while
+dshell's peer ranges still admit that release, and the version gate cannot see
+that: it compares numbers, not names. So the window widening is necessary but not
+sufficient — moving the pin to `0.2.2-rc.1` and re-running that spec is the other
+half, and it is not done.
+
+**`0.2.2-rc.1` is a release candidate.** It is verified here on one Windows + WSL2
+machine in one container. A `0.2.2` final, or a `0.2.3`, is outside the window by
+construction and wants its own pass.
