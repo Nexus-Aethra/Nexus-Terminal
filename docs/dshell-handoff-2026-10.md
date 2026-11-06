@@ -35,7 +35,7 @@ dshbox 容器里**量的（模板 `dsh-v0.2.2-rc.1`，宿主 runtime），容器
 | 当前分支 | 本文写作时在 `feature/device-visibility` 上（设备可见度 + 0.1.17 bump）；`main` 已含 PR #70 与 #71 | `git status -sb`、`git log --oneline -3 main` |
 | main | `89ef983`（#72 的合并提交）；本地 `main` 与 `origin/main` 均在此 | `git log --oneline -1 main`、`git log --oneline -1 origin/main` |
 | 工作区 | **干净**（本文写作时；修复已全部提交） | `git status --short` |
-| 包 | **12 个**，`feature/device-visibility` 上全部 `0.1.17`；`main` 与 npm 上仍是 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
+| 包 | **12 个**，`main` 上全部 `0.1.17`；npm `alpha` 已是 `0.1.17-alpha.1`，`latest` 仍是 `0.1.16` | `for d in packages/dshell/*/; do node -e "console.log(require('./$d/package.json').version)"; done` |
 | npm 上 | `latest` = `0.1.16` | `npm view @nexus-aethra/dshell-bundle dist-tags --registry=https://registry.npmjs.org/` |
 | tag | 最新 `dshell-v0.1.16` → `b3d72f9`（2026-10-31）；**0.1.17 线还没有 tag** | `git ls-remote --tags origin 'refs/tags/dshell-v*'` |
 | dsh pin | `dsh-v0.2.1-rc.3`（`dsh-upstream.json`） | `cat dsh-upstream.json` |
@@ -137,8 +137,14 @@ router.ensureDeviceRoot 的探针        -> /home/gpumem
 
 - **`0.1.17` 版本号提升**：已在 `feature/device-visibility` 分支上完成（12 个包全部 `0.1.17`），
   随该分支的 PR 合入 main。
-- **发布**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，`dshell-bundle` 最后。
-  显式带 `--registry=https://registry.npmjs.org/`。**PR 合并后才能做。**
+- **alpha 已发**：`0.1.17-alpha.1` 已发布到 npm 的 `alpha` dist-tag（12 个包全部，
+  2026-11-06）。按发布策略，alpha **不打 git tag、不发 GitHub release**。
+  `latest` 仍是 `0.1.16`。发布用的是 `corepack pnpm publish --registry=… --tag alpha`
+  （本机 `pnpm` 不在 PATH 上，必须走 corepack；`~/.npmrc.publish` 不存在，
+  但 `~/.npmrc` 里的 npmjs token 与 scope 映射是可用的）。
+- **稳定版还没发**：`pnpm publish`（**不要用 `npm publish`**，见 § 4），按依赖序，
+  `dshell-bundle` 最后，显式带 `--registry=https://registry.npmjs.org/`。
+  稳定版才打 git tag `dshell-v0.1.17` 和 GitHub release。
 - **打 tag**：`dshell-v0.1.17` 还不存在；`dshell-v0.1.16` 指向 `b3d72f9`（2026-10-31）。
   按发布策略，alpha/rc 只发 npm dist-tag、**不打 git tag、不发 GitHub release**。
 - **0.2.2 的 surface 读数有了，但 pin 还没移**：`scripts/tests/upstream-surface-any.spec.ts`
