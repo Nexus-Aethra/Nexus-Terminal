@@ -310,6 +310,17 @@ describe('isHiddenDevice', () => {
     expect(isHiddenDevice(distro, ['wsl:Debian-12'])).toBe(false)
   })
 
+  it('stays false when a forged row carries only half the rule', () => {
+    // The two ways a stored row could be smuggled past the rule if either half
+    // were relaxed: a document that gives a stored row auth 'wsl', and one that
+    // gives it builtin true. Neither is reachable today -- asRecord() forces
+    // stored auth to key/password and DeviceStore.view() never sets builtin --
+    // and these pin that so a future change to either cannot open the door.
+    expect(isHiddenDevice({ id: 'web', name: 'web', auth: 'wsl', builtin: undefined }, ['web'])).toBe(false)
+    expect(isHiddenDevice({ id: 'web', name: 'web', auth: 'key', builtin: true }, ['web'])).toBe(false)
+    // The strict === is what rejects a string spelling of the flag.
+    expect(isHiddenDevice({ id: 'wsl:X', name: 'X', auth: 'wsl', builtin: 'true' as unknown as boolean }, ['wsl:X'])).toBe(false)
+  })
   it('never hides a stored device, whatever the document says', () => {
     // A hand-edited document must not be able to make a stored device vanish
     // with no surface left to bring it back: the registry card lists stored
