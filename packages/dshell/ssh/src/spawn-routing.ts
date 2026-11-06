@@ -122,7 +122,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
   // connection was verified against a target which no longer applies.
   router.onDeviceChanged = (deviceId, event) => {
     targets.drop(deviceId)
-    void connections.release(deviceId)
+    void connections.release(deviceId).catch(() => {})
     if (event !== 'bound') return
     // Warm on bind so the first tool call usually finds a helper already there.
     // Nothing depends on it — the seam falls back on its own — so a failure is
@@ -202,7 +202,7 @@ export function installSpawnRouting(ctx: Context, router: SshRouter): () => void
     target.spawn = original
     router.onDeviceChanged = undefined
     router.helperConnection = undefined
-    void connections.disposeAll()
+    void connections.disposeAll().catch(() => {})
     deviceTransport().releaseAll()
   }
 }

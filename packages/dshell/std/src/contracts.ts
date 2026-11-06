@@ -680,6 +680,17 @@ export interface DshellForwardResponse {
 export const SSH_SETTINGS_NAMESPACE = 'dshell-ssh'
 
 /**
+ * Field carrying the device ids the reader hid from the pickers.
+ *
+ * Lives here rather than beside the schema that declares it because the
+ * browser half reads and writes this field too, and a client bundle that
+ * reaches the schema file would drag @deepseek-ai/schemastery into the
+ * browser -- which is not in dsh's PLATFORM_MODULES, so the whole plugin
+ * fails to load. dshell-std is always inlined into every client face.
+ */
+export const HIDDEN_DEVICES_FIELD = 'hiddenDevices'
+
+/**
  * How a device authenticates.
  *
  * `'wsl'` marks a built-in WSL distribution: there is no handshake to
@@ -1365,14 +1376,3 @@ export interface DeviceFsSeat {
 /** The cordis service name `DshellFileSystem` publishes under. */
 export const DEVICE_FS_SERVICE = 'dshellDeviceFs'
 
-// ─── usage — the per-model token index the settings page charts ───
-
-/**
- * The usage index route: one exact `/api` endpoint behind dsh's existing trust
- * and authentication fence, in the shape every other dshell route uses.
- *
- * The page reads aggregates and triggers the scan through the same endpoint:
- * the scan is the expensive half and belongs on the host, where the session
- * events already are, so the browser asks for it rather than doing it.
- */
-export const DSHELL_USAGE_PATH = '/api/dshell/usage'
