@@ -26,6 +26,9 @@ function fakeRouter(initial: AssignmentView | undefined) {
     assignmentForSession: (): AssignmentView | undefined => current,
     assignments: async (): Promise<readonly AssignmentView[]> => current === undefined ? [] : [current],
     list: async (): Promise<readonly never[]> => [],
+    // The hidden set is a picker preference the route answers alongside the
+    // device list; these tests are about the respawn, so nothing is hidden.
+    hiddenDevices: async (): Promise<readonly string[]> => [],
     bind: async (sessionId: string, deviceId: string | null): Promise<void> => {
       current = deviceId === null
         ? undefined

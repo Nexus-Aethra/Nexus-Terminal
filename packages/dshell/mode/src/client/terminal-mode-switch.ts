@@ -28,6 +28,14 @@ export interface DeviceChoiceSeat {
      * itself still knows which group to send the reader to.
      */
     readonly lockedGroup?: { readonly id: string; readonly name: string } | undefined
+    /**
+     * Device ids the reader hid from the pickers.
+     *
+     * Published beside the rows so a surface that filters on it reads the
+     * same set the card wrote, rather than a second opinion about what is
+     * hidden.
+     */
+    readonly hiddenDevices: readonly string[]
   }
   bind(sessionId: string, deviceId: string | null): Promise<void>
   /**

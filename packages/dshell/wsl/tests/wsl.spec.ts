@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { spawn } from 'node:child_process'
 import type { SpawnOptions } from 'node:child_process'
 import { decodeWslOutput, distroOf, isWslDevice, parseWslList, wslExecArgs, WSL_EXE, WslTransport, type WslSpawn } from '../src/transport.js'
+import { isHiddenDevice } from '@nexus-aethra/dshell-std'
 import { WslDeviceProvider } from '../src/provider.js'
 
 function utf16le(text: string, bom = true): Buffer {
@@ -294,6 +295,28 @@ describe('the exec door', () => {
   })
 })
 
+describe('isHiddenDevice', () => {
+  // The rule is shared by every picker, so it is asserted here rather than
+  // re-derived in each surface that filters on it.
+  const distro = { id: 'wsl:Ubuntu-24.04', name: 'Ubuntu-24.04', auth: 'wsl', builtin: true }
+  const stored = { id: 'web', name: 'web', auth: 'key', builtin: undefined }
+
+  it('hides a built-in WSL row the reader hid', () => {
+    expect(isHiddenDevice(distro, ['wsl:Ubuntu-24.04'])).toBe(true)
+  })
+
+  it('leaves a built-in row the reader did not hide visible', () => {
+    expect(isHiddenDevice(distro, [])).toBe(false)
+    expect(isHiddenDevice(distro, ['wsl:Debian-12'])).toBe(false)
+  })
+
+  it('never hides a stored device, whatever the document says', () => {
+    // A hand-edited document must not be able to make a stored device vanish
+    // with no surface left to bring it back: the registry card lists stored
+    // rows only, and the provider's card lists its own.
+    expect(isHiddenDevice(stored, ['web'])).toBe(false)
+  })
+})
 describe('the provider declares what a distribution can do', () => {
   const provider = new WslDeviceProvider()
 
