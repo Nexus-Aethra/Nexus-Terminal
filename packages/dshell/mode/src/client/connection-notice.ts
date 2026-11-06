@@ -49,6 +49,16 @@ export type ConnectionView =
 export interface ConnectionFacts {
   /** The wire state for the current session. */
   status: PtyStreamState['status']
+  /**
+   * When the current wire state began, epoch ms.
+   *
+   * A rebind of a shell that never stopped running reaches `connecting` for a
+   * few milliseconds, and announcing that is worse than saying nothing: the
+   * reader sees "正在连接" over a terminal that is plainly not connecting to
+   * anything. The state is only drawn once it has lasted long enough to be a
+   * real wait — see {@link CONNECTING_GRACE_MS}.
+   */
+  since: number
   /** Whether this shell ever reached a prompt (host-reported). */
   ready: boolean
   /** Automatic reconnect attempts spent. */
@@ -91,16 +101,21 @@ export interface ConnectionFacts {
  *    screen while it is connecting, and switches it to the failure form once
  *    the host says the shell is gone;
  *  - a bound session that HAD reached a prompt shows only the end-of-output
- *    marker, so the output the user was reading stays where it is;
+ *    marker, so the output the user was reading stays where it is — and a
+ *    rebind of one (connecting, no retry spent) shows nothing at all;
+ *  - a connecting state is only drawn once it has lasted past
+ *    {@link CONNECTING_GRACE_MS}, so a startup that resolves in a moment is
+ *    never announced;
  *  - a local session never gets the intermediate screen, and its first bind is
  *    not announced either — a notice flashing on every session switch is noise.
  *    A local RETRY is announced, because that only happens after something
  *    failed, and the notice is where the failure and its count stay readable.
  *
  * @param facts - the session's connection state.
+ * @param now - current epoch ms, so the grace period is testable.
  * @returns what to render.
  */
-export function connectionView(facts: ConnectionFacts): ConnectionView {
+export function connectionView(facts: ConnectionFacts, now: number = Date.now()): ConnectionView {
   const { status, ready, attempt, bound, localUnsupported, failure } = facts
   // Only for a LOCAL session: a device session runs its shell on the device,
   // so the host platform is not what stands between the reader and a prompt.
@@ -111,11 +126,24 @@ export function connectionView(facts: ConnectionFacts): ConnectionView {
   if (bound && failure === 'hostKey' && status !== 'idle') return { kind: 'panel', phase: 'hostKey' }
   if (status === 'idle') return { kind: 'none' }
   if (status === 'connecting') {
+    // A shell that has already answered and is not spending a retry is being
+    // REBOUND: the carrier reopened for a session that is still running, which
+    // is a round trip on this machine, not a handshake. Saying "connecting"
+    // there is what made a tab switch read as a dropped connection.
+    //
+    // `attempt > 0` is the fact that separates the two: the retry loop only
+    // increments it after a bind actually failed, so a connecting state with a
+    // spent attempt is a real reconnect worth narrating.
+    if (ready && attempt === 0) return { kind: 'none' }
+    // A first bind that is still in flight has no reason yet. Give it the grace
+    // period before claiming there is something to wait for — a local shell is
+    // up in milliseconds, and a device handshake outlasts the grace anyway.
+    if (now - facts.since < CONNECTING_GRACE_MS) return { kind: 'none' }
     if (bound) {
       // Never answered: this is the handshake the intermediate screen exists
-      // for. Already answered once: the user was reading output, so say it at
-      // the end of that output instead of covering it — and say "connecting",
-      // not "exited", because a rebind of a live shell is not a death.
+      // for. Already answered once but retrying: the user was reading output,
+      // so say it at the end of that output instead of covering it — and say
+      // "connecting", not "exited", because a retried rebind is not a death.
       return ready
         ? { kind: 'notice', tone: 'connecting' }
         : { kind: 'panel', phase: 'connecting' }
@@ -133,6 +161,16 @@ export function connectionView(facts: ConnectionFacts): ConnectionView {
   if (bound && !ready) return { kind: 'panel', phase: 'failed' }
   return { kind: 'notice', tone: 'failed' }
 }
+
+/**
+ * How long a connecting state must last before it is drawn.
+ *
+ * Chosen against the two things it separates: a rebind of a shell that is
+ * already running answers in a few milliseconds, while a device handshake that
+ * the reader should watch for takes a second or more. 400 ms sits between them
+ * with room on both sides.
+ */
+export const CONNECTING_GRACE_MS = 400
 
 /** Whole seconds since `from`, re-rendered once a second while mounted. */
 function useElapsed(from: number): number {

@@ -38,6 +38,7 @@ import type { TerminalModeClient } from './terminal-mode.js'
 import { sessionStatusSeat } from './session-status.js'
 import { cpuPercent, deviceMetricsSeat, memoryAmount } from './device-metrics.js'
 import type { SshSeat } from './block-view.js'
+import { CONNECTING_GRACE_MS } from './connection-notice.js'
 
 /**
  * What the chip says about a session's terminal link.
@@ -52,8 +53,22 @@ export type LinkView = 'none' | 'connecting' | 'waiting' | 'locked' | 'broken'
 export interface LinkFacts {
   /** The host's own link state. */
   status: 'idle' | 'connecting' | 'open' | 'closed' | 'error'
+  /**
+   * When the current state began, epoch ms.
+   *
+   * A rebind of a live shell is `connecting` for a few milliseconds, and a chip
+   * that announced every one of those would read as a link that keeps failing.
+   */
+  since: number
   /** Whether the bound shell ever reached a prompt. */
   ready: boolean
+  /**
+   * Whether the client is spending a retry attempt on this connection.
+   *
+   * The only fact that separates a reboot of the carrier from a connection that
+   * actually failed: the retry loop increments it after a bind it had to retry.
+   */
+  retrying: boolean
   /** The host never attempted a shell: the session has no live agent. */
   noShell: boolean
   /** The spawn was refused because the credential's vault group is locked. */
@@ -70,11 +85,19 @@ export interface LinkFacts {
  * host marks the first two structurally and this reads the marks.
  *
  * @param facts - the link's facts.
+ * @param now - current epoch ms, so the grace period is testable.
  * @returns what to show about it.
  */
-export function linkView(facts: LinkFacts): LinkView {
+export function linkView(facts: LinkFacts, now: number = Date.now()): LinkView {
   if (facts.status === 'idle' || facts.status === 'open') return 'none'
-  if (facts.status === 'connecting') return 'connecting'
+  // A rebind of a shell that already answered, with no retry spent, is a round
+  // trip on this machine — the chip has nothing to report. A retry is the fact
+  // that makes a connecting state worth narrating, and so is a first bind that
+  // outlasts the grace period.
+  if (facts.status === 'connecting') {
+    if (facts.ready && !facts.retrying) return 'none'
+    return now - facts.since < CONNECTING_GRACE_MS ? 'none' : 'connecting'
+  }
   // The lock outranks everything else: a retry brings back the same refusal,
   // and the token is the only thing that changes it.
   if (facts.lockedGroup) return 'locked'
@@ -608,7 +631,9 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
   const linkState = linkHere
     ? linkView({
       status: link.status,
+      since: link.since,
       ready: link.ready,
+      retrying: link.attempt > 0,
       noShell: link.noShell,
       lockedGroup: link.lockedGroup,
     })

@@ -24,7 +24,9 @@ import { en, zh } from './locales.js'
 import { sendLocaleReport } from './locale-report.js'
 import {
   TIMELINE_LIMITS,
+  loadPrompted,
   loadTimeline,
+  savePrompted,
   saveTimeline,
   segmentsOf,
   splitByTime,
@@ -312,6 +314,26 @@ export class PtyStreamService extends Service {
    * page's life, like `histories`.
    */
   private readonly prompted = new Set<string>()
+
+  /**
+   * Whether this session's shell has ever answered, from memory OR storage.
+   *
+   * The in-memory set is filled by this page's own frames; storage is what
+   * survives a reload, and a reload is exactly when the terminal would
+   * otherwise cover its own scrollback with a connection screen.
+   */
+  private hasPrompted(dshSessionId: string): boolean {
+    if (this.prompted.has(dshSessionId)) return true
+    if (!loadPrompted(dshSessionId)) return false
+    this.prompted.add(dshSessionId)
+    return true
+  }
+
+  /** Record a prompt, in memory and in storage. */
+  private notePrompted(dshSessionId: string): void {
+    if (!this.prompted.has(dshSessionId)) this.prompted.add(dshSessionId)
+    savePrompted(dshSessionId)
+  }
   /** Per-session block lists, exactly as the host ordered them. The stored
    * copy is mutable because a live block grows by deltas. */
   private readonly blockLists = new Map<string, {
@@ -806,7 +828,7 @@ export class PtyStreamService extends Service {
         tui: undefined,
         reason: undefined,
         detail: undefined,
-        ready: this.prompted.has(dshSessionId),
+        ready: this.hasPrompted(dshSessionId),
         attempt: 0,
         maxAttempts: MAX_AUTO_ATTEMPTS,
         exhausted: false,
@@ -949,7 +971,7 @@ export class PtyStreamService extends Service {
         home: typeof frame.home === 'string' ? frame.home : '',
       })
       if (typeof frame.ready === 'boolean') {
-        if (frame.ready) this.prompted.add(dshSessionId)
+        if (frame.ready) this.notePrompted(dshSessionId)
         this.patch({ ready: frame.ready })
       }
       return
@@ -957,14 +979,14 @@ export class PtyStreamService extends Service {
     if (frame.kind === 'ready') {
       // The shell reached its prompt. Until this arrives the view shows a
       // connecting state rather than an empty terminal.
-      if (frame.ready !== false) this.prompted.add(dshSessionId)
+      if (frame.ready !== false) this.notePrompted(dshSessionId)
       this.patch({ ready: frame.ready !== false })
       return
     }
     if (frame.kind === 'closed') {
       // Kept, not just logged: this is what the end-of-terminal marker says,
       // and what tells "the link dropped" apart from "it never came up".
-      if (frame.ready === true) this.prompted.add(dshSessionId)
+      if (frame.ready === true) this.notePrompted(dshSessionId)
       this.patch({
         status: 'closed',
         reason: typeof frame.reason === 'string' ? frame.reason : undefined,
