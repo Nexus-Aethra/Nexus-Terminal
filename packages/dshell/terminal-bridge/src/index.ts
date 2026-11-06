@@ -1341,7 +1341,7 @@ export class DshellTerminalBridge extends Service {
     // callback then fires into a stopped context, where demanding the service
     // throws and an exit handler must never take the host down with it.
     try {
-      void this.ctx.terminals.kill(record.agent, record.ptyId, 'dshell: dead').catch(() => {})
+      void this.ctx.terminals.kill(this.ownerFor(record), record.ptyId, 'dshell: dead').catch(() => {})
     } catch {
       // Context already gone; the reservation dies with it.
     }
@@ -1355,10 +1355,31 @@ export class DshellTerminalBridge extends Service {
     }, 200)
   }
 
+  /**
+   * The live Agent that owns one record's PTY, for a call the terminals service
+   * checks by object identity.
+   *
+   * `record.agent` is captured at spawn. dsh refuses a second Agent for a live
+   * id, so a record whose Agent was replaced is a record whose PTY the service
+   * already dropped — but the call that says so would throw `FOREIGN_SESSION`
+   * on the stale object and be swallowed by its own `.catch`. Asking for the
+   * current owner first keeps that refusal from being invented.
+   *
+   * @param record - the shell whose PTY is being addressed.
+   * @returns the live agent for the record's session, or the captured one.
+   */
+  private ownerFor(record: ShellRecord): Agent {
+    return this.ctx.get('agents')?.get(record.dshSessionId as SessionId) ?? record.agent
+  }
+
   /** Drop a dead record from `mains` and release its PtyBuffer. */
   private async disposeRecord(record: MainRecord): Promise<void> {
     delete record.disposeTimer
-    this.mains.delete(record.dshSessionId)
+    // By IDENTITY, not by key: the map is keyed by session id, so a dispose that
+    // somehow outlived its record would otherwise delete a LIVE successor. It
+    // cannot today (every replacement clears the dead record's timer first), but
+    // that makes the invariant incidental; this makes it structural.
+    if (this.mains.get(record.dshSessionId) === record) this.mains.delete(record.dshSessionId)
     // The debounced write would otherwise die with the process; the last
     // commands belong on disk.
     await record.history.flush().catch(() => {})
@@ -1395,13 +1416,14 @@ export class DshellTerminalBridge extends Service {
       ready: record.ready,
       failure: record.dead.failure,
     })
-    void this.ctx.terminals.kill(record.agent, record.ptyId, 'dshell: agent shell dead').catch(() => {})
+    void this.ctx.terminals.kill(this.ownerFor(record), record.ptyId, 'dshell: agent shell dead').catch(() => {})
   }
 
   /** Drop the agent record, releasing its buffer's file handle. */
   private async disposeAgentRecord(record: AgentRecord): Promise<void> {
     delete record.disposeTimer
-    this.agents.delete(record.dshSessionId)
+    // By identity, for the reason {@link disposeRecord} states.
+    if (this.agents.get(record.dshSessionId) === record) this.agents.delete(record.dshSessionId)
     await record.buffer.close().catch(() => {})
   }
 

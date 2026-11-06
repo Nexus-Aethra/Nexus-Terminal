@@ -18,7 +18,7 @@ import { getTheme } from '../src/client/palettes.js'
 /** The facts a session is in by default: an idle local session, nothing wrong. */
 function facts(over: Partial<ConnectionFacts> = {}): ConnectionFacts {
   return {
-    status: 'idle', since: 0, ready: false, attempt: 0, bound: false,
+    status: 'idle', since: 0, ready: false, attempt: 0, recovering: false, bound: false,
     localUnsupported: false, failure: undefined, ...over,
   }
 }
@@ -206,11 +206,11 @@ describe('a rebind of a shell that is already running', () => {
     expect(view).toEqual({ kind: 'none' })
   })
 
-  it('says "connecting" once the wait has lasted AND an attempt is spent', () => {
-    // Past the grace period with a retry behind it the state is a real wait,
+  it('says "connecting" once the wait has lasted while recovering', () => {
+    // Past the grace period with a failure behind it the state is a real wait,
     // and a reader staring at an unreachable device needs to see it.
     const view = connectionView(facts({
-      status: 'connecting', bound: true, ready: true, attempt: 1, since: 1_000,
+      status: 'connecting', bound: true, ready: true, recovering: true, since: 1_000,
     }), 1_000 + 5_000)
     expect(view).toEqual({ kind: 'notice', tone: 'connecting' })
   })
@@ -224,20 +224,66 @@ describe('a rebind of a shell that is already running', () => {
 })
 
 describe('a rebind that outlasts the grace period', () => {
-  it('still says nothing, because no retry has been spent', () => {
+  it('still says nothing, because nothing failed behind this dial', () => {
     // The grace period alone was not enough: a loaded machine can take longer
     // than that to reopen a carrier, and the reader still must not be told a
     // shell that never stopped running is connecting.
     const view = connectionView(facts({
-      status: 'connecting', bound: true, ready: true, attempt: 0, since: 1_000,
+      status: 'connecting', bound: true, ready: true, recovering: false, since: 1_000,
     }), 1_000 + 30_000)
     expect(view).toEqual({ kind: 'none' })
   })
 
-  it('says "connecting" once the retry loop has actually spent an attempt', () => {
+  it('says "connecting" while a real outage is being recovered', () => {
+    // Note the attempt count is 0: the dial resets it, so the recovery fact —
+    // not the count — is what has to survive into the view.
     const view = connectionView(facts({
-      status: 'connecting', bound: true, ready: true, attempt: 1, since: 1_000,
+      status: 'connecting', bound: true, ready: true, recovering: true, attempt: 0, since: 1_000,
     }), 1_000 + 30_000)
     expect(view).toEqual({ kind: 'notice', tone: 'connecting' })
+  })
+})
+
+describe('a device that drops and is retried', () => {
+  // The path a green suite missed: every state above was tested in isolation,
+  // so nothing walked the transition out of a working terminal and back through
+  // a retry dial. That transition is where a dead device went completely
+  // silent, because the retry resets the attempt count on the way in.
+  const bound = true
+  const ready = true
+
+  it('announces the drop', () => {
+    // scheduleRetry raises recovering and sets the count.
+    expect(connectionView(facts({ status: 'closed', bound, ready, recovering: true, attempt: 1 }), SETTLED))
+      .toEqual({ kind: 'notice', tone: 'failed' })
+  })
+
+  it('keeps saying "connecting" while the retry is still dialing', () => {
+    // THE REGRESSION: the dial resets `attempt` to 0. While the rule keyed on
+    // attempt === 0 this returned {kind:'none'} — the device was unreachable and
+    // the terminal said nothing, for as long as a black-holed connect held.
+    expect(connectionView(facts({
+      status: 'connecting', bound, ready, recovering: true, attempt: 0,
+    }), SETTLED)).toEqual({ kind: 'notice', tone: 'connecting' })
+  })
+
+  it('keeps saying it however long the retry hangs', () => {
+    // A TCP connect to a black-holed route stays open for minutes.
+    const factsNow = facts({ status: 'connecting', bound, ready, recovering: true, attempt: 0, since: 1_000 })
+    expect(connectionView(factsNow, 1_000 + 120_000)).toEqual({ kind: 'notice', tone: 'connecting' })
+  })
+
+  it('goes quiet only once the shell answers again', () => {
+    // resetRetry clears recovering on the first live output frame.
+    expect(connectionView(facts({
+      status: 'open', bound, ready, recovering: false, attempt: 0,
+    }), SETTLED)).toEqual({ kind: 'none' })
+  })
+
+  it('still says nothing for a plain rebind of a working shell', () => {
+    // The behaviour the fix was for: no failure behind this dial.
+    expect(connectionView(facts({
+      status: 'connecting', bound, ready, recovering: false, attempt: 0,
+    }), SETTLED)).toEqual({ kind: 'none' })
   })
 })

@@ -101,6 +101,17 @@ export interface PtyStreamState {
    * program in never sends one, and the view reads undefined as "the timeline".
    */
   tui: TuiReading | undefined
+  /**
+   * Whether this connection is recovering from a failure rather than rebinding.
+   *
+   * The view must not draw "connecting" over a shell that is merely being
+   * rebound, and must always draw it while a real outage is being retried. The
+   * retry count cannot carry that distinction: `openChannel` resets it on
+   * every dial, so a retry that has just re-dialled looks exactly like a
+   * rebind. This flag is set where the failure is known (`scheduleRetry`) and
+   * cleared where the shell answers, so it survives the reset.
+   */
+  recovering: boolean
   /** Why the shell (or the wire) ended, as the host reported it. */
   reason: string | undefined
   /** The last connection diagnostic the output held, when the host found one. */
@@ -271,6 +282,7 @@ export class PtyStreamService extends Service {
     maxAttempts: MAX_AUTO_ATTEMPTS,
     exhausted: false,
     since: Date.now(),
+    recovering: false,
     localUnsupported: false,
     lockedGroup: false,
     noShell: false,
@@ -567,6 +579,9 @@ export class PtyStreamService extends Service {
       maxAttempts: MAX_AUTO_ATTEMPTS,
       exhausted: false,
       status: 'connecting',
+      // The drop is a fact from here until the shell answers again, whatever
+      // the following dials do to the retry count.
+      recovering: true,
       since: Date.now(),
     })
     const delay = RETRY_BASE_DELAY_MS * 2 ** (this.attempt - 1)
@@ -605,7 +620,10 @@ export class PtyStreamService extends Service {
     if (this.attempt === 0 && !this.state.getSnapshot().exhausted
       && this.state.getSnapshot().reason === undefined) return
     this.attempt = 0
-    this.patch({ attempt: 0, exhausted: false, reason: undefined, detail: undefined, lockedGroup: false, noShell: false })
+    this.patch({
+      attempt: 0, exhausted: false, recovering: false,
+      reason: undefined, detail: undefined, lockedGroup: false, noShell: false,
+    })
   }
 
   private clearRetryTimer(): void {
@@ -840,6 +858,8 @@ export class PtyStreamService extends Service {
         attempt: 0,
         maxAttempts: MAX_AUTO_ATTEMPTS,
         exhausted: false,
+        // A different session has not failed yet, whatever the last one did.
+        recovering: false,
         since: Date.now(),
         // A new session has not failed yet, whatever the last one did.
         localUnsupported: false,
@@ -848,6 +868,10 @@ export class PtyStreamService extends Service {
         failure: undefined,
       })
     } else {
+      // The attempt count resets — a viewer coming back must not meet the
+      // previous socket's retry count — but `recovering` deliberately does
+      // not: this is the same dial the retry loop performs, and clearing the
+      // fact here is what made a dead device go silent.
       this.patch({ sessionId: dshSessionId, status: 'connecting', since: Date.now(), attempt: 0, exhausted: false })
     }
     let channel: PtyChannel

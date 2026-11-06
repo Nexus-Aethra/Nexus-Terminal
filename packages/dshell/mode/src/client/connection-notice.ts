@@ -63,6 +63,16 @@ export interface ConnectionFacts {
   ready: boolean
   /** Automatic reconnect attempts spent. */
   attempt: number
+  /**
+   * Whether the connection is recovering from a failure.
+   *
+   * The fact that separates a rebind from a retry. `attempt` cannot carry it:
+   * every dial resets the count, so a retry that has just re-dialled looks
+   * exactly like a rebind — which is how a dead device came to draw nothing.
+   * The caller raises it where the failure is known and clears it when the
+   * shell answers.
+   */
+  recovering: boolean
   /** Whether the session is bound to a device; local sessions never get a panel. */
   bound: boolean
   /**
@@ -116,7 +126,7 @@ export interface ConnectionFacts {
  * @returns what to render.
  */
 export function connectionView(facts: ConnectionFacts, now: number = Date.now()): ConnectionView {
-  const { status, ready, attempt, bound, localUnsupported, failure } = facts
+  const { status, ready, attempt, recovering, bound, localUnsupported, failure } = facts
   // Only for a LOCAL session: a device session runs its shell on the device,
   // so the host platform is not what stands between the reader and a prompt.
   if (localUnsupported && !bound && status !== 'idle') return { kind: 'panel', phase: 'unsupported' }
@@ -126,15 +136,17 @@ export function connectionView(facts: ConnectionFacts, now: number = Date.now())
   if (bound && failure === 'hostKey' && status !== 'idle') return { kind: 'panel', phase: 'hostKey' }
   if (status === 'idle') return { kind: 'none' }
   if (status === 'connecting') {
-    // A shell that has already answered and is not spending a retry is being
-    // REBOUND: the carrier reopened for a session that is still running, which
-    // is a round trip on this machine, not a handshake. Saying "connecting"
-    // there is what made a tab switch read as a dropped connection.
+    // A shell that has already answered, with no failure behind this dial, is
+    // being REBOUND: the carrier reopened for a session that is still running,
+    // which is a round trip on this machine, not a handshake. Saying
+    // "connecting" there is what made a tab switch read as a dropped
+    // connection.
     //
-    // `attempt > 0` is the fact that separates the two: the retry loop only
-    // increments it after a bind actually failed, so a connecting state with a
-    // spent attempt is a real reconnect worth narrating.
-    if (ready && attempt === 0) return { kind: 'none' }
+    // `recovering` is the fact that separates the two, and it is NOT `attempt`:
+    // every dial resets the count, so a retry that has just re-dialled carries
+    // attempt 0 and would be silenced by the same test — which is a genuinely
+    // dead device drawing nothing at all while it is retried.
+    if (ready && !recovering) return { kind: 'none' }
     // A first bind that is still in flight has no reason yet. Give it the grace
     // period before claiming there is something to wait for — a local shell is
     // up in milliseconds, and a device handshake outlasts the grace anyway.

@@ -63,10 +63,11 @@ export interface LinkFacts {
   /** Whether the bound shell ever reached a prompt. */
   ready: boolean
   /**
-   * Whether the client is spending a retry attempt on this connection.
+   * Whether the connection is recovering from a failure.
    *
-   * The only fact that separates a reboot of the carrier from a connection that
-   * actually failed: the retry loop increments it after a bind it had to retry.
+   * The only fact that separates a rebind of the carrier from a connection that
+   * actually failed. Not `attempt > 0`: every dial resets the count, so a retry
+   * that has just re-dialled reports 0.
    */
   retrying: boolean
   /** The host never attempted a shell: the session has no live agent. */
@@ -633,7 +634,7 @@ export function StatusChip(props: StatusChipProps): ReactElement | null {
       status: link.status,
       since: link.since,
       ready: link.ready,
-      retrying: link.attempt > 0,
+      retrying: link.recovering,
       noShell: link.noShell,
       lockedGroup: link.lockedGroup,
     })

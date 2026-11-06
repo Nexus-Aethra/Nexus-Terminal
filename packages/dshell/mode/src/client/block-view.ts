@@ -547,6 +547,9 @@ export function BlockView(props: {
     // for that case instead of letting a stale timestamp suppress a real state.
     since: current ? pty.since : 0,
     ready: pty.ready,
+    // A stale session reads as `idle` and draws nothing either way, so its
+    // recovery flag is never consulted.
+    recovering: current && pty.recovering,
     attempt: pty.attempt,
     bound: binding !== undefined,
     localUnsupported: current && pty.localUnsupported,

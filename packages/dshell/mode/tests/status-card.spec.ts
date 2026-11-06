@@ -96,3 +96,17 @@ describe('a link that is briefly connecting', () => {
     }), 1_000 + 30_000)).toBe('connecting')
   })
 })
+
+describe('a link that is retrying', () => {
+  it('keeps the chip on "connecting" through the retry dial', () => {
+    // Same regression as the terminal's own notice: the dial resets the count,
+    // so a rule keyed on the count went silent while the device was down.
+    expect(linkView(facts({ status: 'connecting', ready: true, retrying: true, since: 1_000 }), SETTLED))
+      .toBe('connecting')
+  })
+
+  it('goes quiet for a rebind with no failure behind it', () => {
+    expect(linkView(facts({ status: 'connecting', ready: true, retrying: false, since: 1_000 }), SETTLED))
+      .toBe('none')
+  })
+})
