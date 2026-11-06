@@ -763,6 +763,38 @@ export interface DeviceView {
   readonly helper?: DeviceHelperStatus | undefined
 }
 
+/**
+ * The three fields the visibility rule reads.
+ *
+ * A projection rather than {@link DeviceView} so a picker that carries only
+ * what it draws can still apply the rule: the pickers hold a narrowed row,
+ * and forcing the whole view through them would mean either widening the
+ * projection or restating the rule against a second shape.
+ */
+export interface HiddenDeviceCandidate {
+  readonly id: string
+  readonly auth: string
+  readonly builtin?: boolean | undefined
+}
+
+/**
+ * Whether a device row is one the reader hid from the device pickers.
+ *
+ * Hiding is a picker preference, not a device state: the row still exists,
+ * still answers, and a session already bound to it keeps running there. Only
+ * a provider's built-in row can be hidden, because the toggle lives on the
+ * provider's own card and a stored device is managed by deleting it. The kind
+ * check is what keeps a hand-edited settings document from making a stored
+ * device vanish with no surface left to bring it back.
+ *
+ * @param device - the row a picker is deciding about.
+ * @param hidden - the device ids the reader hid.
+ * @returns whether the picker should leave the row out.
+ */
+export function isHiddenDevice(device: HiddenDeviceCandidate, hidden: readonly string[]): boolean {
+  return device.builtin === true && device.auth === 'wsl' && hidden.includes(device.id)
+}
+
 /** One device as submitted by the UI; `key` is write-only. */
 export interface DeviceInput {
   readonly id?: string | undefined

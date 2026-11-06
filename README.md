@@ -116,7 +116,7 @@ device routing ([SSH device sessions](#ssh-device-sessions)), and the pipes and 
 no longer pins a single dsh version but names a **window** of them, so every `0.2.1` release —
 `0.2.1-rc.5`, today's `latest`, included — installs without waiting for a dshell release.
 
-The release after it adds five more. All five are on this branch today; the published
+The release after it adds six more. All six are on this branch today; the published
 `0.1.16` does not have them yet.
 
 | | What changed | What you notice |
@@ -126,6 +126,7 @@ The release after it adds five more. All five are on this branch today; the publ
 | **A ConPTY repaint no longer blanks the terminal** | On Windows, a program that repaints its whole screen after a resize — the ConPTY signature — left a **blank wall above the prompt** | The region renders the rows that carry ink and cuts the dead frame around them, so the row count and the bytes agree again |
 | **A session switch keeps its prompt** | Switching to a session and back reset its readiness, so a live device session flashed the first-dial panel over a terminal that was about to work | That the session reached a prompt is remembered for the page's life, and seeded while the rebind handshake runs |
 | **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2-rc.1` — **the published `0.1.14` does not install there at all** |
+| **A distribution can be hidden from the pickers** | A WSL2 distribution you never open a shell in is one more row in every device picker; the 管理台's WSL card now carries a per-distribution **hide** switch | The row leaves the new-session and device pickers, and nothing else: it still answers, and a session already bound to it keeps running there |
 
 ---
 
@@ -144,7 +145,7 @@ Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.17`** — on this branch; the published `0.1.16` still carries `<0.2.2-0` and refuses `0.2.2-rc.1` |
+| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.17`** — `latest`; the earlier `0.1.16` still carries `<0.2.2-0` and refuses `0.2.2-rc.1` |
 | `0.2.1-rc.3` only | **`0.1.15`** — superseded by `0.1.16` |
 | `0.2.1-rc.2` | **`0.1.14`** |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** |
@@ -173,7 +174,7 @@ dsh web
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
 
 In the **desktop app**, the same install is available as a window: `设置 → 插件`, and give it
-`@nexus-aethra/dshell-bundle@0.1.16` (it installs from npmjs and pins the version exactly).
+`@nexus-aethra/dshell-bundle@0.1.17` (it installs from npmjs and pins the version exactly).
 
 > Skipping step 2 is not fatal — dsh boots and reports the two rows as `did not activate`, and the
 > rest of dshell works. It is listed because the SSH device sessions and the agent's terminal tool
