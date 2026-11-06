@@ -550,7 +550,9 @@ export class BufferService {
     if (this.disposed || this.hides.has(sessionId)) return
     const timer = setTimeout(() => {
       this.hides.delete(sessionId)
-      void this.detachSession(sessionId)
+      void this.detachSession(sessionId).catch((error: unknown) => {
+        console.warn('dshell-buffer: a departed session was not detached cleanly:', error)
+      })
     }, HIDE_GRACE_MS)
     timer.unref?.()
     this.hides.set(sessionId, timer)

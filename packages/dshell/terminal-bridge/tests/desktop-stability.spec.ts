@@ -22,10 +22,14 @@
  * it exactly.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
+
+/** This spec's own directory. */
+const specDir = dirname(fileURLToPath(import.meta.url))
 
 /** The source of one file, relative to this spec. */
 function source(relative: string): string {
@@ -144,24 +148,52 @@ function floatingIn(file: string, text: string): Floating[] {
 
 describe('the desktop app stays up', () => {
   describe('no floating rejection can take the host down', () => {
-    /** The files whose floating promises run on the HOST side. */
-    const HOST_FILES = [
-      '../src/index.ts',
-      '../src/pty.ts',
-      '../src/blocks.ts',
-      '../src/buffer.ts',
-      '../src/history.ts',
-      '../src/commands.ts',
-      '../src/foreground.ts',
+    /**
+     * Every HOST-side source file that runs in the dsh host process.
+     *
+     * The list is a SCAN, not a hand-kept list of files: a file added to a
+     * package later is in scope the moment it exists, which is the only way
+     * this guard can keep its promise. The bridge, the buffer package, the SSH
+     * package and the WSL package all run on the host side, and dsh treats an
+     * unhandled rejection as FATAL — the desktop app restarts the host when it
+     * dies.
+     */
+    const HOST_ROOTS = [
+      join(specDir, '..', '..', 'terminal-bridge', 'src'),
+      join(specDir, '..', '..', 'buffer', 'src'),
+      join(specDir, '..', '..', 'ssh', 'src'),
+      join(specDir, '..', '..', 'wsl', 'src'),
     ]
 
-    it('every floating promise in the bridge ends in a rejection handler', () => {
+    /** Every TypeScript file under the roots, excluding the client half. */
+    function hostFiles(): readonly string[] {
+      const found: string[] = []
+      const walk = (directory: string): void => {
+        for (const entry of readdirSync(directory, { withFileTypes: true })) {
+          const path = join(directory, entry.name)
+          if (entry.isDirectory()) {
+            // The browser half runs in the renderer: a rejection there cannot
+            // take the host down, and the renderer's own error boundary owns it.
+            if (entry.name === 'client') continue
+            walk(path)
+            continue
+          }
+          if (!entry.name.endsWith('.ts')) continue
+          if (entry.name.endsWith('.d.ts')) continue
+          found.push(path)
+        }
+      }
+      for (const root of HOST_ROOTS) walk(root)
+      return found.sort()
+    }
+
+    it('every floating promise on the host side ends in a rejection handler', () => {
       const floating: Floating[] = []
-      for (const file of HOST_FILES) {
-        floating.push(...floatingIn(file, source(file)))
+      for (const file of hostFiles()) {
+        floating.push(...floatingIn(file, readFileSync(file, 'utf8')))
       }
       expect(
-        floating.map(entry => `${entry.file}:${entry.line}\n    ${entry.text}`).join('\n'),
+        floating.map(entry => `${entry.file.replace(specDir, '.')}:${entry.line}\n    ${entry.text}`).join('\n'),
       ).toBe('')
     })
 
