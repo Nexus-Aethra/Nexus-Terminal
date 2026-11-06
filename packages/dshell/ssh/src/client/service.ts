@@ -100,7 +100,13 @@ function revealRow(needle: string, then: () => void, attempts = REVEAL_ATTEMPTS)
 /** Device registry mirror plus its mutations. */
 /** The entry-config form this service reads its hidden set from and writes to. */
 type HiddenDevicesForm = {
-  getSnapshot(): { readonly value: Partial<SshSettings> | undefined }
+  getSnapshot(): {
+    readonly value: Partial<SshSettings> | undefined
+    /** Whether the host document accepts writes at all. */
+    readonly writable: boolean
+    /** `ready` once the host has answered; before that there is no value to read. */
+    readonly status: string
+  }
   set(field: string, value: unknown): Promise<boolean>
   subscribe(listener: () => void): () => void
 }
@@ -221,6 +227,18 @@ export class SshClientService extends Service {
   }
 
   /**
+   * Publish a device list as though a route reply had carried it.
+   *
+   * For the browser half's own tests: the service is fed by `fetch`, and a
+   * spec that wants rows in the snapshot would otherwise have to stand up a
+   * server. Nothing in production calls this.
+   *
+   * @param devices - the rows to publish.
+   */
+  adoptSnapshot(devices: readonly DeviceView[]): void {
+    this.publish({ ...this.snapshot, devices, loaded: true })
+  }
+  /**
    * Start following the settings document's hidden set.
    *
    * Called by the plugin once the form is up. The first read happens
@@ -231,6 +249,11 @@ export class SshClientService extends Service {
     const form = this.form
     if (form === undefined) return () => {}
     const sync = (): void => {
+      // Before the host answers there is no document to read, and an empty hidden
+      // set is indistinguishable from "nothing is hidden" -- so a browser that
+      // opens while the document loads would offer every distribution for a
+      // frame. Waiting for ready is what prevents that.
+      if (form.getSnapshot().status !== 'ready') return
       const next = this.hiddenFromSettings()
       const current = this.snapshot.hiddenDevices
       if (next.length === current.length && next.every((id, index) => id === current[index])) return
@@ -523,22 +546,35 @@ export class SshClientService extends Service {
    *
    * @param deviceId - device to hide, or to show again.
    * @param hidden - whether the pickers should leave it out.
+   * @returns whether the choice was stored; false means it will not survive a
+   *   reload and the caller should say so.
    */
-  async setDeviceHidden(deviceId: string, hidden: boolean): Promise<void> {
-    // Without the settings domain there is nothing to write through, and a
-    // local-only toggle would read as saved until the next reload. Refusing
-    // is honest: the card's button stays where it was.
-    if (this.form === undefined) return
+  async setDeviceHidden(deviceId: string, hidden: boolean): Promise<boolean> {
+    const form = this.form
+    // Nothing to write through, or a document that takes no writes: refuse
+    // BEFORE publishing anything, so the pickers never show a state that was
+    // never stored. The caller says so rather than leaving the reader to
+    // wonder why the switch moved back.
+    if (form === undefined || !form.getSnapshot().writable) return false
     const current = this.snapshot.hiddenDevices
     const next = hidden
       ? [...new Set([...current, deviceId])]
       : current.filter(id => id !== deviceId)
-    if (next.length === current.length && next.every((id, index) => id === current[index])) return
-    // Optimistic: the pickers must stop offering it on the same click that
-    // asked, and a reply that reorders the set is not worth a visible wait.
-    // A refusal reloads the document, which restores the previous set.
+    if (next.length === current.length && next.every((id, index) => id === current[index])) return true
+    // Optimistic: the pickers must stop offering it on the click that asked,
+    // and a reply that reorders the set is not worth a visible wait.
     this.publish({ ...this.snapshot, hiddenDevices: next })
-    await this.form?.set(HIDDEN_DEVICES_FIELD, next)
+    const stored = await form.set(HIDDEN_DEVICES_FIELD, next).catch(() => false)
+    if (stored !== true) {
+      // Roll the optimistic value back. The mirror will NOT do it for us: a
+      // refused write leaves the form's value unchanged, so its subscription
+      // never fires and the equality check below finds nothing to correct.
+      // Without this the pickers keep hiding a device the reader was told was
+      // only hidden for now.
+      this.publish({ ...this.snapshot, hiddenDevices: current })
+      return false
+    }
+    return true
   }
   /** Clear the last result line. */
   clearResult(): void {

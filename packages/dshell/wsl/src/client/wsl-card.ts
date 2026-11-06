@@ -32,7 +32,7 @@ interface SshDevicesFace {
   }
   subscribe(listener: () => void): () => void
   test(deviceId: string): Promise<string>
-  setDeviceHidden(deviceId: string, hidden: boolean): Promise<void>
+  setDeviceHidden(deviceId: string, hidden: boolean): Promise<boolean>
 }
 
 /** The snapshot an absent ssh face reads as: no devices, nothing to list. */
@@ -49,6 +49,10 @@ export interface DshellWslCardProps extends PropsLocale<'dshellWsl'> {
 /** The WSL distributions, as the 管理台's own card. */
 export function DshellWslCard({ ssh, t }: DshellWslCardProps): ReactElement {
   const [open, setOpen] = useState(false)
+  // Why a toggle did not take, when it did not. The write is optimistic, so a
+  // refusal arrives AFTER the row has already flipped; without this the reader
+  // watches the switch bounce back with nothing said about why.
+  const [refused, setRefused] = useState<string | undefined>(undefined)
   const snapshot = useSyncExternalStore(ssh?.subscribe ?? (() => () => {}), ssh?.getSnapshot ?? (() => NO_DEVICES))
   const distros = snapshot.devices.filter(device => device.builtin === true && device.auth === 'wsl')
   return createElement('div', {
@@ -85,7 +89,23 @@ export function DshellWslCard({ ssh, t }: DshellWslCardProps): ReactElement {
                 type: 'button',
                 style: hidden ? { ...actionStyle, opacity: 1 } : actionStyle,
                 title: hidden ? t('device.showTooltip') : t('device.hideTooltip'),
-                onClick: () => { void ssh?.setDeviceHidden(device.id, !hidden).catch(() => {}) },
+                onClick: () => {
+                  setRefused(undefined)
+                  // Both refusals arrive the same way: a write that was never
+                  // attempted (no settings domain, unwritable document) answers
+                  // false, and one that was attempted and rejected either
+                  // answers false or throws. Either way the service has already
+                  // rolled its optimistic value back, so the row returns to
+                  // where it was -- and this says why.
+                  void (async () => {
+                    try {
+                      const stored = await ssh?.setDeviceHidden(device.id, !hidden)
+                      if (stored !== true) setRefused(t('device.visibilityRefused'))
+                    } catch {
+                      setRefused(t('device.visibilityRefused'))
+                    }
+                  })()
+                },
               }, hidden ? t('device.show') : t('device.hide')),
               createElement('button', {
                 type: 'button', style: actionStyle, title: t('device.testTooltip'),
@@ -103,6 +123,7 @@ export function DshellWslCard({ ssh, t }: DshellWslCardProps): ReactElement {
         // What hiding does and does not do, stated once on the card rather
         // than on every row.
         createElement('div', { style: noteStyle }, t('wsl.visibilityNote')),
+        refused === undefined ? null : createElement('div', { style: { ...noteStyle, color: 'var(--dsw-alias-status-danger, #d97706)' } }, refused),
       )
       : null,
   )

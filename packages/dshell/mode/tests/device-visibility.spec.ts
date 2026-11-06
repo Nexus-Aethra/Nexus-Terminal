@@ -6,9 +6,12 @@
  * one projection the creation page and the terminal section both read, so a
  * hidden row dropped anywhere else is a row one of the two still offers.
  *
- * The two facts that make hiding safe are asserted alongside: a session
- * already bound to a hidden device keeps naming it, and the host-side
- * connection for that device is untouched -- hiding never reaches the router.
+ * The fact that makes hiding safe is asserted here too: a session already bound
+ * to a hidden device still has its device NAMED, because the surfaces that name
+ * it read the unfiltered list. That is the regression this file exists for.
+ *
+ * The refusal path (a write the host will not take) lives in
+ * ssh/tests/device-visibility.spec.ts, beside the service it drives.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -23,9 +26,22 @@ const UBUNTU = row('wsl:Ubuntu-24.04', { name: 'Ubuntu-24.04', auth: 'wsl', buil
 const DEBIAN = row('wsl:Debian-12', { name: 'Debian-12', auth: 'wsl', builtin: true })
 const BUILD = row('build-box', { name: 'build-box', auth: 'key' })
 
-/** The projection a picker publishes: the same filter the seat applies. */
+/** What a picker offers: the same filter the seat applies. */
 function offered(devices: readonly ReturnType<typeof row>[], hidden: readonly string[]): string[] {
   return devices.filter(device => !isHiddenDevice(device, hidden)).map(device => device.id)
+}
+
+/**
+ * What a surface naming a bound session's device reads.
+ *
+ * The unfiltered list, which is why the seat publishes `allDevices` beside the
+ * filtered `devices`: reading the filtered one here is the bug.
+ */
+function nameOf(
+  all: readonly ReturnType<typeof row>[],
+  deviceId: string,
+): string | undefined {
+  return all.find(candidate => candidate.id === deviceId)?.name
 }
 
 describe('the device pickers', () => {
@@ -46,14 +62,15 @@ describe('the device pickers', () => {
     expect(offered([BUILD], ['build-box'])).toEqual(['build-box'])
   })
 
-  it('leaves the device of a bound session nameable', () => {
-    // The rule answers "may a picker OFFER this row". A session already bound
-    // to a hidden device resolves its device by id from the full list, which is
-    // why the hidden set travels beside the rows rather than the rows being
-    // filtered out of the snapshot itself.
+  it('still name the device of a session bound to a hidden one', () => {
+    // The regression this file exists for: the terminal block's row label and
+    // the creation page's place chip both resolve a bound session's device, and
+    // resolving it out of the FILTERED list labels the session 本地 or shows a
+    // raw wsl:... id. They read allDevices instead.
+    const every = [UBUNTU, DEBIAN, BUILD]
     const hidden = ['wsl:Ubuntu-24.04']
-    const bound = [UBUNTU, DEBIAN, BUILD].find(candidate => candidate.id === 'wsl:Ubuntu-24.04')
-    expect(isHiddenDevice(bound!, hidden)).toBe(true)
-    expect(bound?.name).toBe('Ubuntu-24.04')
+
+    expect(offered(every, hidden)).not.toContain('wsl:Ubuntu-24.04')
+    expect(nameOf(every, 'wsl:Ubuntu-24.04')).toBe('Ubuntu-24.04')
   })
 })

@@ -42,7 +42,7 @@ export function apply(ctx: Context): void {
         }
         subscribe(listener: () => void): () => void
         test(deviceId: string): Promise<string>
-        setDeviceHidden(deviceId: string, hidden: boolean): Promise<void>
+        setDeviceHidden(deviceId: string, hidden: boolean): Promise<boolean>
       }
     }) => void): unknown
   }

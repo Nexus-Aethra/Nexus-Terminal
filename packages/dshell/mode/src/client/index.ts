@@ -82,7 +82,7 @@ const EMPTY_PIPE_STATE = { links: [], tickets: [], open: false } as const
  * every terminal is local. One shared value because a store's `getSnapshot`
  * must return the same object until something actually changed.
  */
-const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], bindings: [], lockedGroup: undefined, hiddenDevices: [] }
+const NO_DEVICES: ReturnType<DeviceChoiceSeat['snapshot']> = { devices: [], allDevices: [], bindings: [], lockedGroup: undefined, hiddenDevices: [] }
 
 export const name = '@nexus-aethra/dshell-mode/client'
 
@@ -419,7 +419,7 @@ export function apply(ctx: Context): void {
     const ssh = scope.dshellSsh
     let cachedRaw: unknown
     let cachedProjection: ReturnType<DeviceChoiceSeat['snapshot']> = {
-      devices: [], bindings: [], lockedGroup: undefined, hiddenDevices: [],
+      devices: [], allDevices: [], bindings: [], lockedGroup: undefined, hiddenDevices: [],
     }
     deviceSeat = {
       snapshot: () => {
@@ -432,9 +432,14 @@ export function apply(ctx: Context): void {
             // run-location menu and the terminal section's device rows are the
             // same list. A session's existing binding is left alone, so a
             // session on a hidden device keeps naming it.
+            // Two lists on purpose. devices is what a picker OFFERS;
+            // allDevices is what a surface naming a bound session's device
+            // resolves against. Filtering one list for both is how a session
+            // on a hidden distribution comes to read as local.
             devices: raw.devices
               .filter(row => !isHiddenDevice(row, raw.hiddenDevices))
               .map(row => ({ id: row.id, name: row.name })),
+            allDevices: raw.devices.map(row => ({ id: row.id, name: row.name })),
             bindings: raw.bindings.map(row => ({ sessionId: row.sessionId, deviceId: row.deviceId })),
             lockedGroup: raw.lockedGroup,
             hiddenDevices: raw.hiddenDevices,
