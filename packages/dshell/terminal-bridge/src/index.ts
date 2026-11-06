@@ -368,7 +368,14 @@ export class DshellTerminalBridge extends Service {
     // backendType here. Claim it as the agent's shell so every path the model
     // can run commands through (its `bash` tool, terminal_send) lands on the
     // one terminal the user can watch.
-    void this.claimForeignAgent(owner, sessionId)
+    // The host treats an unhandled rejection as FATAL: it exits the process,
+    // and the desktop app restarts it. A claim that cannot complete (the log
+    // is locked, the session vanished, the buffer could not be opened) must
+    // therefore never escape as a floating rejection — the shell simply stays
+    // unclaimed, which is a state the client already knows how to draw.
+    void this.claimForeignAgent(owner, sessionId).catch((error: unknown) => {
+      console.warn('dshell-bridge: a foreign shell was not claimed:', error)
+    })
   })
 
   constructor(ctx: Context) {
@@ -376,7 +383,12 @@ export class DshellTerminalBridge extends Service {
     ctx.effect(() => this.ctx.terminals.registerBackend(this.backend), 'dshell-bridge: raw pty backend')
     ctx.effect(() => () => {
       this.backend.dispose()
-      void this.disposeAll()
+      // Teardown runs while the host is going down, and the host treats an
+      // unhandled rejection as fatal: a failing cleanup must not be the thing
+      // that kills the process on the way out.
+      void this.disposeAll().catch((error: unknown) => {
+        console.warn('dshell-bridge: teardown was not clean:', error)
+      })
     }, 'dshell-bridge: teardown')
     // Turn boundaries come from the session itself, so a block is cut exactly
     // where the agent took over and where it handed the terminal back.
@@ -803,6 +815,15 @@ export class DshellTerminalBridge extends Service {
       record.activeSend = undefined
       record.initializing = false
       options.afterRestore?.()
+    }).catch((error: unknown) => {
+      // The handler above can itself throw — `deliver` writes to sockets that
+      // may already be gone, and `restore` appends to a buffer that may have
+      // been torn down. A rejection thrown INSIDE a fulfilment handler does
+      // NOT reach this chain's own onRejected: it becomes a fresh unhandled
+      // rejection, and the host exits the process on those. The desktop app
+      // then restarts, which is exactly the "opening a session restarts dsh"
+      // this guard exists to prevent.
+      console.warn('dshell-bridge: the shell did not come up cleanly:', error)
     })
   }
 
@@ -1021,6 +1042,12 @@ export class DshellTerminalBridge extends Service {
       this.pump(record)
     }, (error: unknown) => {
       console.warn('dshell-bridge: input dropped:', error)
+    }).catch((error: unknown) => {
+      // A throw inside the fulfilment handler — `trackInput` on a torn-down
+      // splitter, `pump` on a dead record — becomes a FRESH unhandled
+      // rejection, and the host exits the process on those. The desktop app
+      // then restarts, which is the whole failure this guard exists for.
+      console.warn('dshell-bridge: the input was dropped:', error)
     })
   }
 
@@ -1226,6 +1253,11 @@ export class DshellTerminalBridge extends Service {
       }, () => {
         record.activeSend = undefined
         this.pump(record)
+      }).catch((error: unknown) => {
+        // A throw inside a fulfilment handler becomes a FRESH unhandled
+        // rejection, and the host exits the process on those. The pump must
+        // never be the thing that takes the desktop app down.
+        console.warn('dshell-bridge: the input pump failed:', error)
       })
     } catch {
       // The slot was taken (e.g. the agent's own terminal_send on main):
@@ -1284,7 +1316,14 @@ export class DshellTerminalBridge extends Service {
     } catch {
       // Context already gone; the reservation dies with it.
     }
-    record.disposeTimer = setTimeout(() => { void this.disposeRecord(record) }, 200)
+    record.disposeTimer = setTimeout(() => {
+      // The host treats an unhandled rejection as fatal: it exits the process
+      // and the desktop app restarts it. A disposal that trips over a closed
+      // handle must not be the thing that takes the app down.
+      void this.disposeRecord(record).catch((error: unknown) => {
+        console.warn('dshell-bridge: a dead shell was not disposed cleanly:', error)
+      })
+    }, 200)
   }
 
   /** Drop a dead record from `mains` and release its PtyBuffer. */
@@ -1563,6 +1602,11 @@ export class DshellTerminalBridge extends Service {
         // and reading that out of the message text would be a guess.
         ...LOCAL_SHELL_SUPPORTED ? {} : { localUnsupported: true },
       })
+    }).catch((error: unknown) => {
+      // A throw inside the fulfilment handler — `pushAgentSnapshot` writing
+      // to a socket that is already gone — becomes a FRESH unhandled
+      // rejection, and the host exits the process on those.
+      console.warn('dshell-bridge: the agent shell was not announced:', error)
     })
   }
 
@@ -1662,6 +1706,13 @@ export class DshellTerminalBridge extends Service {
         // does not say which of the two the reader can act on.
         ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
       })
+    }).catch((error: unknown) => {
+      // A throw inside either handler — `adopt` on a client that went away,
+      // `sendFrame` on a socket that is already closed — becomes a FRESH
+      // unhandled rejection, and the host exits the process on those. The
+      // desktop app then restarts, which is exactly the failure this guard
+      // exists to prevent.
+      console.warn('dshell-bridge: the client was not attached:', error)
     })
   }
 
@@ -1687,6 +1738,13 @@ export class DshellTerminalBridge extends Service {
         ...noShellRefusal(error) ? { noShell: true } : {},
         ...classifyDeviceFailure(error) === undefined ? {} : { failure: classifyDeviceFailure(error) },
       })
+    }).catch((error: unknown) => {
+      // A throw inside either handler — `adopt` on a client that went away,
+      // `sendFrame` on a socket that is already closed — becomes a FRESH
+      // unhandled rejection, and the host exits the process on those. The
+      // desktop app then restarts, which is exactly the failure this guard
+      // exists to prevent.
+      console.warn('dshell-bridge: the client was not reconnected:', error)
     })
   }
 

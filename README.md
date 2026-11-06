@@ -29,7 +29,6 @@ into dsh's documented extension points, so dsh stays upgradeable with upstream.
 - [Input assists: Tab, ↑, →](#input-assists-tab--)
 - [**Cross-session collaboration: pipes and the buffer**](#cross-session-collaboration-pipes-and-the-buffer)
 - [SSH device sessions](#ssh-device-sessions)
-- [Token usage](#token-usage)
 - [Settings](#settings)
 - [The status card](#the-status-card)
 - [Gesture cheat sheet](#gesture-cheat-sheet)
@@ -52,7 +51,7 @@ flowchart TB
   end
   subgraph HOST["The host — one Node process"]
     CORE["dsh's own core<br/>sessions, the agent, the tool registry"]
-    subgraph ROWS["dshell's plugin rows — twelve packages"]
+    subgraph ROWS["dshell's plugin rows — eleven packages"]
       VIEW["mode + terminal-bridge<br/>the view, and the PTYs behind it"]
       PANE["files + ssh<br/>the file pane, and where a session runs"]
       LINK["buffer<br/>pipes, and the buffer between them"]
@@ -81,7 +80,7 @@ Three bands, top to bottom:
   the AI's turns, in the order they happened — and it sends what you type. It holds no state of its
   own: everything on screen comes from the host over one websocket.
 - **The host** is dsh's own Node process. dshell adds **plugin rows** to it and changes none of
-  dsh's source, so dsh stays upgradeable with upstream. Those rows are the twelve packages listed
+  dsh's source, so dsh stays upgradeable with upstream. Those rows are the eleven packages listed
   at the bottom of this page, and the **data root** (`$DSH_HOME/dshell`) is where they keep their
   own files.
 - **Where the work happens** is a **world**: this machine, or a device. A session's commands, files
@@ -555,28 +554,6 @@ system information.
 
 ---
 
-## Token usage
-
-**Settings → `用量`** charts what the models have cost, from an index dshell keeps in its own data
-directory:
-
-![The usage page](docs/images/usage.png)
-
-- **每日热力** — a fixed 26-week calendar of daily totals, filled top-to-bottom and left-to-right, so
-  the newest day is always the bottom-right cell. It reads **all** time on purpose: the range chips
-  move the charts, never the calendar.
-- **合计 / 未缓存输入 / 输出 / 缓存读 / 调用 / 缓存命中率** — the window's headline numbers. The hit
-  rate is the one to watch: cache reads over all input.
-- **每日消耗（按模型）** and **模型占比** — one line per model over the window, and each one's share.
-- **按模型明细** — input, output, cache read, cache write, calls and total per model.
-
-The index is incremental: dsh attaches provider-reported usage to each `assistant/message`, and a scan
-reads only the sessions whose logs have grown since last time. It runs when you open the page, and on
-`重新聚合`. A session whose log dsh cannot decode is reported as skipped — the page shows that the
-totals are partial, and why, instead of quietly counting less.
-
----
-
 ## Settings
 
 dshell configures itself on dsh's **Plugins** panel, on the row each setting belongs to: open `插件`
@@ -590,8 +567,6 @@ in the sidebar, pick `@nexus-aethra/dshell-bundle`, then use the `配置` contro
 One page holds all of it: dsh's **Settings → `dshell`** — the **管理台** — lists **设备与凭据**,
 **WSL 发行版** and **终端与数据** as three cards side by side.
 
-**`用量`** (the token-usage page above) is a section of its own in Settings, beside `通用设置` and
-`模型` — it is a report rather than a plugin setting.
 
 Settings are stored on the host and **shared by every browser on it** — turn an assist off here and it
 is off in the other browser too.
@@ -725,9 +700,9 @@ This is exactly what produced the two screenshots above — the run is real, not
 | [`docs/dshell-setup.md`](docs/dshell-setup.md) | Setting up a machine, troubleshooting, build order |
 | [`docs/README.md`](docs/README.md) | The documentation index and its update rules |
 
-Twelve packages (`@nexus-aethra/dshell-*`), published together: `std` (contracts), `storage` (storage
+Eleven packages (`@nexus-aethra/dshell-*`), published together: `std` (contracts), `storage` (storage
 engines), `bundle` (the single patch layer), `conversation`, `terminal-bridge`, `mode`, `commands`,
-`files`, `ssh`, `buffer`, `usage` (the token-usage page) and `wsl` (this machine's WSL2
+`files`, `ssh`, `buffer` and `wsl` (this machine's WSL2
 distributions as built-in devices).
 
 ## License

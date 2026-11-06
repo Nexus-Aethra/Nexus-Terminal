@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { SshClientService } from '../src/client/service.js'
@@ -73,35 +74,68 @@ async function toggle(accept: boolean, deviceId = 'wsl:Ubuntu-24.04') {
 }
 
 describe('the client bundle', () => {
-  // The regression this guards: the browser half imported the field constant
-  // from the schema module, which pulled @deepseek-ai/schemastery into the
-  // client bundle. dsh's PLATFORM_MODULES does not serve schemastery, so the
-  // plugin failed to load and the whole desktop app would not boot. The fix was
-  // to read the constant from dshell-std, which is always inlined.
+  // The regression this guards, and the exact failure it produced:
+  // @nexus-aethra/dshell-ssh@0.1.17-alpha.1 shipped a client bundle that
+  // required @deepseek-ai/schemastery, which dsh's PLATFORM_MODULES does not
+  // serve. The loader threw "Cannot find module" while evaluating the factory,
+  // the entry never activated, and the whole desktop app failed to boot.
   //
-  // Asserted against the BUILT bundle rather than the import graph, because the
-  // import graph is exactly what was wrong: tsc erases type-only imports before
-  // the bundler runs, so a static reading of the source cannot see this.
+  // Reproduced here the way dsh loads a plugin: the bundle registers a factory
+  // with window.__ModuleLoader__, and the loader CALLS it with a require that
+  // serves only PLATFORM_MODULES. Asserting on the built bundle rather than the
+  // import graph is deliberate -- the source looks correct, because the import
+  // that caused this was type-only.
   const bundlePath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 
-  it('requires nothing outside the dsh module table', () => {
-    const bundle = existsSync(bundlePath) ? readFileSync(bundlePath, 'utf8') : ''
-    // A tree that was never built cannot fail this gate; the build is what the
-    // pack step runs, and a missing bundle is caught there instead.
-    if (bundle.length === 0) return
-    const required = [...new Set(bundle.match(/require\(["'][^"']+["']\)/g) ?? [])]
-      .map(spec => spec.slice(9, -2))
-    const served = new Set([
-      'react',
-      'react/jsx-runtime',
-      'react-dom',
-      '@deepseek-ai/cordis',
-      '@deepseek-ai/dsh-client-store',
-      '@deepseek-ai/dsh-client-ui-slots',
-      '@deepseek-ai/dsh-client-ui-primitives',
-      '@deepseek-ai/dsh-client-ui-dockkit',
-    ])
-    expect(required.filter(spec => !served.has(spec))).toEqual([])
+  /** dsh's browser module table (packages/client/web/src/platform.ts). */
+  const PLATFORM_MODULES = new Set([
+    'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+    'zod', '@tanstack/react-virtual',
+    '@deepseek-ai/dsh-client-store',
+    '@deepseek-ai/dsh-client-ui-slots',
+    '@deepseek-ai/dsh-client-ui-primitives',
+    '@deepseek-ai/dsh-client-ui-dockkit',
+  ])
+
+  /** Run the bundle the way the loader does, and report what it could not serve. */
+  function loadAsDshDoes(source: string): string[] {
+    const missing: string[] = []
+    const require = (spec: string): unknown => {
+      if (!PLATFORM_MODULES.has(spec)) {
+        missing.push(spec)
+        throw new Error(`Cannot find module '${spec}'`)
+      }
+      // Enough of each module for the bundle to evaluate: the service class is
+      // extended at module scope, so a bare {} would fail for the wrong reason.
+      return spec === '@deepseek-ai/cordis'
+        ? { Service: class { constructor() {} } }
+        : {}
+    }
+    let entry: { factory: (require: (spec: string) => unknown) => unknown } | undefined
+    const window = {
+      __ModuleLoader__: { load: (registered: typeof entry) => { entry = registered } },
+    }
+    runInNewContext(source, {
+      window, console, process, setTimeout, clearTimeout,
+      document: { createElement: () => ({ style: {} }), head: {} },
+      navigator: { userAgent: 'node' },
+      location: { href: 'http://127.0.0.1/' },
+    })
+    if (entry === undefined) return ['<the bundle registered no entry>']
+    try {
+      entry.factory(require)
+    } catch (error) {
+      // A module the loader could not serve is the failure worth naming.
+      if (missing.length === 0) throw error
+    }
+    return missing
+  }
+
+  it('loads under a require that serves only dsh module table entries', () => {
+    // A tree that was never built has no bundle to read; the pack step runs the
+    // build, and that is where a missing artifact is caught.
+    if (!existsSync(bundlePath)) return
+    expect(loadAsDshDoes(readFileSync(bundlePath, 'utf8'))).toEqual([])
   })
 })
 describe('hiding a device', () => {

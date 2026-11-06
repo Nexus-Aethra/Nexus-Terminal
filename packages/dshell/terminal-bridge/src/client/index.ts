@@ -175,6 +175,16 @@ const HISTORY_MAX_BYTES = 256 * 1024
 const HISTORY_MAX_FRAMES = 1000
 
 /**
+ * The cap on one block's text, in characters.
+ *
+ * The host caps its own block log at 512 KiB; the browser copy grew without
+ * any limit, so a long-running shell kept a string that only ever got
+ * LONGER — and every chunk re-rendered it in full. The cap matches the
+ * host's, so the two sides keep the same amount of scrollback.
+ */
+const BLOCK_MAX_CHARS = 512 * 1024
+
+/**
  * The agent's own shell, as the task card's panel sees it.
  *
  * A separate store from {@link PtyStreamState} because it is a separate stream
@@ -912,6 +922,12 @@ export class PtyStreamService extends Service {
       const block = list?.find(candidate => candidate.seq === frame.seq)
       if (block !== undefined) {
         block.text += frame.text
+        // The block grows by deltas, so it needs a cap of its own: without
+        // one a long session's shell block is a string that only ever gets
+        // longer, and every chunk re-renders all of it.
+        if (block.text.length > BLOCK_MAX_CHARS) {
+          block.text = block.text.slice(block.text.length - BLOCK_MAX_CHARS)
+        }
         this.patch({ version: this.state.getSnapshot().version + 1 })
       }
       return

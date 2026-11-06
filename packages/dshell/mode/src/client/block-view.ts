@@ -342,8 +342,20 @@ export function BlockView(props: {
       }
     }
     if (!tryBind()) {
-      const timer = setInterval(() => { if (tryBind()) clearInterval(timer) }, 500)
-      return () => { clearInterval(timer) }
+      // The binding is not ready yet. The subscription has to be attached by
+      // the SAME path that binds it: binding later and returning would leave
+      // this view with no subscription at all, and the session's fold would
+      // silently stop updating — a transcript that never grows again.
+      let unsubscribeBound: (() => void) | undefined
+      const timer = setInterval(() => {
+        if (!tryBind()) return
+        clearInterval(timer)
+        unsubscribeBound = bound?.subscribe(accept)
+      }, 500)
+      return () => {
+        clearInterval(timer)
+        unsubscribeBound?.()
+      }
     }
     const unsubscribe = bound?.subscribe(accept)
     // The session snapshot's own view of what the reader has sent: the local
