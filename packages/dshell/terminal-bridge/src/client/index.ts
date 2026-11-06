@@ -329,9 +329,17 @@ export class PtyStreamService extends Service {
     return true
   }
 
-  /** Record a prompt, in memory and in storage. */
+  /**
+   * Record a prompt, in memory and in storage — at most once per session.
+   *
+   * The frames that carry this fact repeat: every rebind re-sends `info` and
+   * `ready`, and a shell that dies and comes back sends both again. Writing to
+   * localStorage on each of those is a synchronous main-thread write for a fact
+   * that never changes once it is true, so the in-memory set is the guard.
+   */
   private notePrompted(dshSessionId: string): void {
-    if (!this.prompted.has(dshSessionId)) this.prompted.add(dshSessionId)
+    if (this.prompted.has(dshSessionId)) return
+    this.prompted.add(dshSessionId)
     savePrompted(dshSessionId)
   }
   /** Per-session block lists, exactly as the host ordered them. The stored
