@@ -8,8 +8,11 @@
  */
 
 import { Service, type Context } from '@deepseek-ai/cordis'
-import { DSHELL_BUNDLE_NAME, isHiddenDevice } from '@nexus-aethra/dshell-std'
-import { HIDDEN_DEVICES_FIELD, type SshSettings } from '../ssh-settings.js'
+import { DSHELL_BUNDLE_NAME, HIDDEN_DEVICES_FIELD, isHiddenDevice } from '@nexus-aethra/dshell-std'
+// Type-only: the schema module imports @deepseek-ai/schemastery, which dsh's
+// browser module table does not serve. A value import here would put that
+// require into this package's client bundle and the plugin would fail to load.
+import type { SshSettings } from '../ssh-settings.js'
 import {
   DSHELL_SSH_PATH, type CredentialInput, type CredentialView, type DeviceBinding, type DeviceHelperStatus, type DeviceInput, type DeviceView, type VaultGroupView,
   type SshKeyFile, type TrustedHostKey, type SshRequest, type SshResponse,

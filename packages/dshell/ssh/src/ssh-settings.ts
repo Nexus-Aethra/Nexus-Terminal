@@ -10,16 +10,20 @@
  */
 
 import z from '@deepseek-ai/schemastery'
-import { isHiddenDevice } from '@nexus-aethra/dshell-std'
+import { HIDDEN_DEVICES_FIELD } from '@nexus-aethra/dshell-std'
 import { SSH_SETTINGS_NAMESPACE } from './protocol.js'
 
 export { SSH_SETTINGS_NAMESPACE }
 
+// Re-exported for the browser half, which reads and writes this field without
+// importing this file -- a client bundle that reached the schema would pull
+// @deepseek-ai/schemastery into the browser, where dsh's module table does not
+// serve it.
+export { HIDDEN_DEVICES_FIELD }
+
 /** Field carrying the device preselected for new sessions. */
 export const DEFAULT_DEVICE_FIELD = 'defaultDevice'
 
-/** Field carrying the device ids the reader hid from the pickers. */
-export const HIDDEN_DEVICES_FIELD = 'hiddenDevices'
 
 /** The durable section. */
 export interface SshSettings {

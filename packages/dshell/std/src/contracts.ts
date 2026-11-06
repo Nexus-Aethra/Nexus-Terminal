@@ -680,6 +680,17 @@ export interface DshellForwardResponse {
 export const SSH_SETTINGS_NAMESPACE = 'dshell-ssh'
 
 /**
+ * Field carrying the device ids the reader hid from the pickers.
+ *
+ * Lives here rather than beside the schema that declares it because the
+ * browser half reads and writes this field too, and a client bundle that
+ * reaches the schema file would drag @deepseek-ai/schemastery into the
+ * browser -- which is not in dsh's PLATFORM_MODULES, so the whole plugin
+ * fails to load. dshell-std is always inlined into every client face.
+ */
+export const HIDDEN_DEVICES_FIELD = 'hiddenDevices'
+
+/**
  * How a device authenticates.
  *
  * `'wsl'` marks a built-in WSL distribution: there is no handshake to

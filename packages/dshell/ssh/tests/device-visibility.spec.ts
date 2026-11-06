@@ -10,6 +10,8 @@
  * rollback the pickers keep hiding a device the reader was told was not saved.
  */
 
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { SshClientService } from '../src/client/service.js'
@@ -70,6 +72,38 @@ async function toggle(accept: boolean, deviceId = 'wsl:Ubuntu-24.04') {
   }
 }
 
+describe('the client bundle', () => {
+  // The regression this guards: the browser half imported the field constant
+  // from the schema module, which pulled @deepseek-ai/schemastery into the
+  // client bundle. dsh's PLATFORM_MODULES does not serve schemastery, so the
+  // plugin failed to load and the whole desktop app would not boot. The fix was
+  // to read the constant from dshell-std, which is always inlined.
+  //
+  // Asserted against the BUILT bundle rather than the import graph, because the
+  // import graph is exactly what was wrong: tsc erases type-only imports before
+  // the bundler runs, so a static reading of the source cannot see this.
+  const bundlePath = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+
+  it('requires nothing outside the dsh module table', () => {
+    const bundle = existsSync(bundlePath) ? readFileSync(bundlePath, 'utf8') : ''
+    // A tree that was never built cannot fail this gate; the build is what the
+    // pack step runs, and a missing bundle is caught there instead.
+    if (bundle.length === 0) return
+    const required = [...new Set(bundle.match(/require\(["'][^"']+["']\)/g) ?? [])]
+      .map(spec => spec.slice(9, -2))
+    const served = new Set([
+      'react',
+      'react/jsx-runtime',
+      'react-dom',
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-client-store',
+      '@deepseek-ai/dsh-client-ui-slots',
+      '@deepseek-ai/dsh-client-ui-primitives',
+      '@deepseek-ai/dsh-client-ui-dockkit',
+    ])
+    expect(required.filter(spec => !served.has(spec))).toEqual([])
+  })
+})
 describe('hiding a device', () => {
   it('stops offering the device once the host accepts', async () => {
     const run = await toggle(true)
