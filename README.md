@@ -111,19 +111,22 @@ device routing ([SSH device sessions](#ssh-device-sessions)), and the pipes and 
 
 ## What's new since 0.1.15
 
-`0.1.16` is on npm as `latest`, and it changed one thing that matters at install time: dshell
-no longer pins a single dsh version but names a **window** of them, so every `0.2.1` release —
-`0.2.1-rc.5`, today's `latest`, included — installs without waiting for a dshell release.
+`0.1.17` is on npm as `latest`. It is the release that makes a terminal survive a session
+switch, turns a WSL2 distribution into a device row, and carries the port forwards that connect
+a local port to a service on the device.
 
-The release after it adds six more. All six are on this branch today; the published
-`0.1.16` does not have them yet.
+Its predecessor `0.1.16` changed one thing that matters at install time on its own: dshell no
+longer pins a single dsh version but names a **window** of them, so every `0.2.1` release —
+`0.2.1-rc.5`, today's `latest`, included — installs without waiting for a dshell release.
 
 | | What changed | What you notice |
 |---|---|---|
 | **WSL2 distributions are devices** | A WSL2 distribution on this Windows machine is detected and offered as a **built-in device row** of its own — open a terminal on it, browse its files, hand it to the AI | There is **no credential to enter** (the distribution is its own credential) and **no port forward** to ask for: WSL2 shares this machine's loopback, so its ports are already reachable here |
 | **The 管理台** | dsh's Settings gains a **dshell** section — one page that gathers the whole suite's settings | **设备与凭据**, **WSL 发行版** and **终端与数据** as three cards on one page, instead of a configure control per plugin row |
 | **A ConPTY repaint no longer blanks the terminal** | On Windows, a program that repaints its whole screen after a resize — the ConPTY signature — left a **blank wall above the prompt** | The region renders the rows that carry ink and cuts the dead frame around them, so the row count and the bytes agree again |
-| **A session switch keeps its prompt** | Switching to a session and back reset its readiness, so a live device session flashed the first-dial panel over a terminal that was about to work | That the session reached a prompt is remembered for the page's life, and seeded while the rebind handshake runs |
+| **A session switch keeps its prompt** | Switching to a session and back reset its readiness, so a live device session flashed the first-dial panel over a terminal that was about to work | That the session reached a prompt is remembered for the page's life **and across a reload**, and seeded while the rebind handshake runs |
+| **A session switch no longer redials** | Coming back to a terminal reopened the carrier, and the client drew "connecting" over a shell that had never stopped running. Three layers were wrong: the bridge indexed its shells by `Agent` object identity (an object that changes instance across a resume, an HMR reload or a host restart), binding a session released the device's **live** helper connection, and the client treated a rebind as a connection | Switching away and back is **silent**: the same scrollback, no connecting copy, no second dial — and a **real** outage still shows, because the retry state is now an explicit fact rather than inferred from a counter that a redial resets |
+| **Port forwards** | One SSH connection can carry a forwarded port, so a local port reaches a service on the device — from the panel and from the model's own tools | You can open a port on the device without a second `ssh -L` |
 | **dsh `0.2.2-rc.1` is supported** | Every dsh peer range dshell declares now names a **window** of dsh versions instead of a fixed list | The plugin installs on anything from `0.2.1-rc.2` through `0.2.2-rc.1` — **the published `0.1.14` does not install there at all** |
 | **A distribution can be hidden from the pickers** | A WSL2 distribution you never open a shell in is one more row in every device picker; the 管理台's WSL card now carries a per-distribution **hide** switch | The row leaves the new-session and device pickers, and nothing else: it still answers, and a session already bound to it keeps running there |
 
@@ -144,19 +147,21 @@ Which dshell release you want depends on which dsh you have:
 
 | dsh | dshell |
 |---|---|
-| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.17`** — `latest`; the earlier `0.1.16` still carries `<0.2.2-0` and refuses `0.2.2-rc.1` |
-| `0.2.1-rc.3` only | **`0.1.15`** — superseded by `0.1.16` |
+| `0.2.2-rc.1` **and every 0.2.1 release**, plus `0.2.0`, `0.1.7`, `0.1.6`, `0.1.5` | **`0.1.17`** — `latest` |
+| `0.2.1` before `rc.2`, i.e. `0.2.1-rc.3` | **`0.1.16`** — its window is `<0.2.2-0`, so it also installs on every `0.2.1` release |
 | `0.2.1-rc.2` | **`0.1.14`** |
 | `0.2.0-rc.2`, `0.2.0-rc.1`, `0.1.7-rc.2`, `0.1.6-alpha.2`, `0.1.5-rc.2` | **`0.1.13`** |
 
 dsh checks every `@deepseek-ai/dsh-*` peer a plugin declares against its own version and skips the
 whole bundle when one does not match, so a dshell release declares the dsh versions it supports.
+**`0.1.16` was the release that made that a window rather than a pinned version** — before it, every
+dsh patch release locked users out until a matching dshell release shipped.
 That declaration is a range, not a list of exact versions, so a dsh patch or release candidate on
 a line dshell already runs on installs without waiting for a dshell release. The window is one
 file, `dsh-upstream.json` (`support.range`), and every manifest carries it:
 `0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0`.
 So `0.2.1-rc.3` — and every later `0.2.1` release — installs without waiting for a dshell
-release, and `0.2.2-rc.1` installs too — verified against a live container on this branch. A dsh from
+release, and `0.2.2-rc.1` installs too — verified against a live container. A dsh from
 a newer minor line than that window is what `allow-version` is for — `dsh plugin --profile <name>
 allow-version <package@version> --dsh-version <exact> --accept-risk`, which records the grant in
 the profile's `compatibility.json`.
