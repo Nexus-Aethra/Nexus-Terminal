@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session history",
+    "description": "Keeps each session terminal history so a reopened session resumes where it left off."
+  }
+}

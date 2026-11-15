@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-storage",
-  "version": "0.1.17",
+  "version": "0.1.18-alpha.1",
   "description": "dshell storage engines: the mediums behind the std storage contract. Currently a SQLite command-history store on Node's built-in node:sqlite, so there is no native dependency and no install script; host-only, never imported by a client bundle.",
   "license": "MIT",
   "repository": {
@@ -12,6 +12,8 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
@@ -23,7 +25,10 @@
     "build:host": "tsc -p tsconfig.json --emitDeclarationOnly false"
   },
   "files": [
-    "lib"
+    "locale/*.json",
+    "lib/index.js",
+    "lib/history.js",
+    "lib/types/**/*.d.ts"
   ],
   "publishConfig": {
     "access": "public"

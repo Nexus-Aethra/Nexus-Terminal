@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Slash commands",
+    "description": "Adds the /agent and /shell prefix commands to the composer."
+  }
+}

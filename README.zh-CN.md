@@ -131,9 +131,9 @@ flowchart TB
 
 ### 装进 dsh
 
-前置：**dsh** `0.2.1-rc.5`——桌面版，或者命令行版（`npm install -g @deepseek-ai/dsh@latest`）；
+前置：**dsh** `0.2.2-rc.3`——桌面版，或者命令行版（`npm install -g @deepseek-ai/dsh@next`）；
 以及 `PATH` 上的 **Node >= 24.11.0** 与 **pnpm 9.15.0**（`dsh plugin` 是转发给 pnpm 执行的）。
-npm 上 `latest` 是 `0.2.1-rc.5`，`next` 是 `0.2.2-rc.1`——两者都在 dshell 支持的窗口里，
+npm 上 `latest` 是 `0.2.1-rc.5`，`next` 是 `0.2.2-rc.3`——两者都在 dshell 支持的窗口里，
 装哪个都行；这里用 `latest`。
 
 装哪个 dshell 版本，取决于你手上的 dsh：
@@ -157,12 +157,24 @@ bundle 被跳过**，所以 dshell 声明它支持哪些 dsh 版本。**把「�
 --dsh-version <确切版本> --accept-risk`，豁免会记在 profile 的 `compatibility.json` 里。
 
 ```sh
-# 只装一个包：bundle 就是 patch 层，另外十一个 dshell 包由它依赖带入，
-# dshell-ssh 还会带上原版 profile 不带的那一个 dsh 包（`@deepseek-ai/dsh-ssh`，SSH 执行 provider）。
+# 只装一个包：bundle 就是 patch 层，另外十一个 dshell 包由它依赖带入。
+# 有三个 dsh 包是依赖而不是 peer，因为原版桌面 profile 一个都不带：
+# `@deepseek-ai/dsh-ssh`（SSH 执行 provider，宿主侧），以及
+# `@deepseek-ai/dsh-client-store` 与 `@deepseek-ai/dsh-client-ui-primitives`（浏览器侧要用）。
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@latest
 
 dsh web
 ```
+
+仓库根目录本身也是一个 bundle，所以同一个组合可以直接从 GitHub 装——根目录的清单里声明了
+`dsh.bundle`，并指向它自己的 `cordis.patch.yml`：
+
+```sh
+dsh plugin --profile web add github:Nexus-Aethra/Nexus-Terminal
+```
+
+`@nexus-aethra/nexus-terminal` 就是这个根目录发到 npm 上的那份：它依赖十一个 dshell 包，
+并带着把它们组装起来的 patch。装 bundle 子包和装根目录，是通向同一份行栈的两条路。
 
 dsh 启动后会打印一个带 token 的地址（例如 `http://127.0.0.1:3080/?token=…`），用浏览器打开即可。
 

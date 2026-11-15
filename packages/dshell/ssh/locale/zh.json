@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH 设备",
+    "description": "通过 SSH 在远程机器上打开 shell 与文件面板。"
+  }
+}

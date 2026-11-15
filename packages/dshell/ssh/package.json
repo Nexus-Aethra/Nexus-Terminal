@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-ssh",
-  "version": "0.1.17",
+  "version": "0.1.18-alpha.1",
   "description": "dshell SSH devices: a durable device/key registry, per-session device binding, and remote execution for a bound session's command tools.",
   "license": "MIT",
   "repository": {
@@ -12,6 +12,8 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
@@ -31,6 +33,14 @@
   },
   "dsh": {
     "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
       "platform": "web"
     }
   },
@@ -41,7 +51,58 @@
     "build:client": "tsdown --config-loader tsx"
   },
   "files": [
-    "lib"
+    "locale/*.json",
+    "lib/index.js",
+    "lib/channel-process.js",
+    "lib/client.js",
+    "lib/client/admin.js",
+    "lib/client/card-styles.js",
+    "lib/client/card.js",
+    "lib/client/index.js",
+    "lib/client/locales.js",
+    "lib/client/nav-icon.js",
+    "lib/client/service.js",
+    "lib/client/session-bind.js",
+    "lib/client/vault-card.js",
+    "lib/connection.js",
+    "lib/credentials.js",
+    "lib/device-dialect.js",
+    "lib/device-fs-provider.js",
+    "lib/devices.js",
+    "lib/forward/forwarder.js",
+    "lib/forward/route.js",
+    "lib/forward/tool.js",
+    "lib/fs-routing.js",
+    "lib/helper.js",
+    "lib/helper/fs.js",
+    "lib/helper/install.js",
+    "lib/helper/processes.js",
+    "lib/helper/protocol.js",
+    "lib/helper/target.js",
+    "lib/host-key.js",
+    "lib/host-locales.js",
+    "lib/literal-edit.js",
+    "lib/local-keys.js",
+    "lib/mount.js",
+    "lib/paths.js",
+    "lib/protocol.js",
+    "lib/registry.js",
+    "lib/remote-fs-helper.js",
+    "lib/remote-fs-shell.js",
+    "lib/remote-fs-transport.js",
+    "lib/remote-fs.js",
+    "lib/remote-process.js",
+    "lib/route.js",
+    "lib/router.js",
+    "lib/shell-quote.js",
+    "lib/spawn-routing.js",
+    "lib/ssh-settings.js",
+    "lib/transport/auth.js",
+    "lib/transport/errors.js",
+    "lib/transport/known-hosts.js",
+    "lib/transport/transport.js",
+    "lib/vault.js",
+    "lib/types/**/*.d.ts"
   ],
   "publishConfig": {
     "access": "public"
@@ -50,7 +111,7 @@
     "@deepseek-ai/dsh-ssh": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@nexus-aethra/dshell-std": "workspace:^",
     "ssh2": "1.17.0",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
@@ -58,7 +119,6 @@
     "@deepseek-ai/dsh-api-session-controller": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-connection": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
-    "@deepseek-ai/dsh-client-store": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-plugin-manager": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
@@ -83,7 +143,6 @@
     "@deepseek-ai/dsh-api-session-controller": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-connection": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
-    "@deepseek-ai/dsh-client-store": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-plugin-manager": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",
     "@deepseek-ai/dsh-client-ui-settings": "0.1.5-rc.2 || 0.1.6-alpha.2 || 0.1.7-rc.2 || 0.2.0-rc.1 || 0.2.0-rc.2 || >=0.2.1-rc.2 <0.2.3-0",

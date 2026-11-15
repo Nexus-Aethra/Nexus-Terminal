@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-std",
-  "version": "0.1.17",
+  "version": "0.1.18-alpha.1",
   "description": "dshell standard layer: the wire contracts every plugin shares (paths + shapes), with no dependency on dsh and no feature code 鈥?the single place a dsh interface change is absorbed.",
   "license": "MIT",
   "repository": {
@@ -12,6 +12,8 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
@@ -23,7 +25,15 @@
     "build:host": "tsc -p tsconfig.json --emitDeclarationOnly false"
   },
   "files": [
-    "lib"
+    "locale/*.json",
+    "lib/index.js",
+    "lib/contracts.js",
+    "lib/data-root.js",
+    "lib/host-copy.js",
+    "lib/session-view.js",
+    "lib/shell-line.js",
+    "lib/storage.js",
+    "lib/types/**/*.d.ts"
   ],
   "publishConfig": {
     "access": "public"

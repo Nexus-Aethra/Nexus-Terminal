@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Terminal conversation view",
+    "description": "Adds the terminal view a session opens into, with its own tab in the view strip."
+  }
+}

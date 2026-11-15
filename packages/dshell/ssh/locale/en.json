@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH devices",
+    "description": "Opens shells and a file panel on remote machines over SSH."
+  }
+}

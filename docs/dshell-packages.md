@@ -1,6 +1,6 @@
 # dshell Plugin Inventory
 
-This document lists every package that dshell introduces — twelve of
+This document lists every package that dshell introduces — eleven of
 them, under `packages/dshell/`: `std`, `storage`, `bundle`,
 `conversation`, `terminal-bridge`, `mode`, `commands`, `ssh`,
 `buffer`, `files`, `wsl`. Each entry states its role, the dsh
@@ -14,6 +14,39 @@ adding-a-package.md): each lives under `packages/<group>/<pkg>/`, has a
 Cordis plugin, and ships a `README.md` with the Model Experience section
 when it contributes to model-visible state.
 
+Concretely, every package manifest carries:
+
+- `locale/en.json` and `locale/zh.json` with `meta.title` and
+  `meta.description`, exported through `./locale/*.json` and
+  `./package.json` — this is what the Plugins panel and the plugin
+  manager read, so a plugin shows a title instead of a package name.
+- `dsh.client.inject` on every browser half, naming the upstream modules
+  the client bundle will ask the host for; host-only packages declare no
+  `dsh.client` at all.
+- a `files` list naming the emitted runtime modules and
+  `lib/types/**/*.d.ts` explicitly — no sourcemaps in a tarball.
+
+`scripts/tests/plugin-manifest-format.spec.ts` guards all of the above,
+plus the repository root described next.
+
+## The repository root
+
+The root is a bundle in its own right, so this checkout installs straight
+from GitHub:
+
+```sh
+dsh plugin --profile web add github:Nexus-Aethra/Nexus-Terminal
+```
+
+Its manifest (`@nexus-aethra/nexus-terminal`) declares `dsh.bundle` and
+points at a root `cordis.patch.yml` — the same patch `dshell-bundle`
+ships, kept identical by that spec — and depends on the eleven packages it
+composes with plain version ranges, so a GitHub or npm install resolves
+the whole closure. The dev workspace links those ranges locally instead
+(`.npmrc`: `link-workspace-packages=true`), otherwise pnpm would fetch
+the published copies and the lockfile would record absolute paths into
+this machine.
+
 ## Naming
 
 - Host-side packages: `@deepseek-ai/dsh-*` names follow the dsh
@@ -26,7 +59,7 @@ when it contributes to model-visible state.
   prefix (`dshell-*`) so they are unmistakable as the dshell extension
   set.
 
-- Each package name uses one dash-separated role token after `dshell`:
+- Each package name uses one dash-separated role token after `dshell` (the full set is `std`, `storage`, `bundle`, `conversation`, `terminal-bridge`, `mode`, `commands`, `ssh`, `buffer`, `files`, `wsl`):
   `std`, `bundle`, `conversation`, `terminal-bridge`, `mode`, `commands`,
   `ssh`, `buffer`, `files`, `wsl`.
 

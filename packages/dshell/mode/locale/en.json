@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Shell and agent modes",
+    "description": "Switches a session between shell and agent mode, and remembers the choice."
+  }
+}

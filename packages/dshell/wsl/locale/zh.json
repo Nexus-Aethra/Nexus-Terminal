@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSL 设备",
+    "description": "把 WSL 发行版当作设备访问，shell 与文件面板与 SSH 一致。"
+  }
+}
