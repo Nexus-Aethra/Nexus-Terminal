@@ -83,8 +83,14 @@ jobs:
       # both versions (`scripts/generate-typert.ts`, which reads workspace
       # packages from source and so needs no compiled package), so it is called
       # explicitly here, first, the way upstream's own build:lib:host runs it.
+      # The host aggregate needs a heap the runner does not give by default:
+      # dsh's own build passes `--max-old-space-size=8192` to the host tsc
+      # (`compile-referenced-projects.ts`), and without it the build dies with
+      # "Ineffective mark-compacts near heap limit" halfway through.
       - name: build dsh packages
         working-directory: dsh
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           corepack pnpm exec tsx scripts/generate-typert.ts
           corepack pnpm exec tsc -b tsconfig.host.json
