@@ -70,9 +70,23 @@ jobs:
       # of a client package, so the client build is not optional for this
       # repository's type check. dsh's own `build:lib:host` is the host half of
       # this plus the desktop bundle, which no gate below reads.
+      #
+      # One generated artifact is neither tsc's nor tsdown's to write: the
+      # Typert remote client. Every api package exports `./remote` at
+      # `lib/typert.remote-client.d.ts`, and the client build reads it. dsh
+      # 0.2.1 generated it inside the host tsdown pass, whose plugin did both
+      # the decorator lowering and the generation, so the file appeared between
+      # the two builds below without anyone asking. 0.2.2 split that plugin in
+      # two and the host pass kept the decorator half, which emits nothing, so
+      # a fresh checkout now fails the client build with "Cannot find module
+      # '@deepseek-ai/dsh-api-*/remote'". Generation is a script of its own in
+      # both versions (`scripts/generate-typert.ts`, which reads workspace
+      # packages from source and so needs no compiled package), so it is called
+      # explicitly here, first, the way upstream's own build:lib:host runs it.
       - name: build dsh packages
         working-directory: dsh
         run: |
+          corepack pnpm exec tsx scripts/generate-typert.ts
           corepack pnpm exec tsc -b tsconfig.host.json
           corepack pnpm exec tsdown --config-loader native --env.DSH_BUILD_FACE host
           corepack pnpm exec tsc -b tsconfig.client.json
