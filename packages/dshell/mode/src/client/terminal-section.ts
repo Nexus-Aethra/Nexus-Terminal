@@ -31,8 +31,55 @@ import type { CurrentSessionSeat, DeviceChoiceSeat } from './terminal-mode-switc
 import type { PipeSeat } from './status-card.js'
 import { dshIcon, type DshIconName } from './dsh-icons.js'
 
-/** The sidebar hole the workspace browser fills; our section sits after its region. */
+/**
+ * The sidebar hole the workspace browser fills.
+ *
+ * It is the marker that the sidebar's browsing region is mounted, and so the
+ * probe the section waits for — never its anchor: see `sidebarSeat()` for
+ * where the section rides, and why that is not inside the region.
+ */
 const SIDEBAR_HOLE = '[data-slot="sidebar.workspaces"]'
+
+/** The sidebar's settings foot: the column's last child in every dsh layout so far. */
+const FOOT_SELECTOR = '[class*="_footArea"]'
+
+/** The seat the section rides in. */
+export interface SidebarSeat {
+  /** The column the section rides in. */
+  readonly column: HTMLElement
+  /** The column's foot, which the section docks above. */
+  readonly foot: Element
+}
+
+/**
+ * Where the section rides, read off dsh's sidebar.
+ *
+ * dsh 0.2.2 moved the browsing region into a nested scroll viewport
+ * (`.scrollRegion` > `.scrollArea`, a grid whose tracks are
+ * `4px | 1fr | ~6px`), so the region is no longer a direct child of the
+ * column, and an insertion after it would land INSIDE that viewport: the
+ * section would become an auto-placed grid item in the 4px gutter track and
+ * render as a sliver. The column itself kept its shape in both versions — a
+ * flex column one viewport tall, with the settings foot as its last child —
+ * so the foot is the anchor that means the same thing everywhere, and the
+ * section rides between the scroll region and it. That is also exactly where
+ * the unfolded section sat in 0.2.1, where the region was the column's own
+ * `flex:1` child immediately above the foot: the folded and unfolded homes
+ * are one home, and always were.
+ *
+ * Pure, and shaped as data, so the rule can be pinned in a spec without a
+ * browser: the seat is the foot's parent, never the region.
+ *
+ * @param hole - the sidebar's `sidebar.workspaces` marker, or null before it mounts.
+ * @param foot - the sidebar's settings foot, or null before it mounts.
+ * @returns the seat, or undefined while the sidebar is not up.
+ */
+export function sidebarSeat(hole: Element | null, foot: Element | null): SidebarSeat | undefined {
+  if (hole === null || foot === null) return undefined
+  const column = foot.parentElement
+  if (column === null) return undefined
+  return { column, foot }
+}
 
 /** Our section's marker. */
 const MARKER = 'data-dshell-terminal-section'
@@ -354,7 +401,16 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     return { root: rowEl, title: titleEl, place, toggle, menu, menuPanel, menuRename, menuArchive }
   }
 
-  /** Whether dsh's sidebar is in its 36px rail state. */
+  /**
+   * Whether dsh's sidebar is in its 36px rail state.
+   *
+   * The section is mounted in the sidebar COLUMN (see `sidebarSeat`), and the
+   * column is the element dsh puts its collapsed class on — so the parent's
+   * own class list is the rail state. Reading it through the parent is what
+   * keeps this true across dsh versions: the column carried the class in
+   * 0.2.1 and still does in 0.2.2, where the region below it moved into a
+   * nested scroll viewport.
+   */
   const isRail = (): boolean => (root.parentElement?.className ?? '').toString().includes('_collapsed')
 
   /** Hide one element outright, leaving the rest of the tree alone. */
@@ -405,8 +461,9 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
     const rail = isRail()
     root.style.display = rail ? 'none' : 'flex'
     if (rail) return
-    // The section's home follows its fold state: unfolded it sits under the
-    // workspace list, folded it docks at the sidebar's foot.
+    // One home in both fold states: the column, between the scroll region
+    // (the workspace list) and the foot. Folding changes what the section
+    // shows, not where it rides.
     attach()
 
     // The pipe entry is not one of the list's tools: it survives the fold, and
@@ -519,19 +576,17 @@ export function mountTerminalSection(deps: TerminalSectionDeps): () => void {
   }
 
   const attach = (): boolean => {
-    const hole = document.querySelector(SIDEBAR_HOLE)
-    const region = hole?.closest('[class*="_regionArea"]') ?? hole
-    if (region === null || region === undefined) return false
-    if (deps.modes.getSnapshot().folded) {
-      // Docked at the foot: the last thing above the sidebar's own footer.
-      const foot = document.querySelector('[class*="_footArea"]')
-      const parent = foot?.parentElement ?? null
-      if (foot !== null && parent !== null) {
-        if (root.parentElement !== parent || foot.previousElementSibling !== root) parent.insertBefore(root, foot)
-        return true
-      }
-    }
-    if (root.previousElementSibling !== region) region.after(root)
+    // The hole is the probe: it answers whether the sidebar is up at all. The
+    // section rides in the COLUMN rather than in the browsing region, so the
+    // region is never the anchor — see `sidebarSeat`.
+    const seat = sidebarSeat(document.querySelector(SIDEBAR_HOLE), document.querySelector(FOOT_SELECTOR))
+    if (seat === undefined) return false
+    // A column already holding the section needs no move: re-inserting it on
+    // every render would fight React for the same position. Whatever React
+    // renders between the scroll region and the foot — the copied-version
+    // toast, say — is stepped over rather than fought: what matters is that
+    // the section is the column's child above the foot, not that it touches it.
+    if (root.parentElement !== seat.column) seat.column.insertBefore(root, seat.foot)
     return true
   }
 

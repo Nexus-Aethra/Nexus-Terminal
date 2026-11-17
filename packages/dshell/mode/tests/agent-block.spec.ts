@@ -158,7 +158,10 @@ describe('native task chrome', () => {
   })
 
   it('ships the exact native animated mask and static fallback path', () => {
-    const native = readFileSync(new URL('../../../../dsh/packages/client/ui-chat/src/client/chat/running-whale@2x.png', import.meta.url))
+    // Upstream moved the artwork from `chat/` to `assets/` when it started serving
+    // plugin package assets by URL; the path is asserted, not guessed, so a second
+    // move fails here rather than comparing against nothing.
+    const native = readFileSync(new URL('../../../../dsh/packages/client/ui-chat/src/client/assets/running-whale@2x.png', import.meta.url))
     const bundled = readFileSync(new URL('../src/client/running-whale@2x.png', import.meta.url))
     expect(bundled).toEqual(native)
     expect(bundled.includes(Buffer.from('acTL'))).toBe(true)

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Shell 与 Agent 模式",
+    "description": "在会话中切换 shell 与 agent 模式，并记住这个选择。"
+  }
+}

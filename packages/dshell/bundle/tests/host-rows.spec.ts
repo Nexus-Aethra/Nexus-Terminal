@@ -96,8 +96,14 @@ describe('the host row inventory', () => {
     // the patch file this spec parses. A move to a different file, or a profile
     // that stopped composing these two, would leave the assertions below
     // watching nothing at all.
-    const profileSource = readFileSync(join(DSH_ROOT, 'packages/boot/app-boot/src/profile.ts'), 'utf8')
-    expect(profileSource).toContain("bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']")
+    //
+    // 0.2.2 moved the profile table out of `app-boot/src/profile.ts` — which now
+    // only applies the layers — into `util/official-bundles`'s PROFILE_TEMPLATES,
+    // so the anchor is the template rather than the code that reads it.
+    const templates = readFileSync(
+      join(DSH_ROOT, 'packages/util/official-bundles/src/bundles.ts'), 'utf8',
+    )
+    expect(templates).toContain("bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']")
 
     for (const [bundle, name] of [['base', '@deepseek-ai/dsh-base'], ['web-app', '@deepseek-ai/dsh-web-app']]) {
       const manifest = JSON.parse(readFileSync(findPatch(bundle, 'package.json'), 'utf8')) as {

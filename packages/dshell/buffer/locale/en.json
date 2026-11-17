@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Cross-session pipes",
+    "description": "Passes text and files between sessions through a named buffer."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Nexus-Terminal",
+    "description": "Wires every dshell plugin into one terminal-first workbench."
+  }
+}

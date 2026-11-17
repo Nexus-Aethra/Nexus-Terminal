@@ -1,6 +1,6 @@
 {
   "name": "@nexus-aethra/dshell-wsl",
-  "version": "0.1.17",
+  "version": "0.1.18-alpha.2",
   "description": "dshell wsl: the WSL2 distributions of this machine as built-in devices 鈥?one provider registered into dshell-ssh's device registry, a ConPTY transport, and the admin card that lists them.",
   "license": "MIT",
   "repository": {
@@ -12,6 +12,8 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
     ".": {
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
@@ -23,6 +25,11 @@
   },
   "dsh": {
     "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
       "platform": "web"
     }
   },
@@ -33,7 +40,17 @@
     "build:client": "tsdown --config-loader tsx"
   },
   "files": [
-    "lib"
+    "locale/*.json",
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client/admin-seat.js",
+    "lib/client/card-styles.js",
+    "lib/client/index.js",
+    "lib/client/locales.js",
+    "lib/client/wsl-card.js",
+    "lib/provider.js",
+    "lib/transport.js",
+    "lib/types/**/*.d.ts"
   ],
   "publishConfig": {
     "access": "public"

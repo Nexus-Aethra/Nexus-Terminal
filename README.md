@@ -138,9 +138,9 @@ Two ways in: install the published plugins into a dsh you already have, or build
 
 ### Install into dsh
 
-Prerequisites: **dsh** `0.2.1-rc.5` — either the desktop app, or the CLI
-(`npm install -g @deepseek-ai/dsh@latest`) — and **Node >= 24.11.0** with **pnpm 9.15.0** on `PATH`
-(`dsh plugin` forwards to pnpm). On npm, `latest` is `0.2.1-rc.5` and `next` is `0.2.2-rc.1` —
+Prerequisites: **dsh** `0.2.2-rc.3` — either the desktop app, or the CLI
+(`npm install -g @deepseek-ai/dsh@next`) — and **Node >= 24.11.0** with **pnpm 9.15.0** on `PATH`
+(`dsh plugin` forwards to pnpm). On npm, `latest` is `0.2.1-rc.5` and `next` is `0.2.2-rc.3` —
 and both sit inside the window dshell declares, so either installs.
 
 Which dshell release you want depends on which dsh you have:
@@ -168,12 +168,25 @@ the profile's `compatibility.json`.
 
 ```sh
 # One package: the bundle is the patch layer, it depends on the other eleven dshell
-# packages, and dshell-ssh carries the one dsh package a stock profile does not
-# ship (`@deepseek-ai/dsh-ssh`, its SSH execution provider).
+# packages. Three dsh packages are dependencies rather than peers because a stock
+# desktop profile ships none of them: `@deepseek-ai/dsh-ssh` (the SSH execution
+# provider, host side) and `@deepseek-ai/dsh-client-store` plus
+# `@deepseek-ai/dsh-client-ui-primitives` (required by the browser halves).
 dsh plugin --profile web add -w @nexus-aethra/dshell-bundle@latest
 
 dsh web
 ```
+
+The repository root is a bundle as well, so the same composition installs straight from
+GitHub — the root manifest declares `dsh.bundle` and points at its own `cordis.patch.yml`:
+
+```sh
+dsh plugin --profile web add github:Nexus-Aethra/Nexus-Terminal
+```
+
+`@nexus-aethra/nexus-terminal` is that same root published to npm; it depends on the eleven
+dshell packages and carries the patch that composes them. Installing the bundle subpackage
+and installing the root are two roads to one row stack.
 
 dsh prints a tokenized URL (for example `http://127.0.0.1:3080/?token=…`). Open it in a browser.
 

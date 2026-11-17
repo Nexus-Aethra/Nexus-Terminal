@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Terminal bridge",
+    "description": "Runs a session shell over a PTY and keeps its output for the blocks that render it."
+  }
+}

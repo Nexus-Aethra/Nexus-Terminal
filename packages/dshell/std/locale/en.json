@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Shared contracts",
+    "description": "Contracts, shell-line parsing and storage that every dshell plugin builds on."
+  }
+}

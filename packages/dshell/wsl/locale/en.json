@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSL devices",
+    "description": "Reaches WSL distros as devices, with the same shell and file panel as SSH."
+  }
+}

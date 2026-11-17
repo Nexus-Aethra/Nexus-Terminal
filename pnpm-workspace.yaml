@@ -1,6 +1,14 @@
 packages:
   - packages/*/*
 
+# The repository root is a dsh bundle, so it depends on the dshell-* packages it
+# composes. In the dev workspace those must resolve to the packages beside it,
+# not to the copies npm already published: without this, pnpm fetches the
+# registry tarball, the lockfile records absolute link: paths into this machine's
+# dsh/ checkout, and the hygiene gate fails. A GitHub install has no workspace,
+# so the same plain ranges resolve from npm there.
+link-workspace-packages: true
+
 # dshell imports @deepseek-ai/dsh-* and @deepseek-ai/cordis as workspace
 # dependencies from the local dsh checkout. pnpm 9 does not understand
 # relative workspace globs, so individual packages use `link:../dsh/...`

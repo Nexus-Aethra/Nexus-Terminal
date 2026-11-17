@@ -1,16 +1,67 @@
 {
-  "name": "nexus-shell",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@nexus-aethra/nexus-terminal",
+  "version": "0.1.18-alpha.2",
   "description": "dshell: a terminal-first agent workbench built as dsh plugins. One terminal timeline per session, cross-session pipes with a named buffer, SSH device sessions. See README.md and docs/.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nexus-Aethra/Nexus-Terminal.git"
+  },
   "type": "module",
-  "packageManager": "pnpm@9.15.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "cordis.patch.yml",
+    "icon.png"
+  ],
+  "icon": "./icon.png",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "engines": {
     "node": ">=24.11.0"
   },
+  "packageManager": "pnpm@9.15.0",
   "workspaces": [
     "packages/*/*"
   ],
+  "dependencies": {
+    "@nexus-aethra/dshell-buffer": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-bundle": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-commands": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-conversation": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-files": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-mode": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-ssh": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-std": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-storage": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-terminal-bridge": "^0.1.18-alpha.1",
+    "@nexus-aethra/dshell-wsl": "^0.1.18-alpha.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.1"
+  },
   "scripts": {
     "build": "pnpm -r --filter @nexus-aethra/dshell-* run build",
     "build:host": "pnpm -r --filter @nexus-aethra/dshell-* run build:host",
@@ -25,12 +76,6 @@
     "sync:host-range": "node scripts/sync-host-range.mjs",
     "sync:host-range:check": "node scripts/sync-host-range.mjs --check",
     "fetch:upstream": "node scripts/fetch-upstream.mjs"
-  },
-  "devDependencies": {
-    "@types/node": "^24",
-    "tsx": "^4.23.13",
-    "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
   },
   "pnpm": {
     "overrides": {
@@ -84,6 +129,5 @@
       "@deepseek-ai/schemastery": "link:./dsh/vendor/schemastery",
       "node-pty": "link:./dsh/packages/subprocess/subprocess-local/node_modules/node-pty"
     }
-  },
-  "license": "MIT"
+  }
 }

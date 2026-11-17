@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "终端桥接",
+    "description": "通过 PTY 运行会话的 shell，并保留其输出供各个块渲染。"
+  }
+}

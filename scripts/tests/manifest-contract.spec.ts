@@ -53,8 +53,28 @@ const DSH_PACKAGE_PREFIX = '@deepseek-ai/'
  *   peer meant the desktop profile had no copy, the row failed to import, and —
  *   because the bundle hands `ctx.fs` to that row — the session controller, the
  *   workspace files and the deliverables tabs all stayed pending on `fs`.
+ *
+ * The same two omissions reappeared on the 0.2.2 move, and they are the client
+ * half this time. `dsh-client-store` and `dsh-client-ui-primitives` are absent
+ * from the desktop core set as well — and absent from the app bundle own
+ * node_modules, which only carries what the composed profile needed when it was
+ * built. dshell browser halves `require` them by name (`lib/client.js`), so a
+ * profile that composes dshell asks the host for modules nobody installed:
+ *
+ * - `@deepseek-ai/dsh-client-store`: required by the client bundles of
+ *   dshell-mode, dshell-files and dshell-terminal-bridge.
+ * - `@deepseek-ai/dsh-client-ui-primitives`: required by the client bundles of
+ *   dshell-mode, dshell-files and dshell-buffer.
+ *
+ * Both are therefore dependencies of exactly the packages that require them,
+ * and the two dead peer declarations that named `dsh-client-store` without
+ * importing it (dshell-ssh, dshell-bundle) are gone.
  */
-const RUNTIME_OMITTED: ReadonlySet<string> = new Set(['@deepseek-ai/dsh-ssh'])
+const RUNTIME_OMITTED: ReadonlySet<string> = new Set([
+  '@deepseek-ai/dsh-ssh',
+  '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/dsh-client-ui-primitives',
+])
 
 interface Manifest {
   readonly name?: string
@@ -108,13 +128,22 @@ describe('the dshell manifests', () => {
       const manifest = manifestOf(pkg)
       const peers = declared(manifest.peerDependencies)
       const dev = declared(manifest.devDependencies)
+      const deps = declared(manifest.dependencies)
       const peerMap = new Map(peers)
       const devMap = new Map(dev)
+      const depMap = new Map(deps)
       for (const [name, range] of peerMap) {
         if (devMap.get(name) !== range) drifted.push(`${pkg}: ${name} peer=${range} dev=${devMap.get(name) ?? '(absent)'}`)
       }
-      for (const name of devMap.keys()) {
-        if (!peerMap.has(name)) drifted.push(`${pkg}: ${name} is a devDependency but not a peer`)
+      for (const [name, range] of devMap) {
+        if (peerMap.has(name)) continue
+        // A runtime-omitted package is a dependency rather than a peer; its dev
+        // copy is still what this repo build resolves, at the same range.
+        if (depMap.get(name) !== range) drifted.push(`${pkg}: ${name} is a devDependency but neither a peer nor a matching dependency`)
+      }
+      for (const [name, range] of depMap) {
+        if (!RUNTIME_OMITTED.has(name)) continue
+        if (devMap.get(name) !== range) drifted.push(`${pkg}: ${name} dependency=${range} dev=${devMap.get(name) ?? '(absent)'}`)
       }
     }
     expect(drifted).toEqual([])
